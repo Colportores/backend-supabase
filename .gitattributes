@@ -1,0 +1,7 @@
+# Scripts y SQL que corren en contenedores Linux: siempre LF, aunque el checkout sea en Windows.
+* text=auto
+*.sh text eol=lf
+*.sql text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+dockerfile.dev text eol=lf
