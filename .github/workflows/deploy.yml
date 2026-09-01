@@ -1,0 +1,36 @@
+name: Deploy
+
+# staging → proyecto Supabase de staging · production → proyecto de producción.
+# Cada environment de GitHub define: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD.
+# Solo aplica migraciones pendientes (forward-only); nunca hace reset.
+on:
+  push:
+    branches: [staging, production]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  db-push:
+    name: supabase db push (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ github.ref_name }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+
+      - name: Migraciones pendientes
+        run: supabase db push
+
+      - name: Historial aplicado
+        run: supabase migration list
