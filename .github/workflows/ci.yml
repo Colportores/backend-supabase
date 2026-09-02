@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, staging, production]
+  pull_request:
+    branches: [develop, staging, production]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migraciones:
+    name: migraciones desde cero · pgTAP
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Mismo entorno que el desarrollo local (compose.dev.yml): Postgres de Supabase + CLI + pg_prove.
+      - name: Construir tooling
+        run: docker compose -f compose.dev.yml build cli
+
+      - name: Aplicar migraciones sobre una base vacía
+        run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-migrate.sh
+
+      - name: Tests pgTAP (esquema, privacidad, RLS)
+        run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-test.sh
+
+      - name: Lint de funciones (plpgsql_check)
+        run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-lint.sh
+
+      - name: Apagar
+        if: always()
+        run: docker compose -f compose.dev.yml down -v --remove-orphans
