@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# Tooling de desarrollo de backend-supabase: Supabase CLI + psql + pg_prove (pgTAP).
+# Corre contra el servicio `db` de compose.dev.yml (imagen oficial supabase/postgres).
+#
+#   docker compose -f compose.dev.yml build
+#   docker compose -f compose.dev.yml run --rm cli scripts/db-migrate.sh   # aplica supabase/migrations
+#   docker compose -f compose.dev.yml run --rm cli scripts/db-test.sh      # corre supabase/tests (pgTAP)
+#   docker compose -f compose.dev.yml run --rm cli supabase --help
+
+FROM debian:bookworm-slim
+
+ARG SUPABASE_CLI_VERSION=2.116.0
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       ca-certificates curl git postgresql-client libtap-parser-sourcehandler-pgtap-perl \
+  && rm -rf /var/lib/apt/lists/*
+
+# Binario oficial del CLI (misma versión que usa CI en supabase/setup-cli).
+RUN arch="$(dpkg --print-architecture)" \
+  && curl -fsSL "https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSION}/supabase_linux_${arch}.tar.gz" \
+     | tar -xz -C /usr/local/bin supabase \
+  && supabase --version
+
+WORKDIR /work
+ENTRYPOINT []
+CMD ["bash"]
