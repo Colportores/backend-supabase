@@ -15,6 +15,13 @@ drop schema if exists public cascade;
 create schema public;
 grant usage on schema public to postgres, anon, authenticated, service_role;
 grant all on schema public to postgres, service_role;
+-- La infra de sync (0002) vive en su propio schema y tiene FKs contra public:
+-- sin dropearlo, `create schema sync` de la migración falla al reaplicar.
+drop schema if exists sync cascade;
+-- auth es de la imagen y no se dropea, pero sus filas sobreviven al reset y
+-- chocan con los fixtures de los tests, que insertan usuarios con id fijo.
+-- El trigger on_auth_user_created se va con `public`, así que esto no recrea perfiles.
+delete from auth.users;
 drop schema if exists supabase_migrations cascade;
 SQL
 

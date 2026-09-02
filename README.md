@@ -2,7 +2,7 @@
 
 Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
 
-**Estado: esquema inicial (Sprint 1)** — migración `0001` con todas las tablas V1 del cloud, RLS habilitada con políticas base, tests pgTAP y CI. Las políticas se refinan HU por HU desde Sprint 3; la infraestructura de sync (RPC de ingesta, `client_op_id`) la agrega `@BrunoFCapri` ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md)).
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
@@ -46,16 +46,40 @@ docker compose -f compose.dev.yml down -v                                 # apag
 supabase/
 ├── config.toml        ← config del proyecto (supabase init); project_id = backend-supabase
 ├── migrations/        ← forward-only
-│   └── 20260901000000_0001_esquema_inicial.sql
-├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS
+│   ├── 20260901000000_0001_esquema_inicial.sql
+│   └── 20260902180000_0002_sync_infra.sql
+├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
+│                        0003 estructura de sync, 0004 push y delta
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
 scripts/               ← db-migrate / db-test / db-lint / db-reset (los usa CI)
 ```
+
+`0004_sync_delta_test.sql` es el único que **no** envuelve todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpia sus filas al final.
 
 ## CI/CD
 
 - `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`.
 - `deploy.yml` (push a `staging`/`production`): `supabase link` + `supabase db push` contra el proyecto del *environment*. Requiere `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID` y `SUPABASE_DB_PASSWORD` como secrets del environment de GitHub.
+
+## Infraestructura de sincronización
+
+Lo que ADR-017 §4 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
+
+```sql
+select sync.push(jobs, device_id);                       -- ingesta batch
+select sync.pull(entidades, watermark, limite, device);  -- delta
+select sync.estado();                                    -- telemetría del colportor (RF-SY06)
+```
+
+Tres cosas que conviene saber antes de tocarlo:
+
+**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por zona (`mis_zonas()`, que no es una igualdad) y los catálogos globales.
+
+**El cursor del delta es el xid de la transacción, no el reloj.** `updated_at` se llena con `now()`, que es la hora de *inicio* de transacción: dos escritores concurrentes commitean en un orden que no tiene por qué coincidir con el de sus timestamps, y la fila que commiteó tarde queda detrás de un watermark que ya avanzó — subida, guardada y jamás entregada. Se ordena por `(xmin_w, id)` y se sirve solo lo que está por debajo de `pg_snapshot_xmin(pg_current_snapshot())`. El diagnóstico y el arreglo son de @BrunoFCapri.
+
+**`xmin_w` lo pone el trigger de auditoría, no el RPC.** Si dependiera del RPC, toda escritura que no pase por `sync.push()` —seeds, panel del coordinador, un job— dejaría la fila con el xid de su INSERT: modificada en la base y nunca propagada.
+
+El registro de entidades (`sync.entidad`) es una tabla y no una lista en el código: el RPC es genérico, y sin lista blanca un cliente podría mandar `entity: "usuario"` y escribir donde no debe. Es el espejo en SQL del `SyncSpec` del motor ([contrato §2](https://github.com/Colportores/docs-organizacion/blob/main/docs/contrato-sync-engine.md)). **`persona` y `nota` no están, y no van a estar.**
 
 ## Privacidad
 
