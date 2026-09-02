@@ -86,6 +86,138 @@ select is((select count(*) from public.usuario where id = '01920000-0000-7000-80
 select is((select count(*) from public.usuario where id = '01920000-0000-7000-8000-0000000000a2'), 1::bigint,
           'Beto ve su propio perfil');
 
+-- --- ...pero Beto SÍ ve y escribe lo suyo -----------------------------------------
+-- Contracara de los tres negativos de arriba. Sin esto, una política invertida que dejara a todo
+-- el mundo afuera de sus propios datos pasaría igual: los counts darían 0 por el motivo equivocado.
+select lives_ok(
+  $$ insert into public.jornada (id, inicio) values ('01920000-0000-7000-8000-0000000000f5', now()) $$,
+  'Beto crea su propia jornada'
+);
+select is((select count(*) from public.jornada), 1::bigint, 'Beto ve su propia jornada');
+
+-- Sin calle ni numero: el alta por marcador manual sobre el mapa no los conoce (HU-UBI, ADR-018).
+select lives_ok(
+  $$ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id, zona_id)
+     values ('01920000-0000-7000-8000-0000000000f6', 'CASA', -34.88, -56.15,
+             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
+  'Beto crea una ubicación sin calle ni numero (alta por marcador manual)'
+);
+select is((select count(*) from public.ubicacion), 1::bigint, 'Beto ve su propia ubicación');
+
+-- RF-UB08 es una advertencia del cliente, no un constraint: "crear igual con justificación" es una
+-- salida deliberada de la HU y el cloud no puede rechazarla.
+select lives_ok(
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
+     values ('01920000-0000-7000-8000-0000000000f7', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.18,
+             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
+  'una dirección duplicada se acepta (RF-UB08 se resuelve en el cliente)'
+);
+
+-- --- escalada de privilegios: las columnas que deciden qué filas se ven -------------
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
+
+update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d2'
+where id = '01920000-0000-7000-8000-0000000000a1';
+select is((select zona_id from public.usuario where id = '01920000-0000-7000-8000-0000000000a1'),
+          '01920000-0000-7000-8000-0000000000d1'::uuid,
+          'Ana NO puede auto-asignarse la zona de Beto (R-SY04: la asignación gana del backend)');
+select is((select count(*) from public.ubicacion), 1::bigint,
+          'Ana sigue viendo solo su zona después de intentar la escalada');
+
+update public.ubicacion set zona_id = '01920000-0000-7000-8000-0000000000d2'
+where id = '01920000-0000-7000-8000-0000000000f2';
+select is((select zona_id from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f2'),
+          '01920000-0000-7000-8000-0000000000d1'::uuid,
+          'Ana NO puede mover su ubicación a la zona de Beto');
+
+-- --- sync_version es del servidor también en el INSERT ------------------------------
+select lives_ok(
+  $$ insert into public.jornada (id, inicio, sync_version)
+     values ('01920000-0000-7000-8000-0000000000f8', now(), 999) $$,
+  'el INSERT con sync_version del cliente no falla'
+);
+select is((select sync_version from public.jornada where id = '01920000-0000-7000-8000-0000000000f8'),
+          0::bigint,
+          'el sync_version que manda el cliente en el INSERT se ignora (contrato §5.4)');
+
+-- --- constraints de integridad del dominio ------------------------------------------
+select throws_ok(
+  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad)
+     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA',
+             '01920000-0000-7000-8000-0000000000d1', 'RECHAZO', 1) $$,
+  '23514', null,
+  'house_status con color y prioridad contradictorios se rechaza (ADR-010)'
+);
+select lives_ok(
+  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad)
+     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA',
+             '01920000-0000-7000-8000-0000000000d1', 'RECHAZO', 7) $$,
+  'house_status con el par color/prioridad de ADR-010 se acepta'
+);
+
+-- venta_item: la línea es aritmética pura. El descuento informal vive en venta.monto_total (S38).
+insert into public.espacio (id, ubicacion_id) values
+  ('01920000-0000-7000-8000-000000000101', '01920000-0000-7000-8000-0000000000f2');
+insert into public.espacio_persona (id, espacio_id, persona_id) values
+  ('01920000-0000-7000-8000-000000000102', '01920000-0000-7000-8000-000000000101',
+   '01920000-0000-7000-8000-000000000103');
+insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha) values
+  ('01920000-0000-7000-8000-000000000104', '01920000-0000-7000-8000-000000000102', 'A-1', 30000, now());
+
+select throws_ok(
+  $$ insert into public.venta_item (venta_id, producto_id, cantidad, precio_unitario, subtotal)
+     values ('01920000-0000-7000-8000-000000000104', '01920000-0000-7000-8000-0000000000e1',
+             3, 10000, 999999) $$,
+  '23514', null,
+  'venta_item con subtotal que no es cantidad * precio_unitario se rechaza'
+);
+select lives_ok(
+  $$ insert into public.venta_item (venta_id, producto_id, cantidad, precio_unitario, subtotal)
+     values ('01920000-0000-7000-8000-000000000104', '01920000-0000-7000-8000-0000000000e1',
+             3, 10000, 30000) $$,
+  'venta_item con el subtotal correcto se acepta'
+);
+
+-- --- vigencia: campaña terminada y baja administrativa ------------------------------
+-- Fixtures como postgres (session_user), que no pasa por RLS.
+select set_config('role', 'postgres', true);
+
+insert into public.zona (id, nombre, ciudad_id) values
+  ('01920000-0000-7000-8000-000000000201', 'Zona campaña vieja', '01920000-0000-7000-8000-0000000000c1'),
+  ('01920000-0000-7000-8000-000000000202', 'Zona campaña viva',  '01920000-0000-7000-8000-0000000000c1');
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id) values
+  ('01920000-0000-7000-8000-000000000203', 'Verano 2020', 'VERANO', '2020-01-01', '2020-03-01',
+   '01920000-0000-7000-8000-0000000000c1'),
+  ('01920000-0000-7000-8000-000000000204', 'Permanente', 'PERMANENTE', current_date - 30, null,
+   '01920000-0000-7000-8000-0000000000c1');
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id) values
+  ('01920000-0000-7000-8000-000000000205', '01920000-0000-7000-8000-000000000203',
+   '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-000000000201'),
+  ('01920000-0000-7000-8000-000000000206', '01920000-0000-7000-8000-000000000204',
+   '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-000000000202');
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a2');
+
+-- La inscripción de una campaña terminada no se soft-deletea sola: sin filtrar por fechas seguiría
+-- dando acceso a la zona para siempre.
+select is((select count(*) from public.mis_zonas() z where z = '01920000-0000-7000-8000-000000000201'),
+          0::bigint,
+          'una campaña terminada ya no da acceso a su zona');
+select is((select count(*) from public.mis_zonas() z where z = '01920000-0000-7000-8000-000000000202'),
+          1::bigint,
+          'una campaña vigente sí da acceso a su zona');
+
+-- Baja administrativa (ADR-011): la revocación de sesión ocurre fuera de esta base, así que los
+-- helpers de autorización tienen que caerse solos si la sesión sobrevive.
+select set_config('role', 'postgres', true);
+update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000000a2';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a2');
+
+select is((select count(*) from public.mis_zonas()), 0::bigint,
+          'un usuario con baja administrativa pierde todas sus zonas (ADR-011)');
+select is(public.tiene_rol('COLPORTOR'), false,
+          'un usuario con baja administrativa pierde sus roles (ADR-011)');
+
 -- --- anon no ve nada ----------------------------------------------------------------
 select set_config('role', 'anon', true);
 select throws_ok($$ select count(*) from public.producto $$, '42501', null, 'anon no puede leer ni el catálogo');

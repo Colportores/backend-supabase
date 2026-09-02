@@ -3,25 +3,35 @@ name: Deploy
 # staging → proyecto Supabase de staging · production → proyecto de producción.
 # Cada environment de GitHub define: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD.
 # Solo aplica migraciones pendientes (forward-only); nunca hace reset.
+#
+# Se dispara al TERMINAR CI sobre el mismo commit, no en paralelo con él: con `on: push` los dos
+# workflows arrancaban a la vez y una migración que rompe pgTAP igual llegaba a la base real.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [staging, production]
+    types: [completed]
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   db-push:
-    name: supabase db push (${{ github.ref_name }})
+    name: supabase db push (${{ github.event.workflow_run.head_branch }})
+    # El gate: si CI no terminó en verde sobre este commit, no se aplica nada.
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: ${{ github.ref_name }}
+    environment: ${{ github.event.workflow_run.head_branch }}
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
+      # workflow_run corre sobre el default branch salvo que se pida el commit explícito.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: supabase/setup-cli@v1
         with:

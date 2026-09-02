@@ -13,12 +13,18 @@
 -- Reglas que esta migración cumple y las siguientes deben respetar:
 --   1. IDs uuid generados en el cliente (v7). El default uuid_generate_v7() es solo para seeds.
 --   2. Toda tabla lleva created_at, updated_at, created_by, deleted_at (soft delete) y sync_version.
---   3. sync_version lo asigna el backend: se incrementa por trigger en cada UPDATE.
+--   3. sync_version y updated_at los asigna el backend, nunca el cliente: trigger BEFORE INSERT
+--      (sync_version = 0) y BEFORE UPDATE (+1). created_at/created_by son inmutables en UPDATE.
+--      created_at SÍ lo provee el cliente en el INSERT: la fila nace offline y sube después (§8.1).
 --   4. Dinero en centavos (integer). Nunca numeric/float para importes.
---   5. SIN PII (Ley 18.331): no existen persona, nota, ni columnas telefono/notas. Un PR que las
---      agregue se rechaza. espacio_persona.persona_id es un UUID opaco sin FK: la persona vive
---      solo en el dispositivo.
+--   5. SIN DATOS DE PERSONA (Ley 18.331): no existen persona ni nota, ni columnas telefono/notas.
+--      Un PR que las agregue se rechaza. espacio_persona.persona_id es un UUID opaco sin FK: la
+--      persona vive solo en el dispositivo. La DIRECCIÓN de la casa (calle, numero, numero_depto)
+--      sí vive acá: la frontera de privacidad es la persona, no la casa (ADR-018). Sin dirección
+--      no funciona el traspaso de zona entre colportores ni el tablero del coordinador.
 --   6. RLS habilitada en todas las tablas. La RLS es la autoridad de permisos (ADR-016).
+--      Lo que RLS no alcanza por ser a nivel fila (columnas server-authoritative como zona_id)
+--      se cierra con triggers, no con confianza en el cliente.
 --   7. Forward-only: esta migración no se edita una vez aplicada en un entorno compartido.
 --
 -- Lo que NO está acá (dueño @BrunoFCapri, ADR-017): RPC de ingesta, cache de client_op_id,
@@ -56,7 +62,28 @@ $$;
 comment on function public.uuid_generate_v7() is
   'UUID v7 para seeds/servidor. Los clientes generan los suyos (esquema-datos.md §Principios).';
 
+-- Auditoría en INSERT: sync_version arranca siempre en 0, lo mande el cliente o no.
+-- El contrato del motor (§5.4) lo declara server-authoritative: si el cliente pudiera fijarlo,
+-- desincronizaría desde la primera escritura el contador con el que se resuelven los conflictos.
+create or replace function public.tg_auditoria_insert()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.sync_version := 0;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+comment on function public.tg_auditoria_insert() is
+  'BEFORE INSERT: sync_version = 0 y updated_at = now(), los fije o no el cliente (contrato §5.4).';
+
 -- Auditoría en UPDATE: updated_at y sync_version los pone el servidor, nunca el cliente.
+-- created_at y created_by se preservan: el cliente manda la fila entera en el LWW y no debe poder
+-- reescribir quién creó el registro ni cuándo. Se coercionan en silencio en vez de fallar, para no
+-- mandar a INVALID un job de sync que por lo demás es válido (ADR-013 §Clasificación de errores).
 create or replace function public.tg_auditoria_update()
 returns trigger
 language plpgsql
@@ -65,12 +92,14 @@ as $$
 begin
   new.updated_at := now();
   new.sync_version := old.sync_version + 1;
+  new.created_at := old.created_at;
+  new.created_by := old.created_by;
   return new;
 end;
 $$;
 
 comment on function public.tg_auditoria_update() is
-  'BEFORE UPDATE: updated_at = now(), sync_version = old + 1 (esquema-datos.md §Principios 5).';
+  'BEFORE UPDATE: updated_at = now(), sync_version = old + 1, created_at/created_by inmutables.';
 
 -- ----------------------------------------------------------------------------
 -- 1. Geografía (pull)
@@ -284,6 +313,28 @@ create table public.precio_por_zona (
 create index precio_por_zona_zona_idx on public.precio_por_zona (zona_id);
 create index precio_por_zona_producto_idx on public.precio_por_zona (producto_id);
 
+-- Sin dos precios vigentes a la vez para lo mismo en la misma zona: "el precio actual" tiene que
+-- ser una sola fila. Con valido_hasta null el rango queda abierto, así que sin esto dos filas
+-- abiertas del mismo producto conviven y la app elige cualquiera. Una por producto y otra por
+-- colección porque el check de arriba garantiza que solo una de las dos columnas está cargada.
+create extension if not exists btree_gist with schema extensions;
+
+alter table public.precio_por_zona
+  add constraint precio_por_zona_producto_sin_solape
+  exclude using gist (
+    zona_id with =,
+    producto_id with =,
+    daterange(valido_desde, valido_hasta, '[]') with &&
+  ) where (deleted_at is null and producto_id is not null);
+
+alter table public.precio_por_zona
+  add constraint precio_por_zona_coleccion_sin_solape
+  exclude using gist (
+    zona_id with =,
+    coleccion_id with =,
+    daterange(valido_desde, valido_hasta, '[]') with &&
+  ) where (deleted_at is null and coleccion_id is not null);
+
 -- ----------------------------------------------------------------------------
 -- 5. Modelo Espacio (push + alsoPull) — ADR-001, ADR-012
 -- ----------------------------------------------------------------------------
@@ -291,8 +342,10 @@ create index precio_por_zona_producto_idx on public.precio_por_zona (producto_id
 create table public.ubicacion (
   id            uuid primary key default public.uuid_generate_v7(),
   tipo          text not null check (tipo in ('CASA','NEGOCIO','EDIFICIO')),
-  calle         text not null,
-  numero        text not null,
+  -- Nullable a propósito: el alta por marcador manual sobre el mapa (sin GPS ni dirección
+  -- conocida) es un camino documentado, y HU-UBI los declara campos opcionales.
+  calle         text,
+  numero        text,
   lat           double precision not null check (lat between -90 and 90),
   lon           double precision not null check (lon between -180 and 180),
   ciudad_id     uuid not null references public.ciudad(id),
@@ -303,10 +356,19 @@ create table public.ubicacion (
   deleted_at    timestamptz,
   sync_version  bigint not null default 0
 );
-comment on table public.ubicacion is 'Dirección física, sin PII. Única por (calle, numero, ciudad) viva (RF-UB08).';
-create unique index ubicacion_unica_viva_idx
+comment on table public.ubicacion is
+  'Casa del territorio, con su dirección. Sin datos de persona (ADR-018). Compartida por zona: '
+  'al rotar el colportor, quien toma la zona recibe las casas ya trabajadas con su estado.';
+
+-- Índice de deduplicación: NO es único. RF-UB08/R-UB08 definen la dedup como una advertencia del
+-- cliente (misma ciudad + radio <= 30m + Levenshtein >= 0.85 + número exacto) que ofrece tres
+-- salidas, y una de ellas es "crear igual con justificación". Un unique index rechazaría ese caso
+-- de uso deliberado, y encima devolvería el error recién en el sync, sobre una fila ya guardada
+-- en el dispositivo. Acá el índice solo acelera la búsqueda del cliente y de los reportes.
+create index ubicacion_dedup_idx
   on public.ubicacion (ciudad_id, lower(calle), lower(numero)) where deleted_at is null;
 create index ubicacion_zona_idx on public.ubicacion (zona_id);
+create index ubicacion_created_by_idx on public.ubicacion (created_by);
 
 create table public.espacio (
   id            uuid primary key default public.uuid_generate_v7(),
@@ -320,7 +382,11 @@ create table public.espacio (
   deleted_at    timestamptz,
   sync_version  bigint not null default 0
 );
+comment on column public.espacio.numero_depto is
+  'Va al cloud siempre. ADR-012 lo propagaba solo con operaciones financieras; ADR-018 eliminó '
+  'esa política diferenciada junto con la de calle/numero.';
 create index espacio_ubicacion_idx on public.espacio (ubicacion_id);
+create index espacio_created_by_idx on public.espacio (created_by);
 
 -- Solo IDs: persona_id es opaco, la persona existe únicamente en el dispositivo (Ley 18.331).
 create table public.espacio_persona (
@@ -337,6 +403,8 @@ create table public.espacio_persona (
 );
 comment on column public.espacio_persona.persona_id is
   'UUID opaco generado en el dispositivo. Sin FK a propósito: la tabla persona no existe en cloud.';
+create index espacio_persona_espacio_idx on public.espacio_persona (espacio_id);
+create index espacio_persona_created_by_idx on public.espacio_persona (created_by);
 
 -- ----------------------------------------------------------------------------
 -- 6. Operación de campo (push)
@@ -425,9 +493,13 @@ create table public.venta_item (
   updated_at       timestamptz not null default now(),
   created_by       uuid default auth.uid() references public.usuario(id) on delete set null,
   deleted_at       timestamptz,
-  sync_version     bigint not null default 0
+  sync_version     bigint not null default 0,
+  -- El ítem es aritmética pura. El descuento informal del colportor (supuesto S38) se aplica en
+  -- venta.monto_total, que por eso NO se ata a la suma de los ítems.
+  check (subtotal = cantidad * precio_unitario)
 );
 create index venta_item_venta_idx on public.venta_item (venta_id);
+create index venta_item_producto_idx on public.venta_item (producto_id);
 
 create table public.entrega (
   id             uuid primary key default public.uuid_generate_v7(),
@@ -443,6 +515,7 @@ create table public.entrega (
   sync_version   bigint not null default 0
 );
 create index entrega_venta_idx on public.entrega (venta_id);
+create index entrega_producto_idx on public.entrega (producto_id);
 
 create table public.cobranza (
   id            uuid primary key default public.uuid_generate_v7(),
@@ -483,8 +556,21 @@ create table public.house_status (
   updated_at      timestamptz not null default now(),
   created_by      uuid default auth.uid() references public.usuario(id) on delete set null,
   deleted_at      timestamptz,
-  sync_version    bigint not null default 0
+  sync_version    bigint not null default 0,
+  -- color y prioridad son el mismo dato en dos formas: ADR-010 fija el mapeo 1:1. Se guardan
+  -- ambos porque el cliente calcula la cache y sube la fila entera, pero no pueden contradecirse
+  -- o el mapa pinta un pin de un color y lo ordena por otro.
+  check (prioridad = case color
+                       when 'ENTREGA_Y_COBRANZA_PENDIENTE' then 1
+                       when 'COBRANZA_PENDIENTE'           then 2
+                       when 'ENTREVISTA_PROGRAMADA'        then 3
+                       when 'VENTA_COMPLETA'               then 4
+                       when 'ENTREVISTA_SIN_VENTA'         then 5
+                       when 'SIN_CONTESTAR'                then 6
+                       when 'RECHAZO'                      then 7
+                     end)
 );
+create index house_status_created_by_idx on public.house_status (created_by);
 comment on table public.house_status is
   'Estado visual por ubicación, agregado (el último colportor que visitó manda). Única vista que recibe el coordinador.';
 create index house_status_zona_idx on public.house_status (zona_id);
@@ -493,6 +579,9 @@ create index house_status_zona_idx on public.house_status (zona_id);
 -- 8. Triggers de auditoría (todas las tablas) y alta de perfil
 -- ----------------------------------------------------------------------------
 
+-- La lista de tablas vive UNA sola vez: este bloque cablea auditoría y habilita RLS en el mismo
+-- recorrido. Estaba duplicada en dos loops idénticos y una tabla nueva podía entrar a uno y no al
+-- otro, quedando sin trigger de auditoría o sin RLS sin que nada lo gritara.
 do $$
 declare
   t text;
@@ -504,9 +593,14 @@ begin
     'entrega','cobranza','house_status'
   ] loop
     execute format(
+      'create trigger %I before insert on public.%I for each row execute function public.tg_auditoria_insert()',
+      t || '_auditoria_insert', t
+    );
+    execute format(
       'create trigger %I before update on public.%I for each row execute function public.tg_auditoria_update()',
       t || '_auditoria_update', t
     );
+    execute format('alter table public.%I enable row level security', t);
   end loop;
 end
 $$;
@@ -552,15 +646,23 @@ as $$
     select 1
     from public.usuario_rol ur
     join public.rol r on r.id = ur.rol_id
+    join public.usuario u on u.id = ur.usuario_id
     where ur.usuario_id = auth.uid()
       and r.codigo = p_codigo
       and ur.deleted_at is null
+      -- La baja administrativa (ADR-011) revoca las sesiones, pero eso pasa fuera de esta base.
+      -- Si la revocación falla o llega tarde, el rol tiene que caerse igual acá.
+      and u.deleted_at is null
+      and r.deleted_at is null
       and (ur.valido_desde is null or ur.valido_desde <= now())
       and (ur.valido_hasta is null or ur.valido_hasta > now())
   );
 $$;
 
--- Zonas en las que el usuario autenticado trabaja (asignación directa + campañas vigentes).
+-- Zonas en las que el usuario autenticado trabaja: asignación directa (usuario.zona_id, que fija
+-- el coordinador — HU-CAM-006) más las campañas efectivamente vigentes hoy. La vigencia se filtra
+-- por las fechas de la campaña: una inscripción de una campaña que terminó hace meses no se
+-- soft-deletea sola, y sin este filtro seguiría dando acceso a la zona para siempre.
 create or replace function public.mis_zonas()
 returns setof uuid
 language sql
@@ -569,14 +671,84 @@ security definer
 set search_path = ''
 as $$
   select u.zona_id from public.usuario u
-   where u.id = auth.uid() and u.zona_id is not null
+   where u.id = auth.uid() and u.zona_id is not null and u.deleted_at is null
   union
-  select cc.zona_id from public.campania_colportor cc
-   where cc.usuario_id = auth.uid() and cc.deleted_at is null and cc.zona_id is not null;
+  select cc.zona_id
+    from public.campania_colportor cc
+    join public.usuario u on u.id = cc.usuario_id
+    join public.campania c on c.id = cc.campania_id
+   where cc.usuario_id = auth.uid()
+     and cc.deleted_at is null
+     and cc.zona_id is not null
+     and u.deleted_at is null
+     and c.deleted_at is null
+     and c.fecha_inicio <= current_date
+     and (c.fecha_fin is null or c.fecha_fin >= current_date);
 $$;
 
 revoke execute on function public.tiene_rol(text), public.mis_zonas() from public, anon;
 grant execute on function public.tiene_rol(text), public.mis_zonas() to authenticated, service_role;
+
+-- 9.1 Guardas de columna: lo que RLS no puede expresar
+--
+-- RLS decide por fila, no por columna. Estas dos columnas deciden QUÉ FILAS ve el usuario, así que
+-- dejarlas escribir libremente convierte a la RLS en una puerta con la llave puesta del lado de
+-- afuera. Se coercionan al valor viejo en silencio (no se lanza excepción) para no mandar a INVALID
+-- un job de sync que por lo demás es correcto: el cliente manda la fila entera en cada LWW.
+--
+-- auth.uid() null = service_role o proceso servidor (seeds, jobs, RPC de ingesta): no se toca.
+
+-- usuario.zona_id lo asigna el coordinador (HU-CAM-006). R-SY04 lo declara campo crítico que
+-- "siempre gana del backend": sin esto un colportor se auto-asigna cualquier zona con un update de
+-- su propia fila y mis_zonas() le abre las casas y el avance de esa zona.
+create or replace function public.tg_usuario_zona_servidor()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.zona_id is distinct from old.zona_id
+     and auth.uid() is not null
+     and not (public.tiene_rol('ADMIN') or public.tiene_rol('COORDINADOR')) then
+    new.zona_id := old.zona_id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger usuario_zona_servidor
+  before update on public.usuario
+  for each row execute function public.tg_usuario_zona_servidor();
+
+-- ubicacion/house_status son compartidas por zona: mover una fila a una zona ajena inyecta datos
+-- en el mapa de otro colportor. El dueño sigue pudiendo editar su fila (R-CM04: la asignación de
+-- zona es referencia, no restricción) — lo único que no puede es mandarla a una zona que no trabaja.
+create or replace function public.tg_zona_propia()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.zona_id is distinct from old.zona_id
+     and new.zona_id is not null
+     and auth.uid() is not null
+     and not (public.tiene_rol('ADMIN') or public.tiene_rol('COORDINADOR'))
+     and new.zona_id not in (select public.mis_zonas()) then
+    new.zona_id := old.zona_id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger ubicacion_zona_propia
+  before update on public.ubicacion
+  for each row execute function public.tg_zona_propia();
+
+create trigger house_status_zona_propia
+  before update on public.house_status
+  for each row execute function public.tg_zona_propia();
 
 -- ----------------------------------------------------------------------------
 -- 10. Privilegios y RLS
@@ -589,32 +761,30 @@ grant execute on function public.tiene_rol(text), public.mis_zonas() to authenti
 --   · service_role: todo (seeds, jobs).
 alter default privileges for role postgres in schema public revoke all on tables from anon;
 alter default privileges for role postgres in schema public revoke all on sequences from anon;
-alter default privileges for role postgres in schema public revoke all on functions from anon;
 alter default privileges for role postgres in schema public
   revoke delete, truncate, references, trigger on tables from authenticated;
 
 revoke all on all tables in schema public from anon;
 revoke all on all sequences in schema public from anon;
-revoke all on all functions in schema public from anon;
 
 revoke all on all tables in schema public from authenticated;
 grant select, insert, update on all tables in schema public to authenticated;
 grant all on all tables in schema public to service_role;
 
-do $$
-declare
-  t text;
-begin
-  foreach t in array array[
-    'pais','ciudad','usuario','rol','usuario_rol','horario_colportor','campania','zona',
-    'campania_colportor','producto','coleccion','producto_coleccion','precio_por_zona',
-    'ubicacion','espacio','espacio_persona','jornada','visita','agenda','venta','venta_item',
-    'entrega','cobranza','house_status'
-  ] loop
-    execute format('alter table public.%I enable row level security', t);
-  end loop;
-end
-$$;
+-- Las funciones se revocan de PUBLIC, no de anon. Postgres otorga EXECUTE al pseudo-rol PUBLIC en
+-- cada CREATE FUNCTION, y anon lo hereda: revocarle a anon un grant directo que nunca tuvo deja el
+-- privilegio heredado intacto. Con las funciones de hoy el impacto es nulo, pero el RPC de ingesta
+-- de Sprint 3 llega con SECURITY DEFINER y ahí esto deja de ser cosmético.
+alter default privileges for role postgres in schema public revoke all on functions from public, anon;
+revoke all on all functions in schema public from public, anon;
+
+-- uuid_generate_v7() se otorga explícito: es el default de casi toda PK, y evaluar un default
+-- también chequea EXECUTE. Sin este grant, authenticated no puede insertar sin pasar el id.
+grant execute on function public.uuid_generate_v7() to authenticated, service_role;
+grant execute on function public.tiene_rol(text), public.mis_zonas() to authenticated, service_role;
+
+-- RLS se habilita en el mismo loop que cablea la auditoría (sección 8), para que la lista de
+-- tablas exista en un solo lugar.
 
 -- 10.1 Tablas pull (catálogo, geografía, campañas): lectura para todo autenticado, incluidas
 --      las bajas lógicas (la app necesita el tombstone para borrar su réplica). Escribe ADMIN.
@@ -623,7 +793,7 @@ declare
   t text;
 begin
   foreach t in array array[
-    'pais','ciudad','zona','campania','producto','coleccion','producto_coleccion','precio_por_zona','rol'
+    'pais','ciudad','zona','campania','producto','coleccion','producto_coleccion','rol'
   ] loop
     execute format('create policy %I on public.%I for select to authenticated using (true)',
                    t || '_select_autenticado', t);
@@ -634,6 +804,39 @@ begin
   end loop;
 end
 $$;
+
+-- precio_por_zona queda fuera del loop de arriba: el precio de VENTA por zona lo define el
+-- Coordinador, no el Admin (R-CT02, HU-CAT-005). El Admin define el precio de compra, que vive en
+-- producto.precio_base_compra. Y el Coordinador solo toca las zonas de las campañas que coordina.
+create policy precio_por_zona_select_autenticado on public.precio_por_zona
+  for select to authenticated using (true);
+
+create policy precio_por_zona_insert_staff on public.precio_por_zona
+  for insert to authenticated
+  with check (
+    public.tiene_rol('ADMIN')
+    or (public.tiene_rol('COORDINADOR') and exists (
+          select 1 from public.zona z
+            join public.campania c on c.id = z.campania_id
+           where z.id = precio_por_zona.zona_id and c.coordinador_id = auth.uid()))
+  );
+
+create policy precio_por_zona_update_staff on public.precio_por_zona
+  for update to authenticated
+  using (
+    public.tiene_rol('ADMIN')
+    or (public.tiene_rol('COORDINADOR') and exists (
+          select 1 from public.zona z
+            join public.campania c on c.id = z.campania_id
+           where z.id = precio_por_zona.zona_id and c.coordinador_id = auth.uid()))
+  )
+  with check (
+    public.tiene_rol('ADMIN')
+    or (public.tiene_rol('COORDINADOR') and exists (
+          select 1 from public.zona z
+            join public.campania c on c.id = z.campania_id
+           where z.id = precio_por_zona.zona_id and c.coordinador_id = auth.uid()))
+  );
 
 -- 10.2 Identidad
 create policy usuario_select_propio_o_staff on public.usuario
@@ -655,6 +858,11 @@ create policy usuario_rol_update_admin on public.usuario_rol
 create policy horario_colportor_propio on public.horario_colportor
   for all to authenticated
   using (usuario_id = auth.uid()) with check (usuario_id = auth.uid());
+-- El coordinador arma la ruta de la campaña con los horarios de su gente: mismo bypass de lectura
+-- que tienen usuario, usuario_rol y campania_colportor.
+create policy horario_colportor_select_staff on public.horario_colportor
+  for select to authenticated
+  using (public.tiene_rol('ADMIN') or public.tiene_rol('COORDINADOR'));
 
 create policy campania_colportor_select on public.campania_colportor
   for select to authenticated

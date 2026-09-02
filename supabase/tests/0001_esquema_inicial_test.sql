@@ -91,6 +91,15 @@ select is(
   'authenticated no puede DELETE (solo soft delete)'
 );
 
+-- Las funciones se otorgan a PUBLIC por defecto en cada CREATE FUNCTION, y anon hereda de ahí.
+-- Mirar solo role_table_grants dejaba ese camino sin cubrir.
+select is(
+  (select count(*) from information_schema.role_routine_grants
+    where specific_schema = 'public' and grantee in ('anon', 'PUBLIC')),
+  0::bigint,
+  'anon ni PUBLIC tienen EXECUTE sobre las funciones de public'
+);
+
 -- ---------------------------------------------------------------------------
 -- 5. IDs: uuid en todas las PK, nunca serial/identity
 -- ---------------------------------------------------------------------------
@@ -123,6 +132,46 @@ select is(sync_version, 1::bigint, 'UPDATE incrementa sync_version')
 from public.pais where id = '01920000-0000-7000-8000-0000000000aa';
 select ok(updated_at > created_at, 'UPDATE avanza updated_at')
 from public.pais where id = '01920000-0000-7000-8000-0000000000aa';
+
+-- El cliente manda la fila entera en cada LWW: no puede reescribir el rastro de quién creó qué.
+update public.pais
+   set created_at = now() - interval '10 years',
+       created_by = '01920000-0000-7000-8000-0000000000bb'
+ where id = '01920000-0000-7000-8000-0000000000aa';
+
+select ok(created_at > now() - interval '1 hour', 'UPDATE no puede reescribir created_at')
+from public.pais where id = '01920000-0000-7000-8000-0000000000aa';
+select is(created_by, null::uuid, 'UPDATE no puede reescribir created_by')
+from public.pais where id = '01920000-0000-7000-8000-0000000000aa';
+
+-- El INSERT tampoco fija sync_version: es server-authoritative en las dos operaciones.
+insert into public.pais (id, nombre, iso_code, sync_version)
+values ('01920000-0000-7000-8000-0000000000ac', 'Argentina', 'AR', 999);
+select is(sync_version, 0::bigint, 'INSERT ignora el sync_version que manda el cliente')
+from public.pais where id = '01920000-0000-7000-8000-0000000000ac';
+
+-- Dos precios abiertos para el mismo producto/zona harían ambiguo "el precio actual".
+insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
+values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
+insert into public.zona (id, nombre, ciudad_id)
+values ('01920000-0000-7000-8000-0000000000ae', 'Centro', '01920000-0000-7000-8000-0000000000ad');
+insert into public.producto (id, nombre, tipo)
+values ('01920000-0000-7000-8000-0000000000af', 'Conflicto de los Siglos', 'LIBRO');
+insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde)
+values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000ae', 50000, '2026-01-01');
+
+select throws_ok(
+  $$ insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde)
+     values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000ae', 70000, '2026-01-01') $$,
+  '23P01', null,
+  'dos precios vigentes solapados para el mismo producto y zona se rechazan'
+);
+select lives_ok(
+  $$ insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde, valido_hasta)
+     values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000ae',
+             70000, '2020-01-01', '2025-12-31') $$,
+  'un precio histórico cerrado antes del vigente se acepta'
+);
 
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, raw_user_meta_data,
                         created_at, updated_at)
