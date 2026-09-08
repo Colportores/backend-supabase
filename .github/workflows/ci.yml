@@ -18,6 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Antes de levantar nada: si hay SQL fuera de supabase/, los pasos de abajo
+      # no lo aplican y el job daría verde sobre código que nadie ejecutó.
+      # No necesita Docker — es git y grep.
+      - name: SQL solo en supabase/
+        run: bash scripts/check-sql-layout.sh
+
       # Mismo entorno que el desarrollo local (compose.dev.yml): Postgres de Supabase + CLI + pg_prove.
       - name: Construir tooling
         run: docker compose -f compose.dev.yml build cli
