@@ -581,6 +581,34 @@ begin
       using errcode = 'invalid_parameter_value';
   end if;
 
+  -- Tope de lote del lado de SQL, no solo del BFF.
+  --
+  -- El BFF corta en 500 jobs y devuelve 413, pero es un cliente más del RPC: el
+  -- panel del coordinador, un script de migración o un BFF con un bug pueden
+  -- llamar acá directamente. Sin tope, un lote de 100.000 jobs corre 100.000
+  -- subtransacciones en una sola transacción — cada bloque `exception` de
+  -- `aplicar_job` consume un slot, y pasados ~64k la transacción entra en
+  -- overflow de subxids y degrada la visibilidad de TODAS las sesiones de la
+  -- base, no solo la suya.
+  --
+  -- 54000 (program_limit_exceeded) es lo que el BFF traduce a 413. Es un error
+  -- de payload, así que el motor lo clasifica INVALID y no lo reintenta para
+  -- siempre (contrato §5.1): reintentar el mismo lote gigante no lo achica.
+  if jsonb_array_length(p_jobs) > 500 then
+    raise exception 'lote de % jobs: el máximo es 500', jsonb_array_length(p_jobs)
+      using errcode = 'program_limit_exceeded',
+            hint = 'partí el lote; el BFF ya lo hace a los 500 (RR-02)';
+  end if;
+
+  -- Y un techo de bytes, porque 500 jobs con un payload grande cada uno también
+  -- es un problema. RR-02 habla de lotes de ~1 MB típico; 8 MB es holgura, no
+  -- objetivo.
+  if octet_length(p_jobs::text) > 8 * 1024 * 1024 then
+    raise exception 'lote de % bytes: el máximo es 8 MB', octet_length(p_jobs::text)
+      using errcode = 'program_limit_exceeded',
+            hint = 'partí el lote; RR-02 dimensiona los lotes en ~1 MB';
+  end if;
+
   -- En orden: los jobs de una misma entidad se aplican en orden de creación
   -- (contrato §5.5), y un item nunca antes que su venta.
   for v_job in select * from jsonb_array_elements(p_jobs) loop

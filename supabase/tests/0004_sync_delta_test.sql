@@ -198,6 +198,29 @@ select is(
   'un client_op_id malformado es invalid, no un 500 que tumba el lote'
 );
 
+-- El tope de lote es del RPC, no solo del BFF: el panel, un script o un BFF con
+-- un bug llaman acá directamente. Sin tope, un lote gigante abre una
+-- subtransacción por job y pasadas ~64k degrada la visibilidad de toda la base.
+select throws_ok(
+  $$ select sync.push((select jsonb_agg(jsonb_build_object(
+       'client_op_id', public.uuid_generate_v7(), 'entity', 'jornada', 'op', 'insert',
+       'payload', jsonb_build_object('id', public.uuid_generate_v7(), 'inicio', now())))
+     from generate_series(1, 501) n)) $$,
+  '54000', null,
+  'un lote de más de 500 jobs se rechaza con 54000 (el BFF lo traduce a 413)'
+);
+
+select lives_ok(
+  $$ select sync.push('[]'::jsonb) $$,
+  'un lote vacío es válido: cero jobs, cero resultados'
+);
+
+select throws_ok(
+  $$ select sync.push('{"no":"soy un array"}'::jsonb) $$,
+  '22023', null,
+  'un p_jobs que no es array se rechaza en vez de reventar adentro del loop'
+);
+
 -- ---------------------------------------------------------------------------
 -- 5. Soft delete
 -- ---------------------------------------------------------------------------

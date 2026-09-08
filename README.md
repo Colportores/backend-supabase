@@ -47,11 +47,13 @@ supabase/
 ├── config.toml        ← config del proyecto (supabase init); project_id = backend-supabase
 ├── migrations/        ← forward-only
 │   ├── 20260901000000_0001_esquema_inicial.sql
-│   └── 20260902180000_0002_sync_infra.sql
+│   ├── 20260902180000_0002_sync_infra.sql
+│   └── 20260902200000_0003_rls_performance.sql
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
 │                        0003 estructura de sync, 0004 push y delta
+├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
-scripts/               ← db-migrate / db-test / db-lint / db-reset (los usa CI)
+scripts/               ← db-migrate / db-test / db-lint / db-reset / db-bench
 ```
 
 `0004_sync_delta_test.sql` es el único que **no** envuelve todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpia sus filas al final.
@@ -78,6 +80,8 @@ Tres cosas que conviene saber antes de tocarlo:
 **El cursor del delta es el xid de la transacción, no el reloj.** `updated_at` se llena con `now()`, que es la hora de *inicio* de transacción: dos escritores concurrentes commitean en un orden que no tiene por qué coincidir con el de sus timestamps, y la fila que commiteó tarde queda detrás de un watermark que ya avanzó — subida, guardada y jamás entregada. Se ordena por `(xmin_w, id)` y se sirve solo lo que está por debajo de `pg_snapshot_xmin(pg_current_snapshot())`. El diagnóstico y el arreglo son de @BrunoFCapri.
 
 **`xmin_w` lo pone el trigger de auditoría, no el RPC.** Si dependiera del RPC, toda escritura que no pase por `sync.push()` —seeds, panel del coordinador, un job— dejaría la fila con el xid de su INSERT: modificada en la base y nunca propagada.
+
+**Las políticas RLS envuelven sus llamadas en `(select ...)`.** `tiene_rol()` suelta en un `USING` se evalúa **por fila**; envuelta es un InitPlan que corre una vez. Medido sobre 390.000 filas, el delta de `ubicacion` pasó de **1.210 ms a 35 ms** (`supabase/bench/README.md`). Un test en `0002_rls_test.sql` falla si una política nueva se aparta.
 
 El registro de entidades (`sync.entidad`) es una tabla y no una lista en el código: el RPC es genérico, y sin lista blanca un cliente podría mandar `entity: "usuario"` y escribir donde no debe. Es el espejo en SQL del `SyncSpec` del motor ([contrato §2](https://github.com/Colportores/docs-organizacion/blob/main/docs/contrato-sync-engine.md)). **`persona` y `nota` no están, y no van a estar.**
 
