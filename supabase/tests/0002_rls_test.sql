@@ -222,5 +222,48 @@ select is(public.tiene_rol('COLPORTOR'), false,
 select set_config('role', 'anon', true);
 select throws_ok($$ select count(*) from public.producto $$, '42501', null, 'anon no puede leer ni el catálogo');
 
+-- --- rendimiento de las políticas (0003) -------------------------------------
+-- Una llamada suelta en el USING se evalúa POR FILA; envuelta en (select ...) se
+-- convierte en InitPlan y se evalúa una vez. Medido con supabase/bench sobre
+-- 390.000 filas, la diferencia en el delta de `ubicacion` fue 1210 ms → 14 ms.
+-- Este test existe para que una política nueva no vuelva a perderlo en silencio.
+select set_config('role', 'postgres', true);
+
+-- Toda aparición tiene que venir precedida por SELECT. Se cuentan las dos
+-- formas y se comparan: si hay más llamadas que llamadas envueltas, alguna
+-- quedó suelta y se evalúa por fila.
+select is(
+  (select array_agg(policyname::text order by policyname)
+     from pg_policies p,
+          lateral (select coalesce(p.qual, '') || ' ' || coalesce(p.with_check, '') as e) x
+    where p.schemaname = 'public'
+      and regexp_count(x.e, 'tiene_rol\(') > regexp_count(x.e, 'SELECT tiene_rol\(')),
+  null::text[],
+  'ninguna política llama a tiene_rol() sin envolver en (select ...)'
+);
+
+select is(
+  (select array_agg(policyname::text order by policyname)
+     from pg_policies p,
+          lateral (select coalesce(p.qual, '') || ' ' || coalesce(p.with_check, '') as e) x
+    where p.schemaname = 'public'
+      and regexp_count(x.e, 'auth\.uid\(\)') > regexp_count(x.e, 'SELECT auth\.uid\(\)')),
+  null::text[],
+  'ninguna política llama a auth.uid() sin envolver en (select ...)'
+);
+
+-- Y que el guard sirva de algo: una política suelta tiene que hacerlo fallar.
+create policy zz_guard_canario on public.jornada
+  for select to authenticated using (colportor_id = auth.uid());
+select is(
+  (select count(*)::integer from pg_policies p
+    where p.schemaname = 'public' and p.policyname = 'zz_guard_canario'
+      and regexp_count(coalesce(p.qual, ''), 'auth\.uid\(\)')
+        > regexp_count(coalesce(p.qual, ''), 'SELECT auth\.uid\(\)')),
+  1,
+  'el guard detecta una política con auth.uid() suelto (canario)'
+);
+drop policy zz_guard_canario on public.jornada;
+
 select * from finish();
 rollback;
