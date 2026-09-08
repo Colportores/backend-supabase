@@ -22,6 +22,8 @@ Parte del sistema [Colportaje App](https://github.com/Colportores). El modelo de
 
 Los tests pgTAP (`supabase/tests/`) verifican estas reglas en cada PR: si una tabla nueva no cumple, CI falla.
 
+**Todo el SQL del repo vive en `supabase/`**, y `scripts/check-sql-layout.sh` lo hace cumplir en CI. `supabase migration up` y `supabase db push` leen únicamente `supabase/migrations/`: un árbol de SQL en cualquier otro lado sale verde sin que nadie lo haya aplicado ni probado.
+
 ## Desarrollo
 
 Todo corre en Docker; no hace falta el CLI de Supabase ni Postgres en el host.
@@ -60,7 +62,7 @@ scripts/               ← db-migrate / db-test / db-lint / db-reset / db-bench
 
 ## CI/CD
 
-- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`.
+- `ci.yml` (PR y push a `develop`/`staging`/`production`): verifica que no haya SQL fuera de `supabase/`, levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`.
 - `deploy.yml` (push a `staging`/`production`): `supabase link` + `supabase db push` contra el proyecto del *environment*. Requiere `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID` y `SUPABASE_DB_PASSWORD` como secrets del environment de GitHub.
 
 ## Infraestructura de sincronización
