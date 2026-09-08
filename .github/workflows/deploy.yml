@@ -1,29 +1,47 @@
 name: Deploy
 
-# staging → proyecto Supabase de staging · production → proyecto de producción.
+# Aplica las migraciones pendientes al proyecto Supabase del environment.
 # Cada environment de GitHub define: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD.
 # Solo aplica migraciones pendientes (forward-only); nunca hace reset.
 #
 # Se dispara al TERMINAR CI sobre el mismo commit, no en paralelo con él: con `on: push` los dos
 # workflows arrancaban a la vez y una migración que rompe pgTAP igual llegaba a la base real.
+#
+# `develop` va detrás de una bandera (variable de repo DEPLOY_DEVELOP) y no de un cambio de
+# workflow: durante la fase de desarrollo el proyecto cloud no tiene usuarios finales y conviene
+# que cada merge a develop lo deje al día, pero eso deja de ser aceptable en cuanto arranque el
+# piloto. Apagarlo tiene que ser cambiar una variable, no acordarse de editar este archivo.
 on:
   workflow_run:
     workflows: [CI]
-    branches: [staging, production]
+    branches: [develop, staging, production]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment al que aplicar las migraciones
+        required: true
+        type: choice
+        options: [develop, staging, production]
 
 concurrency:
-  group: deploy-${{ github.event.workflow_run.head_branch }}
+  group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment }}
   cancel-in-progress: false
 
 jobs:
   db-push:
-    name: supabase db push (${{ github.event.workflow_run.head_branch }})
-    # El gate: si CI no terminó en verde sobre este commit, no se aplica nada.
-    if: github.event.workflow_run.conclusion == 'success'
+    name: supabase db push (${{ github.event.workflow_run.head_branch || inputs.environment }})
+    # Dos condiciones, no una:
+    #   · el gate de siempre — si CI no terminó en verde sobre este commit, no se aplica nada;
+    #   · la bandera de develop — sin DEPLOY_DEVELOP=true, un merge a develop no toca el cloud.
+    # El disparo manual pasa igual: es una persona pidiéndolo explícitamente.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.head_branch != 'develop' || vars.DEPLOY_DEVELOP == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: ${{ github.event.workflow_run.head_branch }}
+    environment: ${{ github.event.workflow_run.head_branch || inputs.environment }}
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -31,13 +49,18 @@ jobs:
       # workflow_run corre sobre el default branch salvo que se pida el commit explícito.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: supabase/setup-cli@v1
         with:
           version: 2.116.0
 
       - run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+
+      # Qué se va a aplicar, ANTES de aplicarlo. Si algo sale mal, el log dice contra qué
+      # historial se corrió: `db push` es forward-only y no hay rollback.
+      - name: Historial antes
+        run: supabase migration list
 
       - name: Migraciones pendientes
         run: supabase db push

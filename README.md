@@ -55,7 +55,47 @@ scripts/               ← db-migrate / db-test / db-lint / db-reset (los usa CI
 ## CI/CD
 
 - `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`.
-- `deploy.yml` (push a `staging`/`production`): `supabase link` + `supabase db push` contra el proyecto del *environment*. Requiere `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID` y `SUPABASE_DB_PASSWORD` como secrets del environment de GitHub.
+- `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment*. **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
+
+### Cuándo aplica cada rama
+
+| rama | aplica | condición |
+|---|---|---|
+| `develop` | environment `develop` | solo si la variable de repo **`DEPLOY_DEVELOP`** vale `true` |
+| `staging` | environment `staging` | siempre, con CI verde |
+| `production` | environment `production` | siempre, con CI verde |
+
+El auto-deploy de `develop` va detrás de una bandera y no de un cambio de workflow: durante la fase de desarrollo conviene que cada merge deje el proyecto cloud al día, y eso deja de ser aceptable en cuanto arranque el piloto. Apagarlo es cambiar una variable:
+
+```sh
+gh variable set DEPLOY_DEVELOP --repo Colportores/backend-supabase --body false
+```
+
+También se puede disparar a mano contra cualquier environment desde la pestaña Actions (`workflow_dispatch`), o con `gh workflow run deploy.yml -f environment=develop`.
+
+### Configurar un environment
+
+Cada environment necesita tres secrets. **Nunca se pegan en un chat, un issue ni un archivo del repo**: se cargan una vez con `gh secret set`, que los lee de stdin y no los deja en el historial del shell.
+
+```sh
+REPO=Colportores/backend-supabase
+ENV=develop
+
+gh api -X PUT "repos/$REPO/environments/$ENV" --silent        # crear el environment
+
+# Token personal de Supabase — https://supabase.com/dashboard/account/tokens
+gh secret set SUPABASE_ACCESS_TOKEN --repo "$REPO" --env "$ENV"
+
+# Contraseña de la base — Project Settings › Database › Database password
+gh secret set SUPABASE_DB_PASSWORD  --repo "$REPO" --env "$ENV"
+
+# Ref del proyecto (no es secreto, pero el workflow lo lee como tal)
+gh secret set SUPABASE_PROJECT_ID   --repo "$REPO" --env "$ENV" --body "<project-ref>"
+```
+
+El `<project-ref>` es lo que va en la URL del dashboard: `https://supabase.com/dashboard/project/<project-ref>`.
+
+> `supabase db push` es **forward-only y no tiene rollback**. El workflow imprime `migration list` antes y después justamente para que el log diga contra qué historial corrió.
 
 ## Privacidad
 
