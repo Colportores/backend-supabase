@@ -52,7 +52,8 @@ supabase/
 │   ├── 20260902180000_0002_sync_infra.sql
 │   └── 20260902200000_0003_rls_performance.sql
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
-│                        0003 estructura de sync, 0004 push y delta
+│                        0003 estructura de sync, 0004 push y delta;
+│                        shell: 0005 concurrencia del push y del delta
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
 scripts/               ← db-migrate / db-test / db-lint / db-reset / db-bench
@@ -60,9 +61,11 @@ scripts/               ← db-migrate / db-test / db-lint / db-reset / db-bench
 
 `0004_sync_delta_test.sql` es el único que **no** envuelve todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpia sus filas al final.
 
+`0005_sync_concurrencia.sh` es shell y no pgTAP: prueba lo que pasa cuando dos transacciones se cruzan —un reintento que llega con el primer envío todavía en vuelo, dos colportores que actualizan la misma casa desde la misma versión, commits fuera de orden en el delta—, y eso necesita dos conexiones vivas a la vez. `db-test.sh` lo corre después de `pg_prove`.
+
 ## CI/CD
 
-- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`.
+- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP, el test de concurrencia y `supabase db lint`.
 - `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment*. **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
 ### Cuándo aplica cada rama

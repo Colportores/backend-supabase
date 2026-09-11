@@ -31,7 +31,7 @@ jobs:
       - name: Aplicar migraciones sobre una base vacía
         run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-migrate.sh
 
-      - name: Tests pgTAP (esquema, privacidad, RLS)
+      - name: Tests pgTAP y de concurrencia (esquema, privacidad, RLS, sync)
         run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-test.sh
 
       - name: Lint de funciones (plpgsql_check)
