@@ -34,6 +34,7 @@ docker compose -f compose.dev.yml run --rm cli bash scripts/db-migrate.sh # base
 docker compose -f compose.dev.yml run --rm cli bash scripts/db-test.sh    # pgTAP
 docker compose -f compose.dev.yml run --rm cli bash scripts/db-lint.sh    # plpgsql_check
 docker compose -f compose.dev.yml run --rm cli bash scripts/db-reset.sh   # borrar y re-aplicar todo
+docker compose -f compose.dev.yml run --rm cli bash scripts/db-seed.sh    # + datos de ejemplo (opcional)
 docker compose -f compose.dev.yml run --rm cli psql "$DB_URL"             # consola
 docker compose -f compose.dev.yml down -v                                 # apagar (la base no persiste)
 ```
@@ -41,6 +42,7 @@ docker compose -f compose.dev.yml down -v                                 # apag
 - `db` es la imagen oficial `supabase/postgres` (mismos roles, schema `auth` y extensiones que producción), expuesta en el host en `localhost:55432` (`DB_PORT=` para cambiarlo).
 - `cli` trae Supabase CLI, `psql` y `pg_prove`. El repo se monta en `/work`.
 - Nueva migración: `docker compose -f compose.dev.yml run --rm cli supabase migration new <nnnn>_<descripcion>` y luego `db-migrate.sh`.
+- `db-seed.sh` carga `supabase/seed.sql` (zonas, campañas, catálogo y precios de ejemplo, todos ficticios — issue #16). Es un paso aparte de `db-reset.sh`, a propósito: la suite pgTAP asume el catálogo vacío salvo sus propios fixtures (p. ej. `0002_rls_test.sql` cuenta exactamente 1 fila en `producto`), así que sembrar datos de ejemplo no es parte del reset que usa CI. `supabase db reset` (el comando nativo del CLI, no el script de este repo) sí los aplica solo, vía `config.toml -> db.seed.sql_paths`. Para cargar datos **reales** en vez de los de ejemplo, ver [`docs/guia-carga-manual.md`](./docs/guia-carga-manual.md).
 
 ### Estructura
 
@@ -51,11 +53,13 @@ supabase/
 │   ├── 20260901000000_0001_esquema_inicial.sql
 │   ├── 20260902180000_0002_sync_infra.sql
 │   └── 20260902200000_0003_rls_performance.sql
+├── seed.sql            ← datos de ejemplo (ficticios) de zonas, campañas, catálogo y precios
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
-│                        0003 estructura de sync, 0004 push y delta
+│                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
-scripts/               ← db-migrate / db-test / db-lint / db-reset / db-bench
+docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
+scripts/               ← db-migrate / db-test / db-lint / db-reset / db-seed / db-bench
 ```
 
 `0004_sync_delta_test.sql` es el único que **no** envuelve todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpia sus filas al final.
