@@ -49,10 +49,22 @@ Supabase y permiso para correr SQL.
 ## Orden de carga (respeta las FKs)
 
 ```
-pais → ciudad → campania → zona → producto ⟍
-                                              → producto_coleccion → precio_por_zona
-                                   coleccion ⟋
+pais → ciudad ─┬→ campania
+               └→ zona ──────────────────┐
+                                          │
+producto ────────────────────────────────┼→ precio_por_zona
+                                          │   (FK directa a producto O a coleccion —
+coleccion ────────────────────────────────┘    NO pasa por producto_coleccion)
+   │
+   └→ producto_coleccion   (vínculo M:N producto↔colección; solo agrupa
+                             para mostrar/vender junto, no es prerequisito
+                             de un precio de colección)
 ```
+
+`precio_por_zona` tiene FKs **directas** a `producto(id)` y a `coleccion(id)`
+(`0001_esquema_inicial.sql` §4) — `producto_coleccion` es un vínculo aparte,
+para armar el catálogo agrupado. Podés cargar un precio de colección sin haber
+cargado `producto_coleccion` todavía.
 
 ### 1. `pais` (normalmente ya existe — V1 es solo Uruguay)
 

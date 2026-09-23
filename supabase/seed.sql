@@ -1,8 +1,12 @@
 -- ============================================================================
 -- Seed de ejemplo · zonas, campañas, catálogo y precios (issue #16)
 --
--- Corre automáticamente en `supabase db reset` (config.toml -> db.seed.sql_paths)
--- y con `scripts/db-seed.sh` sobre una base con las migraciones ya aplicadas.
+-- Se aplica con `scripts/db-seed.sh` sobre una base con las migraciones ya
+-- aplicadas. `config.toml` lo registra en `db.seed.sql_paths` (convención del
+-- CLI) pero `[db.seed] enabled = false` a propósito: si estuviera en true,
+-- `supabase db reset --linked` sembraría este catálogo ficticio sobre
+-- cualquier proyecto remoto linkeado, staging/producción incluidos.
+-- `scripts/db-seed.sh` es el único camino sancionado.
 --
 -- TODOS los datos de acá son FICTICIOS Y OBVIOS a propósito: nombres de zona,
 -- campaña, producto y precios no corresponden a ninguna campaña real. Sirven
@@ -15,6 +19,16 @@
 -- así que una fila que ya existe (por id o por cualquier otro unique/exclusion,
 -- como el anti-solape de precio_por_zona) se saltea en vez de fallar o duplicar.
 -- Correr este archivo dos veces deja la base igual que correrlo una vez.
+--
+-- Dos límites de ese "idempotente" a tener presentes:
+--   · Si un dato real cargado a mano choca con uno del seed (p. ej. un precio
+--     que se solapa en rango de fechas para la misma zona y producto), el
+--     insert del seed se saltea EN SILENCIO — no avisa, no falla.
+--   · "No duplica ni falla" no es "converge al contenido de este archivo": si
+--     mañana se edita un valor acá (por id ya existente) y se re-corre sobre
+--     una base ya sembrada, `on conflict do nothing` deja la fila vieja tal
+--     cual. Para aplicar un cambio hay que borrar esas filas de ejemplo o
+--     usar un `id` nuevo.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------

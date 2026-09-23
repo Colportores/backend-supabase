@@ -12,6 +12,11 @@
 -- este seed nunca corre fuera de una transacción que se deshace.
 --
 -- Requiere invocarse con cwd = raíz del repo (así lo hace scripts/db-test.sh).
+--
+-- "Idempotente" acá es "no duplica ni falla", no "converge al contenido
+-- actual del archivo": son conteos, no valores — si se edita un precio por id
+-- ya existente y se re-siembra una base ya sembrada, la fila vieja queda tal
+-- cual (ver cabecera de supabase/seed.sql).
 begin;
 select * from no_plan();
 
