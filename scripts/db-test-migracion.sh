@@ -61,6 +61,7 @@ for caso in supabase/tests_migracion/*/; do
       echo "   FALLA: la migración tenía que abortar y se aplicó"; fallas=$((fallas + 1)); continue
     fi
     while IFS= read -r esperado || [ -n "$esperado" ]; do
+      esperado="${esperado%$'\r'}"   # un checkout en Windows puede dejar CRLF
       [ -z "$esperado" ] && continue
       if ! grep -qF -- "$esperado" <<< "$salida"; then
         echo "   FALLA: el error no dice: $esperado"; fallas=$((fallas + 1))
