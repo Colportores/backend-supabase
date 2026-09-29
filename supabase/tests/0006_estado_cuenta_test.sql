@@ -28,10 +28,14 @@ end $$;
 --   b4 inscripción borrada    b5 vigente (sin zona)      b6 suspendido + vigente
 --   b7 suspendido sin campaña b8 campaña borrada         b9 vigente con zona
 --   ba admin (para fijar que tampoco cambia la marca con su JWT)
+--   bb campaña que empieza hoy  bc campaña sin fecha_fin  bd sin perfil en public.usuario
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000006' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'estado-' || s || '@example.com', 'x', now(), now()
-  from unnest(array['b1','b2','b3','b4','b5','b6','b7','b8','b9','ba']) s;
+  from unnest(array['b1','b2','b3','b4','b5','b6','b7','b8','b9','ba','bb','bc','bd']) s;
+
+-- bd existe en auth.users pero su perfil no (el trigger de alta no corrió o se borró la fila).
+delete from public.usuario where id = '01920000-0000-7000-8000-0000000006bd';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000006c0', 'Pais estado', 'ZE');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
@@ -42,11 +46,14 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_i
   ('01920000-0000-7000-8000-0000000006e2', 'Vencida',   'VERANO',     current_date - 60, current_date - 1,  '01920000-0000-7000-8000-0000000006c1', null),
   ('01920000-0000-7000-8000-0000000006e3', 'Futura',    'INVIERNO',   current_date + 1,  current_date + 30, '01920000-0000-7000-8000-0000000006c1', null),
   ('01920000-0000-7000-8000-0000000006e4', 'Borrada',   'VERANO',     current_date - 10, current_date + 10, '01920000-0000-7000-8000-0000000006c1', now()),
-  ('01920000-0000-7000-8000-0000000006e5', 'Termina hoy','PERMANENTE', current_date - 10, current_date,     '01920000-0000-7000-8000-0000000006c1', null);
+  ('01920000-0000-7000-8000-0000000006e5', 'Termina hoy','PERMANENTE', current_date - 10, current_date,     '01920000-0000-7000-8000-0000000006c1', null),
+  ('01920000-0000-7000-8000-0000000006e6', 'Empieza hoy','VERANO',     current_date,      current_date + 10, '01920000-0000-7000-8000-0000000006c1', null),
+  ('01920000-0000-7000-8000-0000000006e7', 'Sin fin',    'PERMANENTE', current_date - 10, null,              '01920000-0000-7000-8000-0000000006c1', null);
 
 insert into public.zona (id, nombre, ciudad_id, campania_id) values
   ('01920000-0000-7000-8000-0000000006d1', 'Zona vigente', '01920000-0000-7000-8000-0000000006c1', '01920000-0000-7000-8000-0000000006e5'),
-  ('01920000-0000-7000-8000-0000000006d2', 'Zona directa', '01920000-0000-7000-8000-0000000006c1', null);
+  ('01920000-0000-7000-8000-0000000006d2', 'Zona directa', '01920000-0000-7000-8000-0000000006c1', null),
+  ('01920000-0000-7000-8000-0000000006d3', 'Zona sin fin', '01920000-0000-7000-8000-0000000006c1', '01920000-0000-7000-8000-0000000006e7');
 
 insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000006e2', '01920000-0000-7000-8000-0000000006b2', null, null),
@@ -55,7 +62,9 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted
   ('01920000-0000-7000-8000-0000000006e1', '01920000-0000-7000-8000-0000000006b5', null, null),
   ('01920000-0000-7000-8000-0000000006e1', '01920000-0000-7000-8000-0000000006b6', null, null),
   ('01920000-0000-7000-8000-0000000006e4', '01920000-0000-7000-8000-0000000006b8', null, null),
-  ('01920000-0000-7000-8000-0000000006e5', '01920000-0000-7000-8000-0000000006b9', '01920000-0000-7000-8000-0000000006d1', null);
+  ('01920000-0000-7000-8000-0000000006e5', '01920000-0000-7000-8000-0000000006b9', '01920000-0000-7000-8000-0000000006d1', null),
+  ('01920000-0000-7000-8000-0000000006e6', '01920000-0000-7000-8000-0000000006bb', null, null),
+  ('01920000-0000-7000-8000-0000000006e7', '01920000-0000-7000-8000-0000000006bc', '01920000-0000-7000-8000-0000000006d3', null);
 
 update public.usuario set suspendido_en = now()
  where id in ('01920000-0000-7000-8000-0000000006b6', '01920000-0000-7000-8000-0000000006b7');
@@ -121,6 +130,26 @@ select set_eq(
   $$ select * from public.mis_zonas() $$,
   $$ values ('01920000-0000-7000-8000-0000000006d1'::uuid), ('01920000-0000-7000-8000-0000000006d2'::uuid) $$,
   'mis_zonas() sigue sumando la zona directa y la de la inscripción vigente'
+);
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006bb');
+select is(public.estado_cuenta(), 'ACTIVA', 'campaña que empieza hoy ya está vigente → ACTIVA');
+
+-- fecha_fin null = campaña sin fin (PERMANENTE): vigente desde fecha_inicio, igual que en mis_zonas().
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006bc');
+select is(public.estado_cuenta(), 'ACTIVA', 'campaña sin fecha_fin ya empezada → ACTIVA');
+select set_eq(
+  $$ select * from public.mis_zonas() $$,
+  $$ values ('01920000-0000-7000-8000-0000000006d3'::uuid) $$,
+  'la misma campaña sin fecha_fin abre su zona en mis_zonas(): mismo criterio de vigencia'
+);
+
+-- JWT válido cuyo usuario no tiene perfil: error explícito, no un estado inventado.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006bd');
+select throws_ok(
+  $$ select public.estado_cuenta() $$,
+  'P0002', null,
+  'usuario autenticado sin fila en public.usuario → P0002 (no_data_found)'
 );
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006b6');
