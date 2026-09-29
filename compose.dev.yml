@@ -27,6 +27,8 @@ services:
     build:
       context: .
       dockerfile: dockerfile.dev
+    # Una imagen por repo, la misma con cualquier `-p`: no se reconstruye salvo que cambie dockerfile.dev.
+    image: backend-supabase-dev:latest
     volumes:
       - .:/work
     working_dir: /work

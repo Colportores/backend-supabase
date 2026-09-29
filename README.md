@@ -39,6 +39,8 @@ docker compose -f compose.dev.yml run --rm cli psql "$DB_URL"             # cons
 docker compose -f compose.dev.yml down -v                                 # apagar (la base no persiste)
 ```
 
+- **Imagen y cachés compartidas.** `-p <nombre>` propio está bien para aislar contenedores y la base; la imagen (`backend-supabase-dev:latest`) es compartida por todos los proyectos.
+  `docker compose build` solo cuando cambia `dockerfile.dev`.
 - `db` es la imagen oficial `supabase/postgres` (mismos roles, schema `auth` y extensiones que producción), expuesta en el host en `localhost:55432` (`DB_PORT=` para cambiarlo).
 - `cli` trae Supabase CLI, `psql` y `pg_prove`. El repo se monta en `/work`.
 - Nueva migración: `docker compose -f compose.dev.yml run --rm cli supabase migration new <nnnn>_<descripcion>` y luego `db-migrate.sh`.
