@@ -171,10 +171,22 @@ select public.baja_zona(zona_id, vista_previa);
 - **Quién.** El coordinador de la campaña o un ADMIN, y solo si la campaña no terminó. Nadie escribe estas tablas directo (ni el privilegio tiene `authenticated`).
 - **No superposición.** Dos zonas vivas de la misma `campania_ciudad` no comparten interior; sí la calle del borde (tolerancia: una franja de menos de 1 m de ancho no cuenta). Se valida con PostGIS en un trigger, así que vale para cualquier camino de escritura. `CZ007` trae en el DETAIL la geometría de la parte superpuesta.
 - **Forma.** `RADIAL`: radio de 1 a 3000 m (hasta ahí el círculo de 128 lados queda a menos de 1 m del geodésico). `ESQUINAS`: al menos 3 esquinas en lugares distintos (a 1 m o menos cuentan como la misma), con `orden` entero, y el borde pasando a 1 m o menos de cada una. Todo lo demás, `CZ008`.
-- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_que_cambian` (null hasta #24).
+- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_que_cambian`, cuántas ubicaciones cambiarían de zona (ver abajo). Al guardar devuelve las que cambiaron.
 - **Baja.** Lógica. Si la zona tiene colportores asignados se rechaza (`CZ010`) y dice a quiénes reasignar.
 - **Lectura.** El colportor ve las ciudades, zonas y esquinas de las campañas en las que está inscripto (todas las zonas, no solo la suya); el coordinador, las de sus campañas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull. Al crear o reactivar una inscripción, un trigger republica el mapa de esa campaña (UPDATE nulo que les sube el `xmin_w`): si no, un mapa cargado antes del último pull del inscripto quedaría detrás de su watermark y no le llegaría nunca.
 - **Códigos.** `CZ007`..`CZ013`: ver el header de la migración `0008`.
+
+### Zona de cada ubicación
+
+Desde la migración `0010`, `ubicacion.zona_id` la calcula el servidor por la posición, en todo INSERT y UPDATE. El valor del cliente se ignora, y el push lo descarta porque está en `columnas_servidor`. `house_status.zona_id` sigue a su ubicación. El colportor puede registrar fuera de su zona (R-CM04).
+
+- **Regla** (la app usa la misma, front-colportores-mobile#231). Las candidatas son las zonas vivas que cubren el punto (`ST_Covers`, borde incluido, cálculo plano en lon/lat), de ciudades vivas de campañas vigentes hoy, en la ciudad de la ubicación. Primero van las de la campaña preferida y, entre las que quedan, la de **menor id** (el UUID comparado como texto en minúsculas). Si ninguna cubre el punto, `null`. El desempate por id resuelve el borde compartido y la franja de hasta 1 m que se acepta como borde.
+- **Campaña preferida (D2, opción (a) provisoria).** Al crear o mover la ubicación, las campañas vigentes de quien escribe. En cualquier otro UPDATE y en los recálculos, la campaña de la zona que ya tenía y después las de `created_by`.
+- **Recálculo.** Crear una zona, cambiarle la forma o darla de baja recalcula las ubicaciones de su ciudad que están en la forma vieja o en la nueva, o que tenían esa zona. Vale por cualquier camino. Las que cambian salen en el próximo delta.
+- **Rotación.** Al asignar o cambiar la zona de una inscripción, un trigger republica sus ubicaciones, con su `house_status` y sus espacios. Es un UPDATE nulo, y quien toma la zona recibe las casas ya trabajadas aunque se hayan cargado antes de su último pull.
+- **Bajas.** Una ubicación dada de baja conserva su zona: su tombstone le tiene que llegar a quien tenía la fila.
+- **Posible duplicado** (aviso, no bloqueo). `posibles_duplicados_de_ubicacion(ciudad_id, calle, numero, lat, lon, excluir_id)` devuelve las ubicaciones visibles con la misma dirección normalizada (trim y minúsculas) o a menos de 5 m.
+- **Dirección única (D1).** Pendiente de decisión: no hay índice único. El header de `0010` tiene lo que falta para cerrarlo.
 
 ## Privacidad
 
