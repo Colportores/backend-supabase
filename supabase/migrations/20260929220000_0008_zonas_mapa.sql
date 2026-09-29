@@ -41,7 +41,18 @@
 --     de cada lado, es r·(1 − cos(π/128)) ≈ 0,03 % del radio (0,12 m a 400 m, 0,30 m a 1 km).
 --     Cumple «contiene r − 1 m y no r + 1 m» hasta unos 3,3 km de radio. Coordenadas con 7
 --     decimales (~1 cm).
---   · ESQUINAS: cada vértice tiene que quedar a 1 m o menos del borde recibido.
+--   · Radio máximo: 3000 m (CZ008). Es el número redondo más grande por debajo de los
+--     ~3,3 km en los que vale la cota de ±1 m (r ≤ 1 / (1 − cos(π/128)) ≈ 3321 m), y un
+--     círculo de 3 km encierra ~28 km², muchísimo más de lo que recorre un colportor.
+--   · ESQUINAS: cada vértice tiene que quedar a 1 m o menos del borde recibido, y tiene que
+--     haber al menos 3 esquinas en lugares distintos: dos esquinas a 1 m o menos una de otra
+--     cuentan como la misma (es la tolerancia con la que se valida el borde). El `orden` es
+--     un entero; 2.0 vale como 2.
+--   · Al inscribir a un colportor (o reactivar su inscripción) se republica el mapa de esa
+--     campaña en el sync: un UPDATE nulo sobre sus campania_ciudad, zonas y vértices les sube
+--     el xmin_w. Sin eso, un mapa preparado antes de su último pull (una campaña futura, o
+--     las filas que dejó esta migración) queda por debajo de su watermark y el delta no se lo
+--     entrega nunca. Costo: los demás inscriptos de la campaña vuelven a bajar el mapa una vez.
 --   · El mapa de una campaña TERMINADA no se cambia (ni el ADMIN): recalcularía las
 --     ubicaciones de una temporada cerrada (#24). Una campaña futura sí se puede preparar.
 --   · Baja de una zona con colportores asignados: se rechaza (CZ010) y dice a quiénes
@@ -388,7 +399,7 @@ alter table public.zona
   add constraint zona_tipo_forma_valido check (tipo_forma in ('RADIAL', 'ESQUINAS')),
   add constraint zona_radial_completa check (
     tipo_forma <> 'RADIAL' or (centro_lat is not null and centro_lon is not null and radio_m is not null)),
-  add constraint zona_radio_positivo check (radio_m is null or radio_m > 0),
+  add constraint zona_radio_en_rango check (radio_m is null or radio_m between 1 and 3000),
   add constraint zona_centro_en_el_mapa check (
     (centro_lat is null or centro_lat between -90 and 90)
     and (centro_lon is null or centro_lon between -180 and 180)),
@@ -541,9 +552,23 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- Ni la forma ni la baja cambian (un cambio de nombre o de color, o el UPDATE nulo que
+  -- republica el mapa en el sync al inscribir a alguien): no hay nada que validar.
+  if tg_op = 'UPDATE'
+     and (new.tipo_forma, new.centro_lat, new.centro_lon, new.radio_m, new.poligono_geojson, new.deleted_at)
+         is not distinct from
+         (old.tipo_forma, old.centro_lat, old.centro_lon, old.radio_m, old.poligono_geojson, old.deleted_at) then
+    return new;
+  end if;
+
   if new.tipo_forma = 'RADIAL' then
     if new.centro_lat is null or new.centro_lon is null or new.radio_m is null or new.radio_m <= 0 then
       raise exception 'Una zona radial necesita centro y un radio mayor a 0. Marcá el centro en el mapa y elegí el radio.'
+        using errcode = 'CZ008';
+    end if;
+    if new.radio_m > 3000 then
+      raise exception 'El radio de la zona «%» es de % m y el máximo es 3000 m. Achicalo, o dividí el área en varias zonas.',
+          new.nombre, new.radio_m
         using errcode = 'CZ008';
     end if;
     new.poligono_geojson := public.zona_circulo_geojson(new.centro_lat, new.centro_lon, new.radio_m);
@@ -909,6 +934,11 @@ begin
       raise exception 'Una zona radial necesita centro y un radio mayor a 0. Marcá el centro en el mapa y elegí el radio.'
         using errcode = 'CZ008';
     end if;
+    if p_radio_m > 3000 then
+      raise exception 'El radio de la zona es de % m y el máximo es 3000 m. Achicalo, o dividí el área en varias zonas.',
+          p_radio_m
+        using errcode = 'CZ008';
+    end if;
     if p_centro_lat not between -90 and 90 or p_centro_lon not between -180 and 180 then
       raise exception 'El centro de la zona está fuera del mapa. Marcalo de nuevo.'
         using errcode = 'CZ008';
@@ -943,7 +973,8 @@ begin
         raise exception 'El orden de una esquina tiene que ser un número entero. Volvé a marcar las esquinas.'
           using errcode = 'CZ008';
       end if;
-      v_orden := (v_v ->> 'orden')::integer;
+      -- Por numeric: un JSON 2.0 llega como el texto «2.0», que ::integer no acepta.
+      v_orden := (v_v ->> 'orden')::numeric::integer;
       if v_orden = any (v_ordenes) then
         raise exception 'La esquina % está repetida: cada esquina lleva un orden distinto. Volvé a marcar las esquinas.', v_orden
           using errcode = 'CZ008';
@@ -954,6 +985,30 @@ begin
       end if;
       v_ordenes := v_ordenes || v_orden;
     end loop;
+
+    -- De acá en adelante el orden va como entero: lo leen los casts de abajo.
+    select jsonb_agg(e || jsonb_build_object('orden', (e ->> 'orden')::numeric::integer) order by i)
+      into v_vertices
+      from jsonb_array_elements(v_vertices) with ordinality x(e, i);
+
+    -- Al menos 3 lugares distintos: una esquina a 1 m o menos de otra de orden menor cuenta
+    -- como la misma (la tolerancia con la que se valida el borde, más abajo).
+    select count(*) into v_orden
+      from jsonb_array_elements(v_vertices) a
+     where not exists (
+             select 1 from jsonb_array_elements(v_vertices) b
+              where (b ->> 'orden')::integer < (a ->> 'orden')::integer
+                and extensions.st_dwithin(
+                      extensions.geography(extensions.st_setsrid(extensions.st_makepoint(
+                        (a ->> 'lon')::double precision, (a ->> 'lat')::double precision), 4326)),
+                      extensions.geography(extensions.st_setsrid(extensions.st_makepoint(
+                        (b ->> 'lon')::double precision, (b ->> 'lat')::double precision), 4326)),
+                      1.0::double precision));
+    if v_orden < 3 then
+      raise exception 'Una zona por esquinas necesita al menos 3 esquinas en lugares distintos y hay % (dos esquinas a 1 m o menos cuentan como una). Marcá las esquinas que faltan en el mapa.',
+          v_orden
+        using errcode = 'CZ008';
+    end if;
 
     if p_poligono_geojson is null then
       raise exception 'Falta el borde de la zona, que sigue las calles entre las esquinas. Volvé a cerrar la forma.'
@@ -1291,6 +1346,58 @@ insert into sync.entidad (nombre, tabla, columna_pk, permite_push) values
 create index campania_ciudad_delta_idx on public.campania_ciudad (xmin_w, id);
 create index zona_vertice_delta_idx    on public.zona_vertice    (xmin_w, id);
 
+-- Quien se inscribe empieza a ver el mapa de la campaña, pero esas filas pueden tener un
+-- xmin_w más viejo que su watermark (un mapa preparado antes, las filas que migró esta
+-- migración) y el delta no se las entregaría nunca. Un UPDATE nulo sobre campania_ciudad,
+-- zona y zona_vertice de la campaña les sube el xmin_w (tg_auditoria_update) y salen en su
+-- próximo pull. Vale para todo camino que inscriba o reactive: inscribir_colportor(), el
+-- seed, service_role. SECURITY DEFINER: authenticated no tiene UPDATE sobre estas tablas.
+-- Lo ya republicado en esta transacción no se vuelve a tocar (inscripciones en lote).
+create function public.tg_campania_colportor_republicar_mapa()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.deleted_at is not null then
+    return null;
+  end if;
+  if tg_op = 'UPDATE' and old.deleted_at is null
+     and new.campania_id = old.campania_id and new.usuario_id = old.usuario_id then
+    return null;
+  end if;
+
+  update public.campania_ciudad cc
+     set deleted_at = cc.deleted_at
+   where cc.campania_id = new.campania_id
+     and cc.xmin_w <> pg_current_xact_id();
+
+  update public.zona z
+     set deleted_at = z.deleted_at
+    from public.campania_ciudad cc
+   where cc.id = z.campania_ciudad_id and cc.campania_id = new.campania_id
+     and z.xmin_w <> pg_current_xact_id();
+
+  update public.zona_vertice v
+     set deleted_at = v.deleted_at
+    from public.zona z
+    join public.campania_ciudad cc on cc.id = z.campania_ciudad_id
+   where z.id = v.zona_id and cc.campania_id = new.campania_id
+     and v.xmin_w <> pg_current_xact_id();
+
+  return null;
+end;
+$$;
+
+comment on function public.tg_campania_colportor_republicar_mapa() is
+  'AFTER INSERT/UPDATE de campania_colportor: al crear o reactivar una inscripción, UPDATE nulo '
+  'sobre el mapa de la campaña para que entre en el próximo delta del inscripto.';
+
+create trigger campania_colportor_republicar_mapa
+  after insert or update of deleted_at, campania_id, usuario_id on public.campania_colportor
+  for each row execute function public.tg_campania_colportor_republicar_mapa();
+
 -- ----------------------------------------------------------------------------
 -- 14. Privilegios
 -- ----------------------------------------------------------------------------
@@ -1305,6 +1412,7 @@ revoke all on function
   public.lanzar_superposicion(jsonb),
   public.tg_zona_mapa(),
   public.tg_campania_ciudad_identidad(),
+  public.tg_campania_colportor_republicar_mapa(),
   public.mis_campania_ciudades(),
   public.motivo_mapa_de_campania(uuid),
   public.lanzar_motivo_mapa(text),

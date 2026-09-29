@@ -120,7 +120,7 @@ values ('<id de campania>', '<id de ciudad>');
 
 -- RADIAL: el polígono lo calcula el servidor a partir del centro y el radio.
 insert into public.zona (nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m, color)
-values ('<nombre real>', '<id de campania_ciudad>', 'RADIAL', <lat>, <lon>, <metros>, '#3A7BD5');
+values ('<nombre real>', '<id de campania_ciudad>', 'RADIAL', <lat>, <lon>, <metros, de 1 a 3000>, '#3A7BD5');
 ```
 
 - Toda zona es de una ciudad de una campaña (`campania_ciudad_id`

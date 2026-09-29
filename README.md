@@ -166,9 +166,10 @@ select public.baja_zona(zona_id, vista_previa);
 
 - **Quién.** El coordinador de la campaña o un ADMIN, y solo si la campaña no terminó. Nadie escribe estas tablas directo (ni el privilegio tiene `authenticated`).
 - **No superposición.** Dos zonas vivas de la misma `campania_ciudad` no comparten interior; sí la calle del borde (tolerancia: una franja de menos de 1 m de ancho no cuenta). Se valida con PostGIS en un trigger, así que vale para cualquier camino de escritura. `CZ007` trae en el DETAIL la geometría de la parte superpuesta.
+- **Forma.** `RADIAL`: radio de 1 a 3000 m (hasta ahí el círculo de 128 lados queda a menos de 1 m del geodésico). `ESQUINAS`: al menos 3 esquinas en lugares distintos (a 1 m o menos cuentan como la misma), con `orden` entero, y el borde pasando a 1 m o menos de cada una. Todo lo demás, `CZ008`.
 - **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_que_cambian` (null hasta #24).
 - **Baja.** Lógica. Si la zona tiene colportores asignados se rechaza (`CZ010`) y dice a quiénes reasignar.
-- **Lectura.** El colportor ve las ciudades, zonas y esquinas de las campañas en las que está inscripto (todas las zonas, no solo la suya); el coordinador, las de sus campañas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull.
+- **Lectura.** El colportor ve las ciudades, zonas y esquinas de las campañas en las que está inscripto (todas las zonas, no solo la suya); el coordinador, las de sus campañas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull. Al crear o reactivar una inscripción, un trigger republica el mapa de esa campaña (UPDATE nulo que les sube el `xmin_w`): si no, un mapa cargado antes del último pull del inscripto quedaría detrás de su watermark y no le llegaría nunca.
 - **Códigos.** `CZ007`..`CZ013`: ver el header de la migración `0008`.
 
 ## Privacidad

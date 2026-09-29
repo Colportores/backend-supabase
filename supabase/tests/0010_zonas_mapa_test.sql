@@ -187,6 +187,12 @@ select throws_ok($$ select public.guardar_zona('01920000-0000-7000-8000-00000000
   'CZ008', null, 'RADIAL con radio 0 → CZ008');
 select throws_ok($$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f2', 'R', 'RADIAL', p_centro_lat => -34.73, p_centro_lon => -56.22, p_radio_m => -5) $$,
   'CZ008', null, 'RADIAL con radio negativo → CZ008');
+-- Tope de 3000 m: hasta ahí vale la cota de ±1 m del círculo de 128 lados.
+select throws_ok($$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f2', 'R', 'RADIAL', p_centro_lat => -34.73, p_centro_lon => -56.22, p_radio_m => 3001) $$,
+  'CZ008', 'El radio de la zona es de 3001 m y el máximo es 3000 m. Achicalo, o dividí el área en varias zonas.',
+  'RADIAL con radio de más de 3000 m → CZ008');
+select lives_ok($$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f2', 'R', 'RADIAL', p_centro_lat => -34.73, p_centro_lon => -56.22, p_radio_m => 3000, p_vista_previa => true) $$,
+  'RADIAL con radio de 3000 m: se acepta');
 
 -- Sin pasar por el RPC la regla vale igual (trigger + CHECK).
 select pg_temp.actuar_como_servidor();
@@ -196,6 +202,10 @@ select throws_ok($$ insert into public.zona (nombre, campania_ciudad_id, tipo_fo
 select throws_ok($$ insert into public.zona (nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
                     values ('R directa', '01920000-0000-7000-8000-0000000010f2', 'RADIAL', -34.73, -56.22, 0) $$,
   'CZ008', null, 'RADIAL con radio 0 por INSERT directo → CZ008');
+select throws_ok($$ insert into public.zona (nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
+                    values ('R directa', '01920000-0000-7000-8000-0000000010f2', 'RADIAL', -34.73, -56.22, 3001) $$,
+  'CZ008', 'El radio de la zona «R directa» es de 3001 m y el máximo es 3000 m. Achicalo, o dividí el área en varias zonas.',
+  'RADIAL con radio de más de 3000 m por INSERT directo → CZ008');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010a1');
 create temp table radial on commit drop as
@@ -263,6 +273,32 @@ select throws_ok(
        p_poligono_geojson => pg_temp.rect(-56.17, -34.91, -56.16, -34.90)) $$,
   'CZ008', 'El borde no pasa por la esquina 5. Volvé a cerrar la forma para que el borde siga las esquinas.',
   'ESQUINAS con una esquina lejos del borde → CZ008');
+select throws_ok(
+  $$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f1', 'E', 'ESQUINAS',
+       p_vertices => '[{"orden":1,"lat":-34.91,"lon":-56.17},{"orden":2,"lat":-34.91,"lon":-56.17},{"orden":3,"lat":-34.91,"lon":-56.17}]',
+       p_poligono_geojson => pg_temp.rect(-56.17, -34.91, -56.16, -34.90)) $$,
+  'CZ008', 'Una zona por esquinas necesita al menos 3 esquinas en lugares distintos y hay 1 (dos esquinas a 1 m o menos cuentan como una). Marcá las esquinas que faltan en el mapa.',
+  'ESQUINAS con las 3 esquinas en el mismo punto → CZ008');
+select throws_ok(
+  $$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f1', 'E', 'ESQUINAS',
+       p_vertices => '[{"orden":1,"lat":-34.91,"lon":-56.17},{"orden":2,"lat":-34.910005,"lon":-56.170005},{"orden":3,"lat":-34.91,"lon":-56.16}]',
+       p_poligono_geojson => pg_temp.rect(-56.17, -34.91, -56.16, -34.90)) $$,
+  'CZ008', 'Una zona por esquinas necesita al menos 3 esquinas en lugares distintos y hay 2 (dos esquinas a 1 m o menos cuentan como una). Marcá las esquinas que faltan en el mapa.',
+  'ESQUINAS con dos esquinas a menos de 1 m → cuentan como una → CZ008');
+select is(
+  (select jsonb_path_query_array(
+            public.guardar_zona('01920000-0000-7000-8000-0000000010f1', 'E', 'ESQUINAS',
+              p_vertices => '[{"orden":1.0,"lat":-34.91,"lon":-56.17},{"orden":2.0,"lat":-34.91,"lon":-56.16},{"orden":3,"lat":-34.90,"lon":-56.16},{"orden":4.00,"lat":-34.90,"lon":-56.17}]',
+              p_poligono_geojson => pg_temp.rect(-56.17, -34.91, -56.16, -34.90), p_vista_previa => true),
+            '$.guardada')),
+  '[false]'::jsonb,
+  'un orden 2.0 vale como 2 (no cae en un 22P02)');
+select throws_ok(
+  $$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f1', 'E', 'ESQUINAS',
+       p_vertices => '[{"orden":1,"lat":-34.91,"lon":-56.17},{"orden":2.5,"lat":-34.91,"lon":-56.16},{"orden":3,"lat":-34.90,"lon":-56.16}]',
+       p_poligono_geojson => pg_temp.rect(-56.17, -34.91, -56.16, -34.90)) $$,
+  'CZ008', 'El orden de una esquina tiene que ser un número entero. Volvé a marcar las esquinas.',
+  'un orden 2.5 → CZ008');
 select throws_ok(
   $$ select public.guardar_zona('01920000-0000-7000-8000-0000000010f1', 'E', 'ESQUINAS', p_radio_m => 300,
        p_vertices => pg_temp.esquinas(-56.17, -34.91, -56.16, -34.90),
