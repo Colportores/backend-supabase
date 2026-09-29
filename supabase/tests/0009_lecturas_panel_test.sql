@@ -72,6 +72,8 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted
   ('01920000-0000-7000-8000-0000000009e3', '01920000-0000-7000-8000-0000000009b4', null, null);
 
 update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000009b5';
+-- Beto está suspendido.
+update public.usuario set suspendido_en = now() where id = '01920000-0000-7000-8000-0000000009b7';
 -- La zona de Beto se borra después de asignada: la lectura no la muestra.
 update public.zona set deleted_at = now() where id = '01920000-0000-7000-8000-0000000009d7';
 
@@ -177,12 +179,12 @@ select throws_ok(
 -- 5. colportores_de_campania: cada filtro
 -- ---------------------------------------------------------------------------
 select results_eq(
-  $$ select usuario_id, nombre, apellido, zona_id, zona_nombre
+  $$ select usuario_id, nombre, apellido, zona_id, zona_nombre, suspendido
        from public.colportores_de_campania('01920000-0000-7000-8000-0000000009e1') $$,
-  $$ values ('01920000-0000-7000-8000-0000000009b6'::uuid, 'Ana'::text, 'Alfa'::text, '01920000-0000-7000-8000-0000000009d1'::uuid, 'Centro'::text),
-            ('01920000-0000-7000-8000-0000000009b7'::uuid, 'Beto'::text, 'Beta'::text, null::uuid, null::text),
-            ('01920000-0000-7000-8000-0000000009b1'::uuid, 'Uno'::text, 'Zeta'::text, '01920000-0000-7000-8000-0000000009d2'::uuid, 'Cordón'::text) $$,
-  'solo inscriptos vivos de esa campaña (sin borrada, dada de baja ni de otra), con su zona actual (la borrada sale null), ordenados por apellido'
+  $$ values ('01920000-0000-7000-8000-0000000009b6'::uuid, 'Ana'::text, 'Alfa'::text, '01920000-0000-7000-8000-0000000009d1'::uuid, 'Centro'::text, false),
+            ('01920000-0000-7000-8000-0000000009b7'::uuid, 'Beto'::text, 'Beta'::text, null::uuid, null::text, true),
+            ('01920000-0000-7000-8000-0000000009b1'::uuid, 'Uno'::text, 'Zeta'::text, '01920000-0000-7000-8000-0000000009d2'::uuid, 'Cordón'::text, false) $$,
+  'solo inscriptos vivos de esa campaña (sin borrada, dada de baja ni de otra), con su zona actual (la borrada sale null), suspendido marcado (Beto), ordenados por apellido'
 );
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000009ad');

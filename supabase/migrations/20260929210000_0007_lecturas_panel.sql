@@ -11,8 +11,12 @@
 --
 -- SECURITY DEFINER + search_path vacío (no INVOKER): el permiso es el de
 -- motivo_campania_del_coordinador() (interna, sin grant a authenticated: un invoker no
--- puede llamarla), y el coordinador no lee usuario/zona por RLS más allá de lo que
--- devuelve la función. El permiso es lo PRIMERO: sin JWT o sin rol, 42501 antes de tocar
+-- puede llamarla). OJO: no es la única puerta a estos datos. Por RLS, cualquier COORDINADOR
+-- ya lee todas las filas y columnas de public.usuario por PostgREST, email incluido
+-- (política usuario_select_propio_o_staff, 0003), y zona la lee cualquier authenticated.
+-- Estas funciones no agregan ni restringen acceso; solo acotan lo que devuelven. Acotar la
+-- política es decisión de Cristian (anotado en front-coordinadores-web#20). El permiso
+-- es lo PRIMERO: sin JWT o sin rol, 42501 antes de tocar
 -- datos. Errores como asignar_zona(), vía lanzar_motivo_zona(): CZ001 (campaña inexistente)
 -- y CZ002 (no vigente); son las lecturas del formulario de esa acción.
 --
@@ -24,7 +28,7 @@
 --
 -- ## Datos de colportores_de_campania
 --
--- usuario_id, nombre, apellido, zona_id, zona_nombre. SIN email ni nada más.
+-- usuario_id, nombre, apellido, zona_id, zona_nombre, suspendido. SIN email ni nada más.
 --
 -- ## Pendientes (no se deciden acá)
 --
@@ -68,7 +72,8 @@ comment on function public.zonas_asignables(uuid) is
   'campaña de otra). Errores: 42501 sin permiso; CZ001 inexistente; CZ002 no vigente.';
 
 create function public.colportores_de_campania(p_campania_id uuid)
-returns table (usuario_id uuid, nombre text, apellido text, zona_id uuid, zona_nombre text)
+returns table (usuario_id uuid, nombre text, apellido text, zona_id uuid, zona_nombre text,
+                suspendido boolean)
 language plpgsql
 stable
 security definer
@@ -83,7 +88,7 @@ begin
   perform public.lanzar_motivo_zona(public.motivo_campania_del_coordinador(p_campania_id));
 
   return query
-    select u.id, u.nombre, u.apellido, z.id, z.nombre
+    select u.id, u.nombre, u.apellido, z.id, z.nombre, (u.suspendido_en is not null)
       from public.campania_colportor cc
       join public.usuario u on u.id = cc.usuario_id
       left join public.zona z on z.id = cc.zona_id and z.deleted_at is null
