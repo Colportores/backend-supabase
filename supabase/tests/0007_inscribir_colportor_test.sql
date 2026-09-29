@@ -298,20 +298,20 @@ select ok(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007b6');
 select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', '...y b6 sigue PENDIENTE_ASIGNACION');
 
--- El resto del UPDATE pasa la guarda (acotarlo es de HU-CAM-005/006).
+-- El resto del UPDATE pasa esta guarda (acotarlo es de HU-CAM-005). zona_id no: desde 0006
+-- solo cambia por asignar_zona() (ver 0008_asignar_zona_test).
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a1');
 select lives_ok(
-  $$ update public.campania_colportor set meta_libros = 40, zona_id = '01920000-0000-7000-8000-0000000007d1'
+  $$ update public.campania_colportor set meta_libros = 40
       where campania_id = '01920000-0000-7000-8000-0000000007e1'
         and usuario_id = '01920000-0000-7000-8000-0000000007b1' $$,
-  'meta_libros y zona_id se siguen actualizando'
+  'meta_libros se sigue actualizando'
 );
 select is(
-  (select (meta_libros, zona_id)::text from public.campania_colportor
+  (select meta_libros from public.campania_colportor
     where campania_id = '01920000-0000-7000-8000-0000000007e1'
       and usuario_id = '01920000-0000-7000-8000-0000000007b1'),
-  (40, '01920000-0000-7000-8000-0000000007d1'::uuid)::text,
-  '...y quedan meta_libros = 40 y la zona Centro'
+  40, '...y queda meta_libros = 40'
 );
 select lives_ok(
   $$ update public.campania_colportor set deleted_at = now()
