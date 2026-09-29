@@ -12,7 +12,11 @@
 --     mis_zonas() que la leía. Antes se migran los datos (abajo).
 --   · Trigger campania_colportor_zona_valida (BEFORE INSERT/UPDATE): la zona de una
 --     inscripción es de una ciudad viva de la misma campaña y no está dada de baja. Vale
---     también fuera de asignar_zona() (seed, service_role, un job).
+--     también fuera de asignar_zona() (seed, service_role, un job), y también al reactivar
+--     una inscripción dada de baja (propuesta: se rechaza la reactivación con una zona que ya
+--     no sirve, en vez de borrarle la zona en silencio; el aviso dice cómo reactivarla sin
+--     zona).
+--   · CZ004 dice «La zona no existe o ya se dio de baja. Recargá el mapa.», como el mapa (0008).
 --   · mis_zonas(): solo las zonas de inscripciones vigentes que siguen vivas (zona y ciudad
 --     de la campaña). Una zona dada de baja ya no abre nada (pendiente de #21).
 --   · asignar_zona(): CZ006 dice de qué campaña elegir; CZ005 dice qué hacer.
@@ -23,7 +27,8 @@
 -- Por cada usuario con zona directa:
 --   · tiene una inscripción viva en la campaña de esa zona SIN zona → se copia ahí;
 --   · esa inscripción ya tiene esa misma zona → no hay nada que copiar;
---   · no tiene inscripción viva en esa campaña, la inscripción tiene OTRA zona, o habría que
+--   · no tiene inscripción viva en esa campaña (el aviso distingue si no tiene ninguna o si
+--     está dada de baja), la inscripción tiene OTRA zona, o habría que
 --     copiar una zona dada de baja (o de una ciudad quitada de la campaña) → la migración
 --     aborta y lista cada caso con qué hacer.
 -- Además aborta si alguna inscripción viva ya tiene una zona de otra campaña: con la regla
@@ -55,8 +60,10 @@ begin
                coalesce(nullif(btrim(concat_ws(' ', u.nombre, u.apellido)), ''), 'usuario sin nombre'),
                u.id, z.nombre, c.nombre,
                case
+                 when ins.id is null and baja.id is not null then
+                   'su inscripción en esa campaña está dada de baja, e inscribir_colportor no la reactiva (CI008). Si ya no trabaja en esa campaña, sacale la zona (usuario.zona_id = null); si sigue, reactivá la inscripción como service_role (campania_colportor.deleted_at = null). Después volvé a aplicar la migración.'
                  when ins.id is null then
-                   'no tiene una inscripción viva en esa campaña. Inscribilo (inscribir_colportor) o sacale la zona (usuario.zona_id = null), y volvé a aplicar la migración.'
+                   'no tiene una inscripción en esa campaña. Inscribilo (inscribir_colportor) o sacale la zona (usuario.zona_id = null), y volvé a aplicar la migración.'
                  when ins.zona_id is not null then
                    format('su inscripción en esa campaña ya tiene otra zona («%s»). Elegí cuál queda (en la inscripción) y sacale la zona directa (usuario.zona_id = null), y volvé a aplicar la migración.',
                           zi.nombre)
@@ -71,6 +78,9 @@ begin
         join public.campania c on c.id = cc.campania_id
         left join public.campania_colportor ins
           on ins.usuario_id = u.id and ins.campania_id = cc.campania_id and ins.deleted_at is null
+        -- La inscripción dada de baja (una sola: unique (campania_id, usuario_id)): otro qué hacer.
+        left join public.campania_colportor baja
+          on baja.usuario_id = u.id and baja.campania_id = cc.campania_id and baja.deleted_at is not null
         left join public.zona zi on zi.id = ins.zona_id
        -- Si la inscripción ya tiene esa misma zona no hay nada que copiar: no es un problema.
        where ins.id is null
@@ -231,6 +241,36 @@ alter table public.usuario drop column zona_id;
 -- 5. CZ005 y CZ006 con el qué hacer
 -- ----------------------------------------------------------------------------
 
+-- Igual que en 0006, salvo CZ004: el mismo aviso que el mapa (0008), porque también sale
+-- para una zona dada de baja, no solo para una que no existe.
+create or replace function public.lanzar_motivo_zona(p_motivo text)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  case p_motivo
+    when 'SIN_PERMISO' then
+      raise exception 'Solo el coordinador de la campaña puede asignar zonas en ella.'
+        using errcode = 'insufficient_privilege';
+    when 'CAMPANIA_INEXISTENTE' then
+      raise exception 'La campaña no existe.' using errcode = 'CZ001';
+    when 'CAMPANIA_NO_VIGENTE' then
+      raise exception 'La campaña no está activa.' using errcode = 'CZ002';
+    when 'NO_INSCRIPTO' then
+      raise exception 'El colportor no está en esta campaña.' using errcode = 'CZ003';
+    when 'ZONA_INEXISTENTE' then
+      raise exception 'La zona no existe o ya se dio de baja. Recargá el mapa.' using errcode = 'CZ004';
+    when 'ZONA_DE_OTRA_CIUDAD' then
+      raise exception 'La zona no pertenece a la ciudad de la campaña.' using errcode = 'CZ005';
+    when 'ZONA_DE_OTRA_CAMPANIA' then
+      raise exception 'La zona pertenece a otra campaña.' using errcode = 'CZ006';
+    else
+      null;
+  end case;
+end;
+$$;
+
 -- Como lanzar_motivo_zona(motivo), pero con la campaña para nombrarla en CZ005 y CZ006. El
 -- resto de los motivos van al de un argumento. Interna.
 create function public.lanzar_motivo_zona(p_motivo text, p_campania_id uuid)
@@ -306,8 +346,13 @@ $$;
 -- ----------------------------------------------------------------------------
 
 -- BEFORE INSERT/UPDATE de campania_colportor. asignar_zona() ya valida lo mismo; esto es la
--- red para cualquier otro camino. Solo mira cuando la zona o la campaña cambian: una fila
--- vieja no bloquea, por ejemplo, un cambio de meta_libros. null («sin zona») siempre pasa.
+-- red para cualquier otro camino. Mira cuando la zona o la campaña cambian, y cuando una
+-- inscripción dada de baja se reactiva: mientras estuvo de baja nadie la contó como asignada
+-- (baja_zona() solo mira las vivas), así que su zona pudo darse de baja o quedar en una ciudad
+-- quitada. Una fila viva que no cambia eso no bloquea, por ejemplo, un cambio de meta_libros.
+-- null («sin zona») siempre pasa.
+-- Al reactivar con una zona que ya no sirve se rechaza (no se le borra la zona en silencio:
+-- es un dato del colportor) y el aviso dice cómo reactivarla sin zona.
 -- SECURITY DEFINER: lee zona y campania_ciudad sin depender de la RLS de quien escribe.
 -- El nombre ordena DESPUÉS de campania_colportor_zona_por_rpc (los BEFORE corren por orden
 -- alfabético): un UPDATE directo con JWT sigue dando 23514, no un CZ.
@@ -318,6 +363,8 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_reactiva      boolean := tg_op = 'UPDATE' and old.deleted_at is not null and new.deleted_at is null;
+  v_zona_nombre   text;
   v_zona_viva     boolean;
   v_campania_zona uuid;
   v_ciudad_viva   boolean;
@@ -325,16 +372,24 @@ begin
   if new.zona_id is null then
     return new;
   end if;
-  if tg_op = 'UPDATE' and new.zona_id is not distinct from old.zona_id
+  if tg_op = 'UPDATE' and not v_reactiva and new.zona_id is not distinct from old.zona_id
      and new.campania_id is not distinct from old.campania_id then
     return new;
   end if;
 
-  select z.deleted_at is null, cc.campania_id, cc.deleted_at is null
-    into v_zona_viva, v_campania_zona, v_ciudad_viva
+  select z.nombre, z.deleted_at is null, cc.campania_id, cc.deleted_at is null
+    into v_zona_nombre, v_zona_viva, v_campania_zona, v_ciudad_viva
     from public.zona z
     join public.campania_ciudad cc on cc.id = z.campania_ciudad_id
    where z.id = new.zona_id;
+
+  if v_reactiva and found and new.zona_id is not distinct from old.zona_id
+     and v_campania_zona = new.campania_id and not (v_zona_viva and v_ciudad_viva) then
+    raise exception 'La inscripción que se reactiva tiene la zona «%», que %. Reactivala sin zona (zona_id = null) y asignale otra con asignar_zona().',
+        v_zona_nombre,
+        case when not v_zona_viva then 'ya se dio de baja' else 'es de una ciudad que se quitó de la campaña' end
+      using errcode = case when not v_zona_viva then 'CZ004' else 'CZ005' end;
+  end if;
 
   if not found or not v_zona_viva then
     perform public.lanzar_motivo_zona('ZONA_INEXISTENTE');

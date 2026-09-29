@@ -1,7 +1,8 @@
 no se aplicó
 No se cambió nada
-Uno Sin inscripción (01920000-0000-7000-8000-0000000091a1), zona directa «Centro» de «Verano»: no tiene una inscripción viva en esa campaña
+Uno Sin inscripción (01920000-0000-7000-8000-0000000091a1), zona directa «Centro» de «Verano»: no tiene una inscripción en esa campaña. Inscribilo
 Dos Otra zona (01920000-0000-7000-8000-0000000091a2), zona directa «Centro» de «Verano»: su inscripción en esa campaña ya tiene otra zona («Cordón»)
 Tres Zona borrada (01920000-0000-7000-8000-0000000091a3), zona directa «Vieja» de «Verano»: la zona está dada de baja
 Cuatro Otra campaña (01920000-0000-7000-8000-0000000091a4), inscripción en «Otra»: su zona «Centro» es de otra campaña («Verano»)
+Cinco De baja (01920000-0000-7000-8000-0000000091a5), zona directa «Centro» de «Verano»: su inscripción en esa campaña está dada de baja, e inscribir_colportor no la reactiva (CI008)
 volvé a aplicar la migración

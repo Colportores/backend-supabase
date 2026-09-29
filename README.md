@@ -150,7 +150,7 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 
 `select public.asignar_zona(campania_id, usuario_id, zona_id);` asigna o cambia la zona de un colportor inscripto (`campania_colportor.zona_id`, HU-CAM-006) y devuelve la fila. `mis_zonas()` le abre la zona nueva y deja de abrirle la anterior.
 
-Desde la migración `0009`, la inscripción es el **único** lugar donde vive la zona de un colportor (`null` = sin zona): `usuario.zona_id` ya no existe. Un trigger (`campania_colportor_zona_valida`) exige, también fuera del RPC, que la zona sea de una ciudad viva de la misma campaña y no esté dada de baja. `mis_zonas()` solo devuelve zonas vivas de inscripciones vigentes.
+Desde la migración `0009`, la inscripción es el **único** lugar donde vive la zona de un colportor (`null` = sin zona): `usuario.zona_id` ya no existe. Un trigger (`campania_colportor_zona_valida`) exige, también fuera del RPC, que la zona sea de una ciudad viva de la misma campaña y no esté dada de baja; lo revisa también al reactivar una inscripción dada de baja (si su zona ya no sirve, se rechaza y el aviso dice que se reactive sin zona). `mis_zonas()` solo devuelve zonas vivas de inscripciones vigentes.
 
 - **Quién.** El coordinador de esa campaña o un ADMIN. Si no, `42501`.
 - **Qué reglas.** Campaña vigente; colportor con inscripción viva en esa campaña; zona viva de una ciudad de esa campaña (desde `0008`: `CZ006` si es de otra campaña, `CZ005` si su ciudad se quitó de la campaña). Los códigos son `CZ001`..`CZ006`: ver el header de las migraciones `0006` y `0008`.
