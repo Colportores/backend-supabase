@@ -5,6 +5,9 @@
 # Cada caso vive en supabase/tests_migracion/<caso>/ (fuera de supabase/tests: pg_prove
 # --recurse no lo levanta):
 #   version_previa  timestamp de la última migración que se aplica ANTES de cargar los datos
+#   version_objetivo (opcional) la última que se aplica DESPUÉS; sin él, todas. Sirve para que
+#                   el caso de una migración vieja no se rompa cuando una posterior cambia el
+#                   esquema que su test.sql mira.
 #   datos.sql       filas con el esquema de esa versión
 #   test.sql        pgTAP sobre el resultado, si la migración tiene que pasar
 #   aborta.txt      si tiene que abortar: cada línea tiene que aparecer en el error
@@ -31,6 +34,10 @@ for caso in supabase/tests_migracion/*/; do
   caso="${caso%/}"
   nombre="$(basename "$caso")"
   previa="$(tr -d '[:space:]' < "$caso/version_previa")"
+  objetivo="99999999999999"
+  if [ -f "$caso/version_objetivo" ]; then
+    objetivo="$(tr -d '[:space:]' < "$caso/version_objetivo")"
+  fi
   echo "== $nombre (datos después de $previa)"
 
   DB_RESET_SIN_MIGRAR=1 bash scripts/db-reset.sh
@@ -38,7 +45,9 @@ for caso in supabase/tests_migracion/*/; do
   resto=()
   for m in supabase/migrations/*.sql; do
     version="$(basename "$m" | cut -d_ -f1)"
-    if [[ "$version" > "$previa" ]]; then
+    if [[ "$version" > "$objetivo" ]]; then
+      continue
+    elif [[ "$version" > "$previa" ]]; then
       resto+=("$m")
     else
       psql "$DB_URL" -v ON_ERROR_STOP=1 -q -1 -f "$m" > /dev/null

@@ -20,8 +20,10 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
   ('01920000-0000-7000-8000-0000000000d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000000b1', 'RADIAL', -34.90, -56.18, 300),
   ('01920000-0000-7000-8000-0000000000d2', 'Zona Beto', '01920000-0000-7000-8000-0000000000b1', 'RADIAL', -34.90, -56.14, 300);
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d1' where id = '01920000-0000-7000-8000-0000000000a1';
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d2' where id = '01920000-0000-7000-8000-0000000000a2';
+-- Desde 0009 la zona de cada uno vive solo en su inscripción.
+insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+  ('01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000a1', '01920000-0000-7000-8000-0000000000d1'),
+  ('01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-0000000000d2');
 
 insert into public.producto (id, nombre, tipo) values ('01920000-0000-7000-8000-0000000000e1', 'Libro', 'LIBRO');
 
@@ -121,11 +123,15 @@ select lives_ok(
 -- --- escalada de privilegios: las columnas que deciden qué filas se ven -------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
 
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d2'
-where id = '01920000-0000-7000-8000-0000000000a1';
-select is((select zona_id from public.usuario where id = '01920000-0000-7000-8000-0000000000a1'),
+-- Desde 0009 la zona vive en la inscripción: un colportor no tiene política UPDATE sobre
+-- campania_colportor, así que su UPDATE no toca ninguna fila.
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000000d2'
+where usuario_id = '01920000-0000-7000-8000-0000000000a1';
+select set_config('role', 'postgres', true);
+select is((select zona_id from public.campania_colportor where usuario_id = '01920000-0000-7000-8000-0000000000a1'),
           '01920000-0000-7000-8000-0000000000d1'::uuid,
           'Ana NO puede auto-asignarse la zona de Beto (R-SY04: la asignación gana del backend)');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
 select is((select count(*) from public.ubicacion), 1::bigint,
           'Ana sigue viendo solo su zona después de intentar la escalada');
 
