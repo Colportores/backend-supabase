@@ -55,13 +55,16 @@ select lives_ok(
   'Ana crea una ubicación en su zona'
 );
 
-select throws_ok(
+-- Desde 0010 la zona sale de la posición: la que manda el cliente se ignora.
+select lives_ok(
   $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
      values ('01920000-0000-7000-8000-0000000000f3', 'CASA', 'Otra', '1', -34.9, -56.18,
              '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
-  '42501', null,
-  'Ana NO puede crear una ubicación en la zona de Beto'
+  'Ana manda la zona de Beto en una casa de su zona: no falla'
 );
+select is((select zona_id from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f3'),
+          '01920000-0000-7000-8000-0000000000d1'::uuid,
+          'la zona que manda Ana se ignora: queda en la de su posición (0010)');
 
 select throws_ok(
   $$ insert into public.jornada (id, inicio, colportor_id)
@@ -132,8 +135,13 @@ select is((select zona_id from public.campania_colportor where usuario_id = '019
           '01920000-0000-7000-8000-0000000000d1'::uuid,
           'Ana NO puede auto-asignarse la zona de Beto (R-SY04: la asignación gana del backend)');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
-select is((select count(*) from public.ubicacion), 1::bigint,
-          'Ana sigue viendo solo su zona después de intentar la escalada');
+-- f7 la registró Beto, pero cae en la zona de Ana: desde 0010 es de ella (la zona sale de la
+-- posición). Lo de Beto (f6, fuera de toda zona) no lo ve.
+select results_eq(
+  $$ select id from public.ubicacion order by id $$,
+  $$ values ('01920000-0000-7000-8000-0000000000f2'::uuid), ('01920000-0000-7000-8000-0000000000f3'::uuid),
+            ('01920000-0000-7000-8000-0000000000f7'::uuid) $$,
+  'Ana sigue viendo solo las casas de su zona después de intentar la escalada');
 
 update public.ubicacion set zona_id = '01920000-0000-7000-8000-0000000000d2'
 where id = '01920000-0000-7000-8000-0000000000f2';
