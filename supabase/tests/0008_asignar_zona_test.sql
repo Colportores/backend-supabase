@@ -274,5 +274,35 @@ select lives_ok(
   'un proceso servidor cambia zona_id directo'
 );
 
+-- ---------------------------------------------------------------------------
+-- 6. Red del RPC: un UPDATE que no se aplica no es éxito
+-- ---------------------------------------------------------------------------
+-- La carrera real (soft delete concurrente entre el chequeo y el UPDATE) necesita dos
+-- sesiones; el lock FOR UPDATE la cierra. Acá se cubre la red: un trigger de prueba que
+-- descarta el UPDATE (0 filas afectadas) tiene que terminar en CZ003, no en una fila
+-- devuelta como si la zona se hubiera asignado. b1 tiene hoy Centro (d1).
+select pg_temp.actuar_como_servidor();
+create function public.zz_test_descartar_update() returns trigger language plpgsql as $$
+begin
+  return null;
+end $$;
+create trigger zz_test_descartar_update before update on public.campania_colportor
+  for each row execute function public.zz_test_descartar_update();
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000008a1');
+select throws_ok(
+  $$ select public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', '01920000-0000-7000-8000-0000000008d2') $$,
+  'CZ003', null, 'si el UPDATE afecta 0 filas y la zona era otra → CZ003, no éxito'
+);
+select is(
+  (select zona_id from public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', '01920000-0000-7000-8000-0000000008d1')),
+  '01920000-0000-7000-8000-0000000008d1'::uuid,
+  'con la misma zona, 0 filas sigue siendo éxito (no había nada que cambiar)'
+);
+
+select pg_temp.actuar_como_servidor();
+drop trigger zz_test_descartar_update on public.campania_colportor;
+drop function public.zz_test_descartar_update();
+
 select * from finish();
 rollback;

@@ -241,24 +241,15 @@ create trigger campania_colportor_zona_por_rpc
 
 -- Códigos propios clase CZ ("colportores zona"), como los CI de 0005: PostgREST los
 -- devuelve con HTTP 400 y el código en `code`; el BFF decide el status final (ADR-013).
-create function public.asignar_zona(p_campania_id uuid, p_usuario_id uuid, p_zona_id uuid)
-returns public.campania_colportor
+-- Traduce un motivo de motivo_rechazo_zona() (o de motivo_campania_del_coordinador()) al
+-- error del RPC; con null no hace nada. Interna.
+create function public.lanzar_motivo_zona(p_motivo text)
+returns void
 language plpgsql
-security definer
 set search_path = ''
 as $$
-declare
-  v_motivo text;
-  v_fila   public.campania_colportor;
 begin
-  if auth.uid() is null then
-    raise exception 'asignar_zona requiere un usuario autenticado'
-      using errcode = 'insufficient_privilege';
-  end if;
-
-  v_motivo := public.motivo_rechazo_zona(p_campania_id, p_usuario_id, p_zona_id);
-
-  case v_motivo
+  case p_motivo
     when 'SIN_PERMISO' then
       raise exception 'Solo el coordinador de la campaña puede asignar zonas en ella.'
         using errcode = 'insufficient_privilege';
@@ -277,6 +268,38 @@ begin
     else
       null;
   end case;
+end;
+$$;
+
+create function public.asignar_zona(p_campania_id uuid, p_usuario_id uuid, p_zona_id uuid)
+returns public.campania_colportor
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_filas integer;
+  v_fila  public.campania_colportor;
+begin
+  if auth.uid() is null then
+    raise exception 'asignar_zona requiere un usuario autenticado'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  -- El permiso primero: quien no lo tiene no llega a tomar locks sobre inscripciones.
+  perform public.lanzar_motivo_zona(public.motivo_campania_del_coordinador(p_campania_id));
+
+  -- Se bloquea la inscripción ANTES de las reglas, para que el chequeo y el UPDATE vean la
+  -- misma fila. Sin esto, un soft delete concurrente commiteaba entre los dos: las reglas
+  -- pasaban con su snapshot, el UPDATE reevaluaba deleted_at, afectaba 0 filas y el RPC
+  -- devolvía éxito con la inscripción ya borrada (revisión de #20). La función es volátil:
+  -- cada sentencia de abajo ve lo que se commiteó mientras esperaba el lock.
+  perform 1 from public.campania_colportor cc
+   where cc.campania_id = p_campania_id and cc.usuario_id = p_usuario_id
+     and cc.deleted_at is null
+     for update;
+
+  perform public.lanzar_motivo_zona(public.motivo_rechazo_zona(p_campania_id, p_usuario_id, p_zona_id));
 
   -- Misma zona: no se toca la fila (no sube sync_version ni updated_at).
   update public.campania_colportor cc
@@ -284,9 +307,18 @@ begin
    where cc.campania_id = p_campania_id and cc.usuario_id = p_usuario_id
      and cc.deleted_at is null
      and cc.zona_id is distinct from p_zona_id;
+  get diagnostics v_filas = row_count;
 
   select * into v_fila from public.campania_colportor cc
-   where cc.campania_id = p_campania_id and cc.usuario_id = p_usuario_id;
+   where cc.campania_id = p_campania_id and cc.usuario_id = p_usuario_id
+     and cc.deleted_at is null;
+
+  -- Red: si no se actualizó nada, solo es éxito si la inscripción sigue viva y ya tenía
+  -- esa zona. Cualquier otra cosa (borrada, o un UPDATE que no se aplicó) es CZ003 y no
+  -- una asignación que el BFF reportaría como hecha.
+  if v_filas = 0 and (v_fila.id is null or v_fila.zona_id is distinct from p_zona_id) then
+    perform public.lanzar_motivo_zona('NO_INSCRIPTO');
+  end if;
 
   return v_fila;
 end;
@@ -301,13 +333,14 @@ comment on function public.asignar_zona(uuid, uuid, uuid) is
 -- ----------------------------------------------------------------------------
 
 revoke all on function public.motivo_campania_del_coordinador(uuid),
-  public.motivo_rechazo_zona(uuid, uuid, uuid), public.asignar_zona(uuid, uuid, uuid),
-  public.tg_campania_colportor_zona_por_rpc() from public, anon;
+  public.motivo_rechazo_zona(uuid, uuid, uuid), public.lanzar_motivo_zona(text),
+  public.asignar_zona(uuid, uuid, uuid), public.tg_campania_colportor_zona_por_rpc()
+  from public, anon;
 
 -- Internas: con EXECUTE, un coordinador sondearía datos de usuarios y zonas ajenos.
 revoke all on function public.motivo_campania_del_coordinador(uuid),
-  public.motivo_rechazo_zona(uuid, uuid, uuid) from authenticated;
+  public.motivo_rechazo_zona(uuid, uuid, uuid), public.lanzar_motivo_zona(text) from authenticated;
 grant execute on function public.motivo_campania_del_coordinador(uuid),
-  public.motivo_rechazo_zona(uuid, uuid, uuid) to service_role;
+  public.motivo_rechazo_zona(uuid, uuid, uuid), public.lanzar_motivo_zona(text) to service_role;
 
 grant execute on function public.asignar_zona(uuid, uuid, uuid) to authenticated, service_role;
