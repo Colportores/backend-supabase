@@ -1,6 +1,6 @@
 -- pgTAP · inscribir un colportor en una campaña (migración 0005, HU-CAM-004)
--- Cada regla por el RPC (código de error propio) y por el INSERT directo (la RLS la aplica
--- igual), más el acceso: colportor, coordinador de otra campaña y anon no pueden.
+-- Cada regla por el RPC (código de error propio), el INSERT directo cerrado para todos, el
+-- acceso (colportor, coordinador de otra campaña, anon) y la guarda del UPDATE.
 begin;
 select * from no_plan();
 
@@ -21,13 +21,26 @@ begin
   perform set_config('request.jwt.claim.role', '', true);
 end $$;
 
+-- El DETAIL de un error (lo que PostgREST devuelve en `details`); throws_ok no lo mira.
+create or replace function pg_temp.detalle_error(p_sql text) returns text language plpgsql as $$
+declare
+  v_detalle text;
+begin
+  execute p_sql;
+  return null;
+exception when others then
+  get stacked diagnostics v_detalle = pg_exception_detail;
+  return v_detalle;
+end $$;
+
 -- --- fixtures (como postgres, sin RLS) -----------------------------------------
--- Staff: c1 coordinador de "Verano" (vigente), c2 coordinador de "Salto" (vigente),
---        ad admin, co colportor que intenta inscribir.
--- Objetivos: t1 pendiente verificado (el caso feliz)  t2 email sin verificar
---            t3 suspendido       t4 ya inscripto en Verano     t5 inscripto en Salto
---            t6 inscripción borrada en Verano      t7 dado de baja
---            t8 para el INSERT directo de c1       t9 para el ADMIN en Salto
+-- Staff: a1 coordinador de "Verano" (vigente), a2 coordinador de "Salto" (vigente),
+--        ad admin, a0 colportor que intenta inscribir.
+-- Objetivos: b1 pendiente verificado (el caso feliz)  b2 email sin verificar
+--            b3 suspendido, con una inscripción borrada en Verano
+--            b4 ya inscripto en Verano     b5 inscripto en Salto
+--            b6 inscripción borrada en Verano      b7 dado de baja
+--            b8 para el INSERT directo             b9 para el ADMIN en Salto
 -- confirmed_at: en la imagen local es una columna común; en el cloud es la generada de
 -- email_confirmed_at (ver 0005).
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
@@ -52,10 +65,14 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_i
   ('01920000-0000-7000-8000-0000000007e4', 'Vieja',  'VERANO',   current_date - 90, current_date - 30, '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a1', null),
   ('01920000-0000-7000-8000-0000000007e5', 'Borrada','VERANO',   current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a1', now());
 
+insert into public.zona (id, nombre, ciudad_id, campania_id) values
+  ('01920000-0000-7000-8000-0000000007d1', 'Centro', '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007e1');
+
 insert into public.campania_colportor (campania_id, usuario_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b4', null),
   ('01920000-0000-7000-8000-0000000007e2', '01920000-0000-7000-8000-0000000007b5', null),
-  ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b6', now());
+  ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b6', now()),
+  ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b3', now());
 
 update public.usuario set suspendido_en = now() where id = '01920000-0000-7000-8000-0000000007b3';
 update public.usuario set deleted_at = now()    where id = '01920000-0000-7000-8000-0000000007b7';
@@ -66,7 +83,7 @@ update public.usuario set deleted_at = now()    where id = '01920000-0000-7000-8
 select function_returns('public', 'inscribir_colportor', array['uuid','uuid'], 'campania_colportor',
                         'inscribir_colportor(uuid, uuid) devuelve la fila de campania_colportor');
 select is((select prosecdef from pg_proc where oid = 'public.inscribir_colportor(uuid,uuid)'::regprocedure),
-          false, 'inscribir_colportor() es SECURITY INVOKER: el INSERT pasa por la RLS');
+          true, 'inscribir_colportor() es SECURITY DEFINER: es el único camino para inscribir con JWT');
 select is((select proconfig from pg_proc where oid = 'public.inscribir_colportor(uuid,uuid)'::regprocedure),
           array['search_path=""'], 'inscribir_colportor() fija search_path vacío');
 select is((select proconfig from pg_proc where oid = 'public.motivo_rechazo_inscripcion(uuid,uuid)'::regprocedure),
@@ -75,8 +92,15 @@ select ok(has_function_privilege('authenticated', 'public.inscribir_colportor(uu
           'authenticated ejecuta inscribir_colportor()');
 select ok(not has_function_privilege('anon', 'public.inscribir_colportor(uuid,uuid)', 'execute'),
           'anon NO ejecuta inscribir_colportor()');
+select ok(not has_function_privilege('authenticated', 'public.motivo_rechazo_inscripcion(uuid,uuid)', 'execute'),
+          'authenticated NO ejecuta motivo_rechazo_inscripcion(): no se puede sondear si alguien verificó el email');
 select ok(not has_function_privilege('authenticated', 'public.campanias_vigentes_de(uuid)', 'execute'),
           'authenticated NO ejecuta campanias_vigentes_de(): recibe el usuario por parámetro');
+select is(
+  (select count(*) from pg_policies
+    where schemaname = 'public' and tablename = 'campania_colportor' and cmd in ('INSERT', 'ALL')),
+  0::bigint, 'campania_colportor no tiene política INSERT: la RLS niega el INSERT directo'
+);
 
 select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b1') $$,
@@ -108,8 +132,10 @@ select throws_ok(
      values ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b1') $$,
   '42501', null, 'un colportor no puede inscribir (INSERT directo)'
 );
-select is((select motivo from public.motivo_rechazo_inscripcion('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b3')),
-          'SIN_PERMISO', 'un colportor no puede sondear si otro está suspendido');
+select throws_ok(
+  $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b3') $$,
+  '42501', null, 'un colportor recibe 42501 y no CI005: no puede sondear si otro está suspendido'
+);
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a2');
 select throws_ok(
@@ -121,10 +147,10 @@ select throws_ok(
      values ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b1') $$,
   '42501', null, 'el coordinador de Salto no puede inscribir en Verano (INSERT directo)'
 );
-select is((select motivo from public.motivo_rechazo_inscripcion('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5')),
-          'SIN_PERMISO', 'el coordinador de otra campaña recibe SIN_PERMISO antes que cualquier dato del usuario');
-select is((select campania_en_conflicto from public.motivo_rechazo_inscripcion('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5')),
-          null::uuid, '...ni siquiera en qué campaña está (b5 está en la suya)');
+select throws_ok(
+  $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b3') $$,
+  '42501', null, 'el coordinador de otra campaña recibe 42501 antes que cualquier dato del usuario (no CI005)'
+);
 
 -- ---------------------------------------------------------------------------
 -- 3. Reglas, como coordinador de Verano
@@ -172,33 +198,29 @@ select throws_ok(
   'CI007', 'Está en campaña Salto. Reasignar primero.', 'inscripto en otra campaña activa → CI007 con el literal de la HU'
 );
 select is(
-  (select (m.motivo, m.campania_en_conflicto)::text
-     from public.motivo_rechazo_inscripcion('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5') m),
-  ('EN_OTRA_CAMPANIA', '01920000-0000-7000-8000-0000000007e2'::uuid)::text,
-  'motivo_rechazo_inscripcion() nombra la campaña en conflicto (Salto)'
+  pg_temp.detalle_error($$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5') $$)::jsonb,
+  jsonb_build_object('campania_id', '01920000-0000-7000-8000-0000000007e2', 'campania_nombre', 'Salto'),
+  'CI007 trae en details la campaña en conflicto (id y nombre) para el BFF'
 );
 select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b6') $$,
   'CI008', null, 'inscripción borrada en esta campaña → CI008 (decisión pendiente)'
 );
 
--- La RLS aplica las mismas reglas al INSERT directo (sin mensaje específico).
+-- El INSERT directo está cerrado para todos: sin el lock del RPC, dos coordinadores podían
+-- dejar a la misma persona en dos campañas vigentes.
 select throws_ok(
-  $$ insert into public.campania_colportor (campania_id, usuario_id)
-     values ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b3') $$,
-  '42501', null, 'INSERT directo de un suspendido: lo frena la RLS'
-);
-select throws_ok(
-  $$ insert into public.campania_colportor (campania_id, usuario_id)
-     values ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5') $$,
-  '42501', null, 'INSERT directo de alguien en otra campaña: lo frena la RLS'
+  $$ insert into public.campania_colportor (campania_id, usuario_id, created_by)
+     values ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b8',
+             '01920000-0000-7000-8000-0000000007a1') $$,
+  '42501', null, 'INSERT directo de una inscripción válida en su propia campaña: cerrado, solo por el RPC'
 );
 
 -- ---------------------------------------------------------------------------
 -- 4. El caso feliz: la cuenta sale de PENDIENTE_ASIGNACION sola
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007b1');
-select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', 't1 arranca PENDIENTE_ASIGNACION');
+select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', 'b1 arranca PENDIENTE_ASIGNACION');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a1');
 select is(
@@ -206,25 +228,19 @@ select is(
      from public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b1') f),
   ('01920000-0000-7000-8000-0000000007e1'::uuid, '01920000-0000-7000-8000-0000000007b1'::uuid,
    '01920000-0000-7000-8000-0000000007a1'::uuid, null::timestamptz)::text,
-  'el coordinador de Verano inscribe a t1: devuelve la fila, con created_by = el coordinador'
+  'el coordinador de Verano inscribe a b1: devuelve la fila, con created_by = el coordinador'
 );
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007b1');
-select is(public.estado_cuenta(), 'ACTIVA', 'inscripto, t1 pasa a ACTIVA sin tocar nada más');
+select is(public.estado_cuenta(), 'ACTIVA', 'inscripto, b1 pasa a ACTIVA sin tocar nada más');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a1');
 select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b1') $$,
   'CI006', null, 'reintentar la misma inscripción → CI006, no un duplicado'
 );
-select lives_ok(
-  $$ insert into public.campania_colportor (campania_id, usuario_id, created_by)
-     values ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b8',
-             '01920000-0000-7000-8000-0000000007a1') $$,
-  'el INSERT directo de una inscripción válida en su campaña sigue funcionando'
-);
 
--- El ADMIN inscribe en cualquier campaña, pero con las mismas reglas.
+-- El ADMIN inscribe en cualquier campaña, pero con las mismas reglas y solo por el RPC.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007ad');
 select lives_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e2', '01920000-0000-7000-8000-0000000007b9') $$,
@@ -234,13 +250,18 @@ select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e2', '01920000-0000-7000-8000-0000000007b3') $$,
   'CI005', null, 'el ADMIN tampoco inscribe a un suspendido'
 );
+select throws_ok(
+  $$ insert into public.campania_colportor (campania_id, usuario_id)
+     values ('01920000-0000-7000-8000-0000000007e2', '01920000-0000-7000-8000-0000000007b8') $$,
+  '42501', null, 'el ADMIN tampoco inserta directo'
+);
 
 -- ---------------------------------------------------------------------------
--- 5. Una inscripción no cambia de campaña ni de usuario
+-- 5. Un UPDATE no puede equivaler a inscribir
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a1');
 select throws_ok(
-  $$ update public.campania_colportor set usuario_id = '01920000-0000-7000-8000-0000000007b3'
+  $$ update public.campania_colportor set usuario_id = '01920000-0000-7000-8000-0000000007b8'
       where campania_id = '01920000-0000-7000-8000-0000000007e1'
         and usuario_id = '01920000-0000-7000-8000-0000000007b1' $$,
   '23514', null, 'cambiar el usuario de una inscripción falla (sería inscribir salteándose las reglas)'
@@ -251,12 +272,67 @@ select throws_ok(
         and usuario_id = '01920000-0000-7000-8000-0000000007b1' $$,
   '23514', null, 'cambiar la campaña de una inscripción falla (reasignar es cerrar y abrir, HU-CAM-005)'
 );
+
+-- Reactivar una borrada: el bloqueante de la revisión. Sin la guarda, un coordinador de
+-- otra campaña reactivaba la inscripción de un suspendido (la política UPDATE de 0003 lo deja).
+select throws_ok(
+  $$ update public.campania_colportor set deleted_at = null
+      where campania_id = '01920000-0000-7000-8000-0000000007e1'
+        and usuario_id = '01920000-0000-7000-8000-0000000007b6' $$,
+  '23514', null, 'el coordinador de la campaña no reactiva una inscripción borrada (decisión pendiente)'
+);
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a2');
+select throws_ok(
+  $$ update public.campania_colportor set deleted_at = null
+      where campania_id = '01920000-0000-7000-8000-0000000007e1'
+        and usuario_id = '01920000-0000-7000-8000-0000000007b3' $$,
+  '23514', null, 'un coordinador de otra campaña no reactiva la inscripción borrada de un suspendido'
+);
+select pg_temp.actuar_como_servidor();
+select ok(
+  (select deleted_at is not null from public.campania_colportor
+    where campania_id = '01920000-0000-7000-8000-0000000007e1'
+      and usuario_id = '01920000-0000-7000-8000-0000000007b3'),
+  '...y la inscripción de b3 sigue borrada'
+);
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007b6');
+select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', '...y b6 sigue PENDIENTE_ASIGNACION');
+
+-- El resto del UPDATE pasa la guarda (acotarlo es de HU-CAM-005/006).
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a1');
 select lives_ok(
-  $$ update public.campania_colportor set meta_libros = 40
+  $$ update public.campania_colportor set meta_libros = 40, zona_id = '01920000-0000-7000-8000-0000000007d1'
       where campania_id = '01920000-0000-7000-8000-0000000007e1'
         and usuario_id = '01920000-0000-7000-8000-0000000007b1' $$,
-  'el resto de la fila se sigue actualizando'
+  'meta_libros y zona_id se siguen actualizando'
 );
+select is(
+  (select (meta_libros, zona_id)::text from public.campania_colportor
+    where campania_id = '01920000-0000-7000-8000-0000000007e1'
+      and usuario_id = '01920000-0000-7000-8000-0000000007b1'),
+  (40, '01920000-0000-7000-8000-0000000007d1'::uuid)::text,
+  '...y quedan meta_libros = 40 y la zona Centro'
+);
+select lives_ok(
+  $$ update public.campania_colportor set deleted_at = now()
+      where campania_id = '01920000-0000-7000-8000-0000000007e1'
+        and usuario_id = '01920000-0000-7000-8000-0000000007b4' $$,
+  'el soft delete de una inscripción sigue pasando'
+);
+select isnt(
+  (select deleted_at from public.campania_colportor
+    where campania_id = '01920000-0000-7000-8000-0000000007e1'
+      and usuario_id = '01920000-0000-7000-8000-0000000007b4'),
+  null, '...y la inscripción queda borrada'
+);
+
+-- Un proceso servidor (sin JWT) sí reactiva: la guarda es para los JWT.
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set deleted_at = null
+ where campania_id = '01920000-0000-7000-8000-0000000007e1'
+   and usuario_id = '01920000-0000-7000-8000-0000000007b6';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007b6');
+select is(public.estado_cuenta(), 'ACTIVA', 'un proceso servidor reactiva la inscripción de b6');
 
 select * from finish();
 rollback;

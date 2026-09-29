@@ -8,12 +8,23 @@
 --
 --   · motivo_rechazo_inscripcion(campania, usuario): la ÚNICA definición de qué
 --     inscripción es válida y quién la puede hacer. Su columna `motivo` es null si se puede.
---   · La política INSERT de campania_colportor la usa: la RLS sigue siendo la autoridad
---     (ADR-016), también para quien escriba directo por PostgREST salteándose el RPC.
---   · inscribir_colportor(campania, usuario): el RPC que llama el BFF. SECURITY INVOKER,
---     como los de sync: pide el motivo para responder con un error específico por regla
---     (la RLS solo sabe decir "violates row-level security policy") y después inserta,
---     con lo que la política vuelve a verificar todo.
+--     Interna: no la ejecuta authenticated (serviría para sondear datos de cualquier usuario).
+--   · inscribir_colportor(campania, usuario): el RPC que llama el BFF, y el ÚNICO camino
+--     para inscribir con JWT. Toma un lock por usuario, pide el motivo, responde un error
+--     específico por regla e inserta.
+--   · La política INSERT de campania_colportor desaparece: sin política, la RLS niega el
+--     INSERT directo a authenticated (ADMIN incluido).
+--
+-- ## Por qué SECURITY DEFINER y un solo camino
+--
+-- Con un INSERT directo abierto (política con las mismas reglas), dos coordinadores que
+-- inscriben a la misma persona a la vez en campañas distintas pasan los dos el chequeo
+-- EN_OTRA_CAMPANIA: la política evalúa con el snapshot del INSERT y no puede tomar el
+-- lock. La regla "una campaña vigente por colportor" solo se sostiene si toda inscripción
+-- pasa por el lock, y eso exige un único camino. Como el INSERT directo queda cerrado, el
+-- RPC tiene que ser DEFINER para poder insertar; el permiso lo decide motivo_…() como
+-- primer chequeo, antes que cualquier dato del usuario objetivo. Mismo patrón que
+-- tiene_rol()/mis_zonas(): definer, search_path vacío, identidad desde auth.uid().
 --
 -- ## Reglas (HU-CAM-004), en el orden en que se evalúan
 --
@@ -44,7 +55,12 @@
 --   · Notificación (HU-NOT-003) y audit log: no hay tabla de auditoría ni Edge Function.
 --   · UPDATE de campania_colportor: la política sigue dejando a cualquier coordinador
 --     actualizar cualquier fila (HU-CAM-005/006 la van a acotar). Lo único que se cierra
---     acá es cambiar campania_id/usuario_id, que sería inscribir salteándose las reglas.
+--     acá es lo que equivale a inscribir salteándose las reglas: cambiar campania_id o
+--     usuario_id, y reactivar una inscripción borrada (deleted_at → null).
+--   · Campañas futuras: solo se inscribe en una campaña vigente, así que ni el ADMIN ni el
+--     coordinador pueden precargar el equipo antes de que arranque.
+--   · EMAIL_NO_VERIFICADO mira auth.users.confirmed_at = least(email_confirmed_at,
+--     phone_confirmed_at): deja de equivaler al email si se habilita el login por teléfono.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -106,12 +122,13 @@ $$;
 
 -- SECURITY DEFINER: lee la inscripción ajena, auth.users y el rol del llamador sin depender
 -- de la RLS del que pregunta. Solo contesta sobre el usuario objetivo a quien ya pasó el
--- permiso (ADMIN, o el coordinador de esa campaña, que por RLS ya ve usuario y
--- campania_colportor enteros): no filtra nada que el llamador no pudiera leer.
+-- permiso (ADMIN, o el coordinador de esa campaña). Aun así es interna: si authenticated
+-- la pudiera llamar, un coordinador sondearía con su campaña si cualquier usuario verificó
+-- el email (auth.users no la lee nadie más). La llama solo inscribir_colportor().
 --
 -- Devuelve dos columnas: `motivo` (null = se puede) y, solo con EN_OTRA_CAMPANIA, la
 -- campaña en conflicto, para que el RPC arme "Está en campaña X" sin volver a calcular la
--- vigencia (campanias_vigentes_de() no se le otorga a authenticated).
+-- vigencia.
 create function public.motivo_rechazo_inscripcion(
   p_campania_id uuid, p_usuario_id uuid,
   out motivo text, out campania_en_conflicto uuid)
@@ -189,44 +206,55 @@ comment on function public.motivo_rechazo_inscripcion(uuid, uuid) is
   'p_campania_id; si no, el motivo (SIN_PERMISO, CAMPANIA_INEXISTENTE, CAMPANIA_NO_VIGENTE, USUARIO_INEXISTENTE, '
   'EMAIL_NO_VERIFICADO, USUARIO_SUSPENDIDO, YA_INSCRIPTO, INSCRIPCION_BORRADA, EN_OTRA_CAMPANIA; '
   'con este último, campania_en_conflicto). '
-  'Única definición de las reglas: la usan la política INSERT y inscribir_colportor().';
+  'Única definición de las reglas. Interna: la llama inscribir_colportor().';
 
 -- ----------------------------------------------------------------------------
--- 3. RLS: la política INSERT aplica las reglas
+-- 3. RLS: sin INSERT directo
 -- ----------------------------------------------------------------------------
 
 -- Antes: cualquier ADMIN o COORDINADOR insertaba cualquier fila, en cualquier campaña y
--- sin reglas. Ahora el permiso y las reglas son los de motivo_rechazo_inscripcion(),
--- también para el ADMIN (el permiso de ADMIN sobre cualquier campaña se conserva; lo que
--- se le suma son las reglas de la HU, que no dependen del rol).
--- La función recibe columnas de la fila: no se puede envolver en (select ...) como
--- tiene_rol(); se evalúa una vez por fila insertada, que acá es una.
+-- sin reglas. Ahora no hay política INSERT para authenticated, así que la RLS lo niega
+-- (también al ADMIN, que inscribe por el RPC con su permiso sobre cualquier campaña y las
+-- mismas reglas). Ver "Por qué SECURITY DEFINER y un solo camino" en el header.
+-- service_role y los procesos servidor (bypass de RLS) siguen insertando directo.
 drop policy campania_colportor_insert_staff on public.campania_colportor;
-create policy campania_colportor_insert_inscripcion on public.campania_colportor
-  for insert to authenticated
-  with check ((public.motivo_rechazo_inscripcion(campania_id, usuario_id)).motivo is null);
 
 -- ----------------------------------------------------------------------------
--- 4. Guarda: una inscripción no cambia de campaña ni de usuario
+-- 4. Guarda: un UPDATE no puede equivaler a inscribir
 -- ----------------------------------------------------------------------------
 
--- Cambiar campania_id o usuario_id con un UPDATE es inscribir a otro (o en otra campaña)
--- salteándose las reglas. HU-CAM-005 ya lo define así: reasignar es cerrar la inscripción
--- y abrir una nueva. Falla con error en vez de coercionar en silencio como las guardas del
--- 0001: campania_colportor no entra por el push de sync, así que no hay un cliente LWW que
--- mande la fila entera, y un cambio de identidad ignorado en silencio sería peor.
+-- La política UPDATE (0003) deja a cualquier coordinador actualizar cualquier inscripción;
+-- acotarla es de HU-CAM-005/006. Lo que se cierra acá es lo que convierte un UPDATE en una
+-- inscripción nueva salteándose motivo_rechazo_inscripcion():
+--   · cambiar campania_id o usuario_id: HU-CAM-005 define reasignar como cerrar la
+--     inscripción y abrir otra;
+--   · reactivar una borrada (deleted_at → null): se saltearía SIN_PERMISO, la suspensión y
+--     EN_OTRA_CAMPANIA, y si se reactiva o no está pendiente de decisión (INSCRIPCION_BORRADA).
+-- Falla con error en vez de coercionar en silencio como las guardas del 0001:
+-- campania_colportor no entra por el push de sync, así que no hay un cliente LWW que mande
+-- la fila entera, y un cambio así ignorado en silencio sería peor. El resto del UPDATE
+-- (zona_id, meta_libros, soft delete) pasa.
 create function public.tg_campania_colportor_identidad()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
-  if auth.uid() is not null
-     and (new.campania_id is distinct from old.campania_id
-          or new.usuario_id is distinct from old.usuario_id) then
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  if new.campania_id is distinct from old.campania_id
+     or new.usuario_id is distinct from old.usuario_id then
     raise exception 'una inscripción no cambia de campaña ni de usuario: cerrala y abrí otra (HU-CAM-005)'
       using errcode = 'check_violation';
   end if;
+
+  if old.deleted_at is not null and new.deleted_at is null then
+    raise exception 'una inscripción borrada no se reactiva (decisión pendiente, front-coordinadores-web#19)'
+      using errcode = 'check_violation';
+  end if;
+
   return new;
 end;
 $$;
@@ -243,9 +271,14 @@ create trigger campania_colportor_identidad
 -- que el BFF distinga cada regla sin parsear mensajes. PostgREST los devuelve con HTTP
 -- 400 y el código en `code`; el BFF decide el status final (ADR-013). El mensaje es el
 -- texto para la UI, con el literal de la HU cuando lo hay.
+--
+-- SECURITY DEFINER: es el único camino para inscribir con JWT (sección 3). El permiso no
+-- lo da la RLS sino motivo_rechazo_inscripcion(), que lo evalúa primero; la identidad sale
+-- de auth.uid(), nunca de un parámetro.
 create function public.inscribir_colportor(p_campania_id uuid, p_usuario_id uuid)
 returns public.campania_colportor
 language plpgsql
+security definer
 set search_path = ''
 as $$
 declare
@@ -262,6 +295,7 @@ begin
   -- Serializa las inscripciones de un mismo usuario: sin esto, dos coordinadores que lo
   -- inscriben a la vez en campañas distintas pasan los dos el chequeo EN_OTRA_CAMPANIA.
   -- La función es volátil, así que cada sentencia de abajo ve lo que el otro commiteó.
+  -- Alcanza porque no hay otro camino con JWT (sección 3).
   perform pg_advisory_xact_lock(hashtextextended('inscribir_colportor:' || p_usuario_id::text, 0));
 
   select m.motivo, m.campania_en_conflicto into v_motivo, v_conflicto
@@ -316,12 +350,13 @@ revoke all on function public.campania_vigente(public.campania), public.campania
   public.tg_campania_colportor_identidad() from public, anon;
 
 -- Internas: solo las llaman funciones SECURITY DEFINER (que corren como su dueño).
-revoke all on function public.campania_vigente(public.campania), public.campanias_vigentes_de(uuid)
+-- motivo_rechazo_inscripcion() incluida: con EXECUTE, un coordinador sondearía con su propia
+-- campaña si cualquier usuario verificó el email o en qué campaña está.
+revoke all on function public.campania_vigente(public.campania), public.campanias_vigentes_de(uuid),
+  public.motivo_rechazo_inscripcion(uuid, uuid)
   from authenticated;
-grant execute on function public.campania_vigente(public.campania), public.campanias_vigentes_de(uuid)
+grant execute on function public.campania_vigente(public.campania), public.campanias_vigentes_de(uuid),
+  public.motivo_rechazo_inscripcion(uuid, uuid)
   to service_role;
 
--- motivo_rechazo_inscripcion(): la evalúa la política INSERT con los privilegios de quien
--- inserta, y el RPC la llama como invoker. Por eso authenticated necesita EXECUTE.
-grant execute on function public.motivo_rechazo_inscripcion(uuid, uuid), public.inscribir_colportor(uuid, uuid)
-  to authenticated, service_role;
+grant execute on function public.inscribir_colportor(uuid, uuid) to authenticated, service_role;

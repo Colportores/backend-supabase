@@ -131,8 +131,11 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 
 - **Quién.** El coordinador de esa campaña (`campania.coordinador_id`) o un ADMIN. Si no, `42501`.
 - **Qué reglas.** Campaña vigente; usuario existente, con email verificado y no suspendido; que no esté ya inscripto; que no esté en otra campaña vigente. Cada regla tiene su código propio, `CI001`..`CI008`: ver el header de la migración `0005`.
-- **Dónde viven.** Una sola definición, `motivo_rechazo_inscripcion()`, que usan el RPC y la política INSERT de `campania_colportor`. Un INSERT directo por PostgREST pasa por las mismas reglas, pero solo recibe el genérico `42501` de la RLS.
-- **Qué no se puede hacer.** Cambiar la campaña o el usuario de una inscripción con un UPDATE. Reasignar es cerrar una y abrir otra (HU-CAM-005).
+- **Dónde viven.** Una sola definición, `motivo_rechazo_inscripcion()`, que es interna.
+- **Un solo camino.** El RPC es el único camino para inscribir con JWT. `campania_colportor` no tiene política INSERT, así que la RLS niega el INSERT directo, incluso al ADMIN. El RPC es `SECURITY DEFINER` y toma un lock por usuario: así nadie queda en dos campañas vigentes por dos inscripciones simultáneas.
+- **Qué no se puede hacer con un UPDATE.**
+  - Cambiar la campaña o el usuario de una inscripción. Reasignar es cerrar una y abrir otra (HU-CAM-005).
+  - Reactivar una inscripción borrada. Si se reactiva o no está pendiente de decisión.
 
 ## Privacidad
 
