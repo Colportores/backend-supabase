@@ -7,7 +7,9 @@
 # que es exactamente lo que valida CI.
 services:
   db:
-    image: public.ecr.aws/supabase/postgres:17.6.1.141
+    # ghcr.io y no public.ecr.aws: mismo tag y mismo digest (sha256:ba10e934...), pero sin el
+    # límite de pulls anónimos que rompía CI (#27).
+    image: ghcr.io/supabase/postgres:17.6.1.141
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_HOST_AUTH_METHOD: md5
