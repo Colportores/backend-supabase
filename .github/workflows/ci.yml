@@ -15,6 +15,9 @@ jobs:
     name: migraciones desde cero · pgTAP
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +26,11 @@ jobs:
       # No necesita Docker — es git y grep.
       - name: SQL solo en supabase/
         run: bash scripts/check-sql-layout.sh
+
+      # La imagen de la DB sale de ghcr.io (mismo tag y digest que en ECR Public). Con el login
+      # el pull va autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
+      - name: Login a ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # Mismo entorno que el desarrollo local (compose.dev.yml): Postgres de Supabase + CLI + pg_prove.
       - name: Construir tooling
