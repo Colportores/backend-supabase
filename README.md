@@ -2,7 +2,7 @@
 
 Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
 
-**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008). Las políticas se refinan HU por HU desde Sprint 3.
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
@@ -53,11 +53,12 @@ supabase/
 │   ├── 20260901000000_0001_esquema_inicial.sql
 │   ├── 20260902180000_0002_sync_infra.sql
 │   ├── 20260902200000_0003_rls_performance.sql
-│   └── 20260929120000_0004_estado_cuenta.sql
+│   ├── 20260929120000_0004_estado_cuenta.sql
+│   └── 20260929180000_0005_inscribir_colportor.sql
 ├── seed.sql            ← datos de ejemplo (ficticios) de zonas, campañas, catálogo y precios
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
 │                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed,
-│                        0006 estado de la cuenta
+│                        0006 estado de la cuenta, 0007 inscripción en campaña
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
@@ -123,6 +124,18 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 "Vigente" está escrito una sola vez, en `mis_campanias_vigentes()`, y `mis_zonas()` lo usa. Con una diferencia: una inscripción sin zona activa la cuenta, pero no abre ninguna zona.
 
 `suspendido_en` la fija el servidor: un trigger descarta en silencio cualquier cambio que venga con JWT, incluido el de un ADMIN. Quién suspende y reactiva es de HU-ADM-003, que todavía no está decidido.
+
+## Inscripción en campaña
+
+`select public.inscribir_colportor(campania_id, usuario_id);` inscribe a un colportor en una campaña y devuelve la fila de `campania_colportor` (HU-CAM-004). Con eso su cuenta pasa sola de `PENDIENTE_ASIGNACION` a `ACTIVA`. Lo consume `bff-coordinadores`; por PostgREST es `POST /rest/v1/rpc/inscribir_colportor`.
+
+- **Quién.** El coordinador de esa campaña (`campania.coordinador_id`) o un ADMIN. Si no, `42501`.
+- **Qué reglas.** Campaña vigente; usuario existente, con email verificado y no suspendido; que no esté ya inscripto; que no esté en otra campaña vigente. Cada regla tiene su código propio, `CI001`..`CI008`: ver el header de la migración `0005`.
+- **Dónde viven.** Una sola definición, `motivo_rechazo_inscripcion()`, que es interna.
+- **Un solo camino.** El RPC es el único camino para inscribir con JWT. `campania_colportor` no tiene política INSERT, así que la RLS niega el INSERT directo, incluso al ADMIN. El RPC es `SECURITY DEFINER` y toma un lock por usuario: así nadie queda en dos campañas vigentes por dos inscripciones simultáneas.
+- **Qué no se puede hacer con un UPDATE.**
+  - Cambiar la campaña o el usuario de una inscripción. Reasignar es cerrar una y abrir otra (HU-CAM-005).
+  - Reactivar una inscripción borrada. Si se reactiva o no está pendiente de decisión.
 
 ## Privacidad
 
