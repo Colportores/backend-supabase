@@ -36,8 +36,10 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
   ('01920000-0000-7000-8000-0000000004d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000004b1', 'RADIAL', -34.90, -56.18, 300),
   ('01920000-0000-7000-8000-0000000004d2', 'Zona Beto', '01920000-0000-7000-8000-0000000004b1', 'RADIAL', -34.90, -56.14, 300);
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000004d1' where id = '01920000-0000-7000-8000-0000000004a1';
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000004d2' where id = '01920000-0000-7000-8000-0000000004a2';
+-- Desde 0009 la zona de cada uno vive solo en su inscripción.
+insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+  ('01920000-0000-7000-8000-0000000004b0', '01920000-0000-7000-8000-0000000004a1', '01920000-0000-7000-8000-0000000004d1'),
+  ('01920000-0000-7000-8000-0000000004b0', '01920000-0000-7000-8000-0000000004a2', '01920000-0000-7000-8000-0000000004d2');
 
 insert into public.producto (id, nombre, tipo) values
   ('01920000-0000-7000-8000-0000000004e1', 'El Deseado de Todas las Gentes', 'LIBRO');
@@ -428,6 +430,7 @@ delete from public.house_status where ubicacion_id = '01920000-0000-7000-8000-00
 delete from public.jornada   where colportor_id in ('01920000-0000-7000-8000-0000000004a1','01920000-0000-7000-8000-0000000004a2');
 delete from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000004c1';
 delete from public.producto  where id = '01920000-0000-7000-8000-0000000004e1';
+delete from public.campania_colportor where campania_id = '01920000-0000-7000-8000-0000000004b0';
 delete from public.zona      where campania_ciudad_id = '01920000-0000-7000-8000-0000000004b1';
 delete from public.campania_ciudad where id = '01920000-0000-7000-8000-0000000004b1';
 delete from public.campania  where id = '01920000-0000-7000-8000-0000000004b0';

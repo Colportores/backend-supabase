@@ -15,7 +15,7 @@ delete from public.espacio_persona where created_by in (select id from public.us
 delete from public.espacio        where created_by in (select id from public.usuario where email like 'bench-%@bench.local');
 delete from public.ubicacion      where created_by in (select id from public.usuario where email like 'bench-%@bench.local');
 delete from public.jornada        where colportor_id in (select id from public.usuario where email like 'bench-%@bench.local');
-update public.usuario            set zona_id = null where email like 'bench-%@bench.local';
+delete from public.campania_colportor where campania_id = '01920000-0000-7000-8000-0000000be002';
 delete from public.zona           where nombre like 'BENCH zona %';
 delete from public.campania_ciudad where id = '01920000-0000-7000-8000-0000000be003';
 delete from public.campania       where id = '01920000-0000-7000-8000-0000000be002';
@@ -55,7 +55,8 @@ from generate_series(1, :colportores) n,
 -- que filtrar. Sin esto todos verían todo y la medición no diría nada.
 with c as (select id, row_number() over (order by email) rn from public.usuario where email like 'bench-%@bench.local'),
      z as (select id, row_number() over (order by nombre) rn from public.zona where nombre like 'BENCH zona %')
-update public.usuario u set zona_id = z.id from c join z using (rn) where u.id = c.id;
+insert into public.campania_colportor (campania_id, usuario_id, zona_id)
+select '01920000-0000-7000-8000-0000000be002', c.id, z.id from c join z using (rn);
 
 \echo '-- jornadas (200 por colportor)'
 insert into public.jornada (id, colportor_id, inicio, fin, created_by)
@@ -68,8 +69,9 @@ where u.email like 'bench-%@bench.local';
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id, created_by)
 select public.uuid_generate_v7(), 'CASA', 'Calle ' || (n % 80), n::text,
        -34.9 + (n % 100) * 0.0001, -56.16 + (n % 100) * 0.0001,
-       '01920000-0000-7000-8000-0000000be001', u.zona_id, u.id
-from public.usuario u, generate_series(1, 400) n
+       '01920000-0000-7000-8000-0000000be001', ins.zona_id, u.id
+from public.usuario u
+  join public.campania_colportor ins on ins.usuario_id = u.id, generate_series(1, 400) n
 where u.email like 'bench-%@bench.local';
 
 \echo '-- espacios y vínculos'

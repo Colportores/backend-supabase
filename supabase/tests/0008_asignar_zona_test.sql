@@ -172,7 +172,7 @@ select throws_ok(
 );
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', '01920000-0000-7000-8000-0000000008fe') $$,
-  'CZ004', 'La zona no existe.', 'zona inexistente → CZ004'
+  'CZ004', 'La zona no existe o ya se dio de baja. Recargá el mapa.', 'zona inexistente → CZ004 (texto de 0009)'
 );
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', null) $$,
@@ -184,16 +184,16 @@ select throws_ok(
 );
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', '01920000-0000-7000-8000-0000000008d3') $$,
-  'CZ006', 'La zona pertenece a otra campaña.', 'zona de otra ciudad (y otra campaña) → CZ006 desde 0008'
+  'CZ006', 'La zona es de otra campaña. Elegí una zona de «Verano».', 'zona de otra ciudad (y otra campaña) → CZ006 desde 0008'
 );
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', '01920000-0000-7000-8000-0000000008d6') $$,
-  'CZ005', 'La zona no pertenece a la ciudad de la campaña.',
+  'CZ005', 'La ciudad de esa zona ya no está en «Verano». Elegí una zona de otra ciudad de la campaña o volvé a agregar la ciudad.',
   'zona de una ciudad que se quitó de la campaña → CZ005 (edge de la HU, desde 0008)'
 );
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000008e1', '01920000-0000-7000-8000-0000000008b1', '01920000-0000-7000-8000-0000000008d4') $$,
-  'CZ006', 'La zona pertenece a otra campaña.', 'zona de otra campaña de la misma ciudad → CZ006'
+  'CZ006', 'La zona es de otra campaña. Elegí una zona de «Verano».', 'zona de otra campaña de la misma ciudad → CZ006'
 );
 
 -- ---------------------------------------------------------------------------

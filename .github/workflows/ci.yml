@@ -45,6 +45,11 @@ jobs:
       - name: Lint de funciones (plpgsql_check)
         run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-lint.sh
 
+      # Las migraciones que mueven datos, con datos: la base de arriba está vacía, así que ahí
+      # una migración de datos no mueve nada. Va al final porque limpia y rearma la base.
+      - name: Migraciones con datos (tests_migracion)
+        run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-test-migracion.sh
+
       - name: Apagar
         if: always()
         run: docker compose -f compose.dev.yml down -v --remove-orphans

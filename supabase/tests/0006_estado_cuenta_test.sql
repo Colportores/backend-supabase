@@ -79,8 +79,6 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted
 
 update public.usuario set suspendido_en = now()
  where id in ('01920000-0000-7000-8000-0000000006b6', '01920000-0000-7000-8000-0000000006b7');
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000006d2'
- where id = '01920000-0000-7000-8000-0000000006b9';
 
 insert into public.usuario_rol (usuario_id, rol_id)
 select '01920000-0000-7000-8000-0000000006ba', r.id from public.rol r where r.codigo = 'ADMIN';
@@ -139,8 +137,8 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006b9');
 select is(public.estado_cuenta(), 'ACTIVA', 'campaña que termina hoy sigue vigente → ACTIVA');
 select set_eq(
   $$ select * from public.mis_zonas() $$,
-  $$ values ('01920000-0000-7000-8000-0000000006d1'::uuid), ('01920000-0000-7000-8000-0000000006d2'::uuid) $$,
-  'mis_zonas() sigue sumando la zona directa y la de la inscripción vigente'
+  $$ values ('01920000-0000-7000-8000-0000000006d1'::uuid) $$,
+  'mis_zonas() devuelve la zona de la inscripción vigente (desde 0009 no hay zona directa)'
 );
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006bb');

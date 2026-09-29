@@ -57,12 +57,14 @@ supabase/
 │   ├── 20260929180000_0005_inscribir_colportor.sql
 │   ├── 20260929200000_0006_asignar_zona.sql
 │   ├── 20260929210000_0007_lecturas_panel.sql
-│   └── 20260929220000_0008_zonas_mapa.sql
+│   ├── 20260929220000_0008_zonas_mapa.sql
+│   └── 20260929230000_0009_zona_solo_inscripcion.sql
 ├── seed.sql            ← datos de ejemplo (ficticios) de zonas, campañas, catálogo y precios
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
 │                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed,
 │                        0006 estado de la cuenta, 0007 inscripción en campaña, 0008 zona,
-│                        0009 lecturas del panel, 0010 mapa de la campaña, 0011 mapa en el delta
+│                        0009 lecturas del panel, 0010 mapa de la campaña, 0011 mapa en el delta,
+│                        0012 zona solo en la inscripción
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
@@ -76,7 +78,7 @@ scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / 
 
 ## CI/CD
 
-- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`.
+- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`.
 - `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment*. **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
 ### Cuándo aplica cada rama
@@ -147,6 +149,8 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 ### Zona del colportor
 
 `select public.asignar_zona(campania_id, usuario_id, zona_id);` asigna o cambia la zona de un colportor inscripto (`campania_colportor.zona_id`, HU-CAM-006) y devuelve la fila. `mis_zonas()` le abre la zona nueva y deja de abrirle la anterior.
+
+Desde la migración `0009`, la inscripción es el **único** lugar donde vive la zona de un colportor (`null` = sin zona): `usuario.zona_id` ya no existe. Un trigger (`campania_colportor_zona_valida`) exige, también fuera del RPC, que la zona sea de una ciudad viva de la misma campaña y no esté dada de baja; lo revisa también al reactivar una inscripción dada de baja (si su zona ya no sirve, se rechaza y el aviso dice que se reactive sin zona). `mis_zonas()` solo devuelve zonas vivas de inscripciones vigentes.
 
 - **Quién.** El coordinador de esa campaña o un ADMIN. Si no, `42501`.
 - **Qué reglas.** Campaña vigente; colportor con inscripción viva en esa campaña; zona viva de una ciudad de esa campaña (desde `0008`: `CZ006` si es de otra campaña, `CZ005` si su ciudad se quitó de la campaña). Los códigos son `CZ001`..`CZ006`: ver el header de las migraciones `0006` y `0008`.
