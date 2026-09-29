@@ -15,7 +15,10 @@ delete from public.espacio_persona where created_by in (select id from public.us
 delete from public.espacio        where created_by in (select id from public.usuario where email like 'bench-%@bench.local');
 delete from public.ubicacion      where created_by in (select id from public.usuario where email like 'bench-%@bench.local');
 delete from public.jornada        where colportor_id in (select id from public.usuario where email like 'bench-%@bench.local');
+update public.usuario            set zona_id = null where email like 'bench-%@bench.local';
 delete from public.zona           where nombre like 'BENCH zona %';
+delete from public.campania_ciudad where id = '01920000-0000-7000-8000-0000000be003';
+delete from public.campania       where id = '01920000-0000-7000-8000-0000000be002';
 delete from public.ciudad         where nombre = 'BENCH ciudad';
 delete from public.pais           where iso_code = 'ZZ';
 delete from auth.users            where email like 'bench-%@bench.local';
@@ -33,9 +36,20 @@ select public.uuid_generate_v7(), '00000000-0000-0000-0000-000000000000', 'authe
        'bench-' || n || '@bench.local', 'x', now(), now()
 from generate_series(1, :colportores) n;
 
-insert into public.zona (id, nombre, ciudad_id)
-select public.uuid_generate_v7(), 'BENCH zona ' || n, '01920000-0000-7000-8000-0000000be001'
-from generate_series(1, :colportores) n;
+-- Desde 0008 la zona es de una ciudad de una campaña y tiene forma: una grilla de cuadrados
+-- de ~500 m que no se superponen.
+insert into public.campania (id, nombre, tipo, fecha_inicio)
+values ('01920000-0000-7000-8000-0000000be002', 'BENCH campaña', 'PERMANENTE', current_date - 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id)
+values ('01920000-0000-7000-8000-0000000be003', '01920000-0000-7000-8000-0000000be002',
+        '01920000-0000-7000-8000-0000000be001');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, poligono_geojson)
+select public.uuid_generate_v7(), 'BENCH zona ' || n, '01920000-0000-7000-8000-0000000be003', 'ESQUINAS',
+       jsonb_build_object('type', 'Polygon', 'coordinates', jsonb_build_array(jsonb_build_array(
+         jsonb_build_array(x0, y0), jsonb_build_array(x0 + 0.005, y0), jsonb_build_array(x0 + 0.005, y0 + 0.005),
+         jsonb_build_array(x0, y0 + 0.005), jsonb_build_array(x0, y0))))
+from generate_series(1, :colportores) n,
+     lateral (select -56.30 + (n % 20) * 0.005 as x0, -34.95 + (n / 20) * 0.005 as y0) g;
 
 -- Un colportor por zona: es el reparto que hace que la RLS por zona tenga algo
 -- que filtrar. Sin esto todos verían todo y la medición no diría nada.

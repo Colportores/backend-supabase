@@ -49,8 +49,8 @@ Supabase y permiso para correr SQL.
 ## Orden de carga (respeta las FKs)
 
 ```
-pais → ciudad ─┬→ campania
-               └→ zona ──────────────────┐
+pais → ciudad ─┐
+     campania ─┴→ campania_ciudad → zona ─┬→ zona_vertice (solo ESQUINAS)
                                           │
 producto ────────────────────────────────┼→ precio_por_zona
                                           │   (FK directa a producto O a coleccion —
@@ -94,8 +94,8 @@ values ('<nombre real>', '<id de pais>', <lat>, <lon>, 13);
 ### 3. `campania`
 
 ```sql
-insert into public.campania (nombre, tipo, fecha_inicio, fecha_fin, ciudad_id, coordinador_id)
-values ('<nombre real>', 'VERANO', '2026-01-05', '2026-02-20', '<id de ciudad>', null);
+insert into public.campania (nombre, tipo, fecha_inicio, fecha_fin, coordinador_id)
+values ('<nombre real>', 'VERANO', '2026-01-05', '2026-02-20', null);
 ```
 
 - `tipo` acepta **exactamente** `'VERANO'`, `'INVIERNO'` o `'PERMANENTE'`
@@ -103,23 +103,34 @@ values ('<nombre real>', 'VERANO', '2026-01-05', '2026-02-20', '<id de ciudad>',
 - `fecha_inicio` es obligatoria. `fecha_fin` puede ser `null` (campaña
   permanente, sin fecha de cierre) pero si la cargás **tiene que ser >=
   `fecha_inicio`**.
-- `ciudad_id` tiene que existir en `ciudad`.
 - `coordinador_id` es opcional, pero si lo cargás tiene que ser el `id` de una
   fila de `public.usuario` que ya exista (el coordinador tiene que haberse
   registrado antes en la app — este dato no se puede anticipar acá).
+- Las ciudades de la campaña van aparte, en `campania_ciudad` (una campaña
+  abarca una o más ciudades, migración `0008`).
 
-### 4. `zona`
+### 4. `campania_ciudad` y `zona`
+
+Desde la migración `0008`, el camino normal es el panel (vista 24), que llama
+a `agregar_ciudad_a_campania()` y `guardar_zona()`. A mano, como `postgres`:
 
 ```sql
-insert into public.zona (nombre, ciudad_id, campania_id, poligono_geojson)
-values ('<nombre real>', '<id de ciudad>', '<id de campania o null>', null);
+insert into public.campania_ciudad (campania_id, ciudad_id)
+values ('<id de campania>', '<id de ciudad>');
+
+-- RADIAL: el polígono lo calcula el servidor a partir del centro y el radio.
+insert into public.zona (nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m, color)
+values ('<nombre real>', '<id de campania_ciudad>', 'RADIAL', <lat>, <lon>, <metros, de 1 a 3000>, '#3A7BD5');
 ```
 
-- `ciudad_id` obligatorio, tiene que existir.
-- `campania_id` es opcional: una zona puede existir sin pertenecer a una
-  campaña concreta (zona "permanente"). Si lo cargás, tiene que existir.
-- `poligono_geojson` es opcional (`jsonb`) — se puede dejar en `null` y
-  cargarlo después desde la app/panel cuando exista.
+- Toda zona es de una ciudad de una campaña (`campania_ciudad_id`
+  obligatorio) y tiene forma: `RADIAL` (centro y radio) o `ESQUINAS` (el
+  `poligono_geojson` ya calculado, un `Polygon` cerrado, más sus esquinas en
+  `zona_vertice`, al menos 3). No se cargan zonas sin forma.
+- Dos zonas vivas de la misma `campania_ciudad` no se pueden superponer
+  (pueden compartir la calle del borde); si se superponen, el `insert` falla
+  con `CZ007` y dice con cuál.
+- El nombre no se repite entre las zonas vivas de la misma `campania_ciudad`.
 
 ### 5. `producto`
 

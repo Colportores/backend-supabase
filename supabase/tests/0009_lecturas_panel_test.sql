@@ -46,21 +46,32 @@ insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000009c1', 'Montevideo lect', '01920000-0000-7000-8000-0000000009c0', -34.9, -56.16),
   ('01920000-0000-7000-8000-0000000009c2', 'Salto lect',      '01920000-0000-7000-8000-0000000009c0', -31.4, -57.96);
 
-insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id, coordinador_id, deleted_at) values
-  ('01920000-0000-7000-8000-0000000009e1', 'Verano',  'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009a1', null),
-  ('01920000-0000-7000-8000-0000000009e2', 'Salto',   'VERANO',     current_date - 10, null,              '01920000-0000-7000-8000-0000000009c2', '01920000-0000-7000-8000-0000000009a2', null),
-  ('01920000-0000-7000-8000-0000000009e3', 'Vieja',   'VERANO',     current_date - 90, current_date - 30, '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009a1', null),
-  ('01920000-0000-7000-8000-0000000009e4', 'Borrada', 'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009a1', now()),
-  ('01920000-0000-7000-8000-0000000009e5', 'Otoño',   'PERMANENTE', current_date - 10, null,              '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009a2', null);
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
+  ('01920000-0000-7000-8000-0000000009e1', 'Verano', 'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000009a1', null),
+  ('01920000-0000-7000-8000-0000000009e2', 'Salto', 'VERANO', current_date - 10, null, '01920000-0000-7000-8000-0000000009a2', null),
+  ('01920000-0000-7000-8000-0000000009e3', 'Vieja', 'VERANO', current_date - 90, current_date - 30, '01920000-0000-7000-8000-0000000009a1', null),
+  ('01920000-0000-7000-8000-0000000009e4', 'Borrada', 'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000009a1', now()),
+  ('01920000-0000-7000-8000-0000000009e5', 'Otoño', 'PERMANENTE', current_date - 10, null, '01920000-0000-7000-8000-0000000009a2', null);
+insert into public.campania_ciudad (campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-0000000009e1', '01920000-0000-7000-8000-0000000009c1'),
+  ('01920000-0000-7000-8000-0000000009e2', '01920000-0000-7000-8000-0000000009c2'),
+  ('01920000-0000-7000-8000-0000000009e3', '01920000-0000-7000-8000-0000000009c1'),
+  ('01920000-0000-7000-8000-0000000009e4', '01920000-0000-7000-8000-0000000009c1'),
+  ('01920000-0000-7000-8000-0000000009e5', '01920000-0000-7000-8000-0000000009c1');
 
-insert into public.zona (id, nombre, ciudad_id, campania_id, deleted_at) values
-  ('01920000-0000-7000-8000-0000000009d1', 'Centro',       '01920000-0000-7000-8000-0000000009c1', null, null),
-  ('01920000-0000-7000-8000-0000000009d2', 'Cordón',       '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009e1', null),
-  ('01920000-0000-7000-8000-0000000009d3', 'Salto centro', '01920000-0000-7000-8000-0000000009c2', null, null),
-  ('01920000-0000-7000-8000-0000000009d4', 'Pocitos',      '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009e5', null),
-  ('01920000-0000-7000-8000-0000000009d5', 'Borrada',      '01920000-0000-7000-8000-0000000009c1', null, now()),
-  ('01920000-0000-7000-8000-0000000009d6', 'Ajena',        '01920000-0000-7000-8000-0000000009c1', '01920000-0000-7000-8000-0000000009e3', null),
-  ('01920000-0000-7000-8000-0000000009d7', 'Zona de Beto', '01920000-0000-7000-8000-0000000009c1', null, null);
+-- Desde 0008 toda zona es de una ciudad de una campaña: Centro, Borrada y Zona de Beto pasan
+-- a Verano, y Salto centro a Salto (antes eran de la ciudad, sin campaña).
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m, deleted_at)
+select x.id::uuid, x.nombre, cc.id, 'RADIAL', x.lat, x.lon, 300, x.borrada
+  from (values ('01920000-0000-7000-8000-0000000009d1', 'Centro',       '01920000-0000-7000-8000-0000000009e1', -34.90, -56.18, null::timestamptz),
+               ('01920000-0000-7000-8000-0000000009d2', 'Cordón',       '01920000-0000-7000-8000-0000000009e1', -34.90, -56.14, null),
+               ('01920000-0000-7000-8000-0000000009d3', 'Salto centro', '01920000-0000-7000-8000-0000000009e2', -31.40, -57.96, null),
+               ('01920000-0000-7000-8000-0000000009d4', 'Pocitos',      '01920000-0000-7000-8000-0000000009e5', -34.90, -56.18, null),
+               ('01920000-0000-7000-8000-0000000009d5', 'Borrada',      '01920000-0000-7000-8000-0000000009e1', -34.90, -56.18, now()),
+               ('01920000-0000-7000-8000-0000000009d6', 'Ajena',        '01920000-0000-7000-8000-0000000009e3', -34.90, -56.18, null),
+               ('01920000-0000-7000-8000-0000000009d7', 'Zona de Beto', '01920000-0000-7000-8000-0000000009e1', -34.90, -56.10, null))
+       x(id, nombre, campania, lat, lon, borrada)
+  join public.campania_ciudad cc on cc.campania_id = x.campania::uuid;
 
 insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000009e1', '01920000-0000-7000-8000-0000000009b1', '01920000-0000-7000-8000-0000000009d2', null),
@@ -145,9 +156,10 @@ select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-
 -- ---------------------------------------------------------------------------
 select results_eq(
   $$ select id, nombre, de_esta_campania from public.zonas_asignables('01920000-0000-7000-8000-0000000009e1') $$,
-  $$ values ('01920000-0000-7000-8000-0000000009d1'::uuid, 'Centro'::text, false),
+  $$ values ('01920000-0000-7000-8000-0000000009d1'::uuid, 'Centro'::text, true),
             ('01920000-0000-7000-8000-0000000009d2'::uuid, 'Cordón'::text, true) $$,
-  'el coordinador ve las de su ciudad sin campaña o de la suya; no ve otra ciudad (CZ005), ajenas (CZ006) ni borradas'
+  'el coordinador ve las vivas de su campaña (desde 0008 todas son de una campaña: de_esta_campania '
+  'siempre true); no ve las de otra campaña (CZ006) ni las borradas'
 );
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000009ad');
@@ -159,9 +171,23 @@ select results_eq(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000009a2');
 select results_eq(
   $$ select id from public.zonas_asignables('01920000-0000-7000-8000-0000000009e5') $$,
-  $$ values ('01920000-0000-7000-8000-0000000009d1'::uuid), ('01920000-0000-7000-8000-0000000009d4'::uuid) $$,
-  'para Otoño: la libre y la propia (no la de Verano ni la de Vieja)'
+  $$ values ('01920000-0000-7000-8000-0000000009d4'::uuid) $$,
+  'para Otoño: solo la propia (no las de Verano ni la de Vieja; desde 0008 no hay zonas libres)'
 );
+
+-- Una ciudad que se quita de la campaña se lleva sus zonas de la lista (CZ005 al asignarlas).
+select pg_temp.actuar_como_servidor();
+update public.campania_ciudad set deleted_at = now()
+ where campania_id = '01920000-0000-7000-8000-0000000009e5';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000009a2');
+select is_empty(
+  $$ select id from public.zonas_asignables('01920000-0000-7000-8000-0000000009e5') $$,
+  'las zonas de una ciudad quitada de la campaña no son asignables'
+);
+select pg_temp.actuar_como_servidor();
+update public.campania_ciudad set deleted_at = null
+ where campania_id = '01920000-0000-7000-8000-0000000009e5';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000009a2');
 
 -- Consistencia con la regla: cada zona listada la acepta motivo_rechazo_zona() (como servidor no hay JWT,
 -- así que se prueba asignando de verdad).

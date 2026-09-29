@@ -48,12 +48,13 @@ select col_not_null('public', 'venta', 'xmin_w', 'xmin_w es not null');
 -- 3. El registro es el espejo del contrato §2
 -- ---------------------------------------------------------------------------
 
-select is((select count(*)::integer from sync.entidad), 19, 'hay 19 entidades registradas');
+select is((select count(*)::integer from sync.entidad), 21, 'hay 21 entidades registradas');
 
+-- 0008 suma campania_ciudad y zona_vertice (el mapa de la campaña).
 select is(
   (select array_agg(nombre order by nombre) from sync.entidad where not permite_push),
-  array['campania','ciudad','coleccion','pais','precio_por_zona','producto',
-        'producto_coleccion','zona'],
+  array['campania','campania_ciudad','ciudad','coleccion','pais','precio_por_zona','producto',
+        'producto_coleccion','zona','zona_vertice'],
   'las entidades pull están marcadas de solo lectura (contrato §2)'
 );
 

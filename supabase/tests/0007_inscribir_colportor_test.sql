@@ -58,15 +58,22 @@ insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000007c1', 'Ciudad inscribir', '01920000-0000-7000-8000-0000000007c0', -34.9, -56.16);
 
-insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id, coordinador_id, deleted_at) values
-  ('01920000-0000-7000-8000-0000000007e1', 'Verano', 'VERANO',   current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a1', null),
-  ('01920000-0000-7000-8000-0000000007e2', 'Salto',  'VERANO',   current_date - 10, null,              '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a2', null),
-  ('01920000-0000-7000-8000-0000000007e3', 'Futura', 'INVIERNO', current_date + 5,  current_date + 60, '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a1', null),
-  ('01920000-0000-7000-8000-0000000007e4', 'Vieja',  'VERANO',   current_date - 90, current_date - 30, '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a1', null),
-  ('01920000-0000-7000-8000-0000000007e5', 'Borrada','VERANO',   current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007a1', now());
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
+  ('01920000-0000-7000-8000-0000000007e1', 'Verano', 'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000007a1', null),
+  ('01920000-0000-7000-8000-0000000007e2', 'Salto', 'VERANO', current_date - 10, null, '01920000-0000-7000-8000-0000000007a2', null),
+  ('01920000-0000-7000-8000-0000000007e3', 'Futura', 'INVIERNO', current_date + 5, current_date + 60, '01920000-0000-7000-8000-0000000007a1', null),
+  ('01920000-0000-7000-8000-0000000007e4', 'Vieja', 'VERANO', current_date - 90, current_date - 30, '01920000-0000-7000-8000-0000000007a1', null),
+  ('01920000-0000-7000-8000-0000000007e5', 'Borrada', 'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000007a1', now());
+insert into public.campania_ciudad (campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007c1'),
+  ('01920000-0000-7000-8000-0000000007e2', '01920000-0000-7000-8000-0000000007c1'),
+  ('01920000-0000-7000-8000-0000000007e3', '01920000-0000-7000-8000-0000000007c1'),
+  ('01920000-0000-7000-8000-0000000007e4', '01920000-0000-7000-8000-0000000007c1'),
+  ('01920000-0000-7000-8000-0000000007e5', '01920000-0000-7000-8000-0000000007c1');
 
-insert into public.zona (id, nombre, ciudad_id, campania_id) values
-  ('01920000-0000-7000-8000-0000000007d1', 'Centro', '01920000-0000-7000-8000-0000000007c1', '01920000-0000-7000-8000-0000000007e1');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
+select '01920000-0000-7000-8000-0000000007d1', 'Centro', cc.id, 'RADIAL', -34.9, -56.16, 300
+  from public.campania_ciudad cc where cc.campania_id = '01920000-0000-7000-8000-0000000007e1';
 
 insert into public.campania_colportor (campania_id, usuario_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b4', null),

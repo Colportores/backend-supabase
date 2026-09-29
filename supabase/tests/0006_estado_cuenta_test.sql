@@ -41,19 +41,30 @@ insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000006c1', 'Ciudad estado', '01920000-0000-7000-8000-0000000006c0', -34.9, -56.16);
 
-insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id, deleted_at) values
-  ('01920000-0000-7000-8000-0000000006e1', 'Vigente',   'VERANO',     current_date - 10, current_date + 10, '01920000-0000-7000-8000-0000000006c1', null),
-  ('01920000-0000-7000-8000-0000000006e2', 'Vencida',   'VERANO',     current_date - 60, current_date - 1,  '01920000-0000-7000-8000-0000000006c1', null),
-  ('01920000-0000-7000-8000-0000000006e3', 'Futura',    'INVIERNO',   current_date + 1,  current_date + 30, '01920000-0000-7000-8000-0000000006c1', null),
-  ('01920000-0000-7000-8000-0000000006e4', 'Borrada',   'VERANO',     current_date - 10, current_date + 10, '01920000-0000-7000-8000-0000000006c1', now()),
-  ('01920000-0000-7000-8000-0000000006e5', 'Termina hoy','PERMANENTE', current_date - 10, current_date,     '01920000-0000-7000-8000-0000000006c1', null),
-  ('01920000-0000-7000-8000-0000000006e6', 'Empieza hoy','VERANO',     current_date,      current_date + 10, '01920000-0000-7000-8000-0000000006c1', null),
-  ('01920000-0000-7000-8000-0000000006e7', 'Sin fin',    'PERMANENTE', current_date - 10, null,              '01920000-0000-7000-8000-0000000006c1', null);
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, deleted_at) values
+  ('01920000-0000-7000-8000-0000000006e1', 'Vigente', 'VERANO', current_date - 10, current_date + 10, null),
+  ('01920000-0000-7000-8000-0000000006e2', 'Vencida', 'VERANO', current_date - 60, current_date - 1, null),
+  ('01920000-0000-7000-8000-0000000006e3', 'Futura', 'INVIERNO', current_date + 1, current_date + 30, null),
+  ('01920000-0000-7000-8000-0000000006e4', 'Borrada', 'VERANO', current_date - 10, current_date + 10, now()),
+  ('01920000-0000-7000-8000-0000000006e5', 'Termina hoy', 'PERMANENTE', current_date - 10, current_date, null),
+  ('01920000-0000-7000-8000-0000000006e6', 'Empieza hoy', 'VERANO', current_date, current_date + 10, null),
+  ('01920000-0000-7000-8000-0000000006e7', 'Sin fin', 'PERMANENTE', current_date - 10, null, null);
+insert into public.campania_ciudad (campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-0000000006e1', '01920000-0000-7000-8000-0000000006c1'),
+  ('01920000-0000-7000-8000-0000000006e2', '01920000-0000-7000-8000-0000000006c1'),
+  ('01920000-0000-7000-8000-0000000006e3', '01920000-0000-7000-8000-0000000006c1'),
+  ('01920000-0000-7000-8000-0000000006e4', '01920000-0000-7000-8000-0000000006c1'),
+  ('01920000-0000-7000-8000-0000000006e5', '01920000-0000-7000-8000-0000000006c1'),
+  ('01920000-0000-7000-8000-0000000006e6', '01920000-0000-7000-8000-0000000006c1'),
+  ('01920000-0000-7000-8000-0000000006e7', '01920000-0000-7000-8000-0000000006c1');
 
-insert into public.zona (id, nombre, ciudad_id, campania_id) values
-  ('01920000-0000-7000-8000-0000000006d1', 'Zona vigente', '01920000-0000-7000-8000-0000000006c1', '01920000-0000-7000-8000-0000000006e5'),
-  ('01920000-0000-7000-8000-0000000006d2', 'Zona directa', '01920000-0000-7000-8000-0000000006c1', null),
-  ('01920000-0000-7000-8000-0000000006d3', 'Zona sin fin', '01920000-0000-7000-8000-0000000006c1', '01920000-0000-7000-8000-0000000006e7');
+-- Desde 0008 toda zona es de una ciudad de una campaña; la «directa» va en la vigente.
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
+select x.id::uuid, x.nombre, cc.id, 'RADIAL', -34.9, -56.16, 300
+  from (values ('01920000-0000-7000-8000-0000000006d1', 'Zona vigente', '01920000-0000-7000-8000-0000000006e5'),
+               ('01920000-0000-7000-8000-0000000006d2', 'Zona directa', '01920000-0000-7000-8000-0000000006e1'),
+               ('01920000-0000-7000-8000-0000000006d3', 'Zona sin fin', '01920000-0000-7000-8000-0000000006e7')) x(id, nombre, campania)
+  join public.campania_ciudad cc on cc.campania_id = x.campania::uuid;
 
 insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000006e2', '01920000-0000-7000-8000-0000000006b2', null, null),

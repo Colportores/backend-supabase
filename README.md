@@ -2,7 +2,7 @@
 
 Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
 
-**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006). Las políticas se refinan HU por HU desde Sprint 3.
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS sin superposición, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
@@ -55,18 +55,24 @@ supabase/
 │   ├── 20260902200000_0003_rls_performance.sql
 │   ├── 20260929120000_0004_estado_cuenta.sql
 │   ├── 20260929180000_0005_inscribir_colportor.sql
-│   └── 20260929200000_0006_asignar_zona.sql
+│   ├── 20260929200000_0006_asignar_zona.sql
+│   ├── 20260929210000_0007_lecturas_panel.sql
+│   └── 20260929220000_0008_zonas_mapa.sql
 ├── seed.sql            ← datos de ejemplo (ficticios) de zonas, campañas, catálogo y precios
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
 │                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed,
-│                        0006 estado de la cuenta, 0007 inscripción en campaña, 0008 zona
+│                        0006 estado de la cuenta, 0007 inscripción en campaña, 0008 zona,
+│                        0009 lecturas del panel, 0010 mapa de la campaña, 0011 mapa en el delta
+├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
-scripts/               ← db-migrate / db-test / db-lint / db-reset / db-seed / db-bench
+scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench
 ```
 
-`0004_sync_delta_test.sql` es el único que **no** envuelve todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpia sus filas al final.
+`0004_sync_delta_test.sql` y `0011_zonas_mapa_sync_test.sql` son los únicos que **no** envuelven todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpian sus filas al final.
+
+`db-test-migracion.sh` prueba las migraciones que mueven datos: por cada caso de `supabase/tests_migracion/` limpia la base, aplica las migraciones hasta la versión previa, carga los datos del caso, aplica el resto y verifica (pgTAP, o que aborte con el mensaje esperado). Al final deja la base como `db-reset.sh`.
 
 ## CI/CD
 
@@ -143,9 +149,28 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 `select public.asignar_zona(campania_id, usuario_id, zona_id);` asigna o cambia la zona de un colportor inscripto (`campania_colportor.zona_id`, HU-CAM-006) y devuelve la fila. `mis_zonas()` le abre la zona nueva y deja de abrirle la anterior.
 
 - **Quién.** El coordinador de esa campaña o un ADMIN. Si no, `42501`.
-- **Qué reglas.** Campaña vigente; colportor con inscripción viva en esa campaña; zona existente, de la ciudad de la campaña y que no sea de otra campaña. Los códigos son `CZ001`..`CZ006`: ver el header de la migración `0006`.
+- **Qué reglas.** Campaña vigente; colportor con inscripción viva en esa campaña; zona viva de una ciudad de esa campaña (desde `0008`: `CZ006` si es de otra campaña, `CZ005` si su ciudad se quitó de la campaña). Los códigos son `CZ001`..`CZ006`: ver el header de las migraciones `0006` y `0008`.
 - **Un solo camino.** Es el único camino para cambiar `zona_id` con JWT: un trigger rechaza el UPDATE directo de esa columna, incluso del ADMIN.
 - **Con quién comparte el permiso.** El chequeo de permiso y campaña vigente (`motivo_campania_del_coordinador()`) es el mismo que usa `inscribir_colportor()`.
+
+## Mapa de la campaña
+
+Una campaña abarca una o más ciudades (`campania_ciudad`) y cada ciudad se divide en zonas dibujadas sobre el mapa (vista 24 del panel, migración `0008`). Una zona es `RADIAL` (centro y radio; el polígono lo calcula el servidor) o `ESQUINAS` (esquinas en `zona_vertice` y el borde que sigue las calles, que llega ya calculado). `zona.poligono_geojson` es la geometría que dibujan la app y el panel.
+
+```sql
+select public.agregar_ciudad_a_campania(campania_id, ciudad_id);   -- «+ Agregar ciudad»
+select public.guardar_zona(campania_ciudad_id, nombre, tipo_forma, color, centro_lat, centro_lon,
+                           radio_m, vertices, poligono_geojson, zona_id, vista_previa);
+select public.baja_zona(zona_id, vista_previa);
+```
+
+- **Quién.** El coordinador de la campaña o un ADMIN, y solo si la campaña no terminó. Nadie escribe estas tablas directo (ni el privilegio tiene `authenticated`).
+- **No superposición.** Dos zonas vivas de la misma `campania_ciudad` no comparten interior; sí la calle del borde (tolerancia: una franja de menos de 1 m de ancho no cuenta). Se valida con PostGIS en un trigger, así que vale para cualquier camino de escritura. `CZ007` trae en el DETAIL la geometría de la parte superpuesta.
+- **Forma.** `RADIAL`: radio de 1 a 3000 m (hasta ahí el círculo de 128 lados queda a menos de 1 m del geodésico). `ESQUINAS`: al menos 3 esquinas en lugares distintos (a 1 m o menos cuentan como la misma), con `orden` entero, y el borde pasando a 1 m o menos de cada una. Todo lo demás, `CZ008`.
+- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_que_cambian` (null hasta #24).
+- **Baja.** Lógica. Si la zona tiene colportores asignados se rechaza (`CZ010`) y dice a quiénes reasignar.
+- **Lectura.** El colportor ve las ciudades, zonas y esquinas de las campañas en las que está inscripto (todas las zonas, no solo la suya); el coordinador, las de sus campañas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull. Al crear o reactivar una inscripción, un trigger republica el mapa de esa campaña (UPDATE nulo que les sube el `xmin_w`): si no, un mapa cargado antes del último pull del inscripto quedaría detrás de su watermark y no le llegaría nunca.
+- **Códigos.** `CZ007`..`CZ013`: ver el header de la migración `0008`.
 
 ## Privacidad
 
