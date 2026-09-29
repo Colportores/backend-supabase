@@ -48,25 +48,53 @@ on conflict do nothing;
 -- 2. Campañas
 -- ----------------------------------------------------------------------------
 
-insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id) values
-  ('09990000-0000-7000-8003-000000000001', 'Campaña Ejemplo Verano',
-    'VERANO', '2026-01-05', '2026-02-20', '09990000-0000-7000-8002-000000000001'),
-  ('09990000-0000-7000-8003-000000000002', 'Campaña Ejemplo Permanente',
-    'PERMANENTE', '2026-01-01', null, '09990000-0000-7000-8002-000000000002')
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
+  ('09990000-0000-7000-8003-000000000001', 'Campaña Ejemplo Verano', 'VERANO', '2026-01-05', '2026-02-20'),
+  ('09990000-0000-7000-8003-000000000002', 'Campaña Ejemplo Permanente', 'PERMANENTE', '2026-01-01', null)
+on conflict do nothing;
+-- ----------------------------------------------------------------------------
+-- 3. Mapa: ciudades de cada campaña, zonas y esquinas (migración 0008)
+--    Verano abarca las dos ciudades; Permanente, solo la Sur. Hay zonas RADIAL y
+--    ESQUINAS, y ninguna se superpone con otra de su misma campaña y ciudad.
+-- ----------------------------------------------------------------------------
+
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('09990000-0000-7000-8009-000000000001',
+    '09990000-0000-7000-8003-000000000001', '09990000-0000-7000-8002-000000000001'),
+  ('09990000-0000-7000-8009-000000000002',
+    '09990000-0000-7000-8003-000000000001', '09990000-0000-7000-8002-000000000002'),
+  ('09990000-0000-7000-8009-000000000003',
+    '09990000-0000-7000-8003-000000000002', '09990000-0000-7000-8002-000000000002')
 on conflict do nothing;
 
--- ----------------------------------------------------------------------------
--- 3. Zonas — dos dentro de la campaña de verano, una permanente sin campaña
--- ----------------------------------------------------------------------------
+-- RADIAL: el polígono lo calcula el servidor (trigger zona_mapa) a partir de centro y radio.
+-- ESQUINAS: el borde viene calculado (en la app, siguiendo las calles; acá, un cuadrado de
+-- unos 500 m) y sus esquinas van en zona_vertice.
+insert into public.zona
+  (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m, poligono_geojson, color) values
+  ('09990000-0000-7000-8004-000000000001', 'Zona Ejemplo 1', '09990000-0000-7000-8009-000000000001',
+    'RADIAL', -33.0, -56.0, 500, null, '#3A7BD5'),
+  ('09990000-0000-7000-8004-000000000002', 'Zona Ejemplo 2', '09990000-0000-7000-8009-000000000001',
+    'ESQUINAS', null, null, null,
+    '{"type":"Polygon","coordinates":[[[-55.99,-33.003],[-55.985,-33.003],[-55.985,-32.997],[-55.99,-32.997],[-55.99,-33.003]]]}',
+    '#E07A5F'),
+  ('09990000-0000-7000-8004-000000000003', 'Zona Ejemplo 3', '09990000-0000-7000-8009-000000000003',
+    'RADIAL', -34.0, -55.5, 400, null, '#81B29A'),
+  ('09990000-0000-7000-8004-000000000004', 'Zona Ejemplo 4', '09990000-0000-7000-8009-000000000002',
+    'ESQUINAS', null, null, null,
+    '{"type":"Polygon","coordinates":[[[-55.49,-34.003],[-55.485,-34.003],[-55.485,-33.997],[-55.49,-33.997],[-55.49,-34.003]]]}',
+    '#F2CC8F')
+on conflict do nothing;
 
-insert into public.zona (id, nombre, ciudad_id, campania_id) values
-  ('09990000-0000-7000-8004-000000000001', 'Zona Ejemplo 1',
-    '09990000-0000-7000-8002-000000000001', '09990000-0000-7000-8003-000000000001'),
-  ('09990000-0000-7000-8004-000000000002', 'Zona Ejemplo 2',
-    '09990000-0000-7000-8002-000000000001', '09990000-0000-7000-8003-000000000001'),
-  -- campania_id null a propósito: zona permanente que no pertenece a una campaña concreta.
-  ('09990000-0000-7000-8004-000000000003', 'Zona Ejemplo 3 (sin campaña)',
-    '09990000-0000-7000-8002-000000000002', null)
+insert into public.zona_vertice (id, zona_id, orden, lat, lon, calle_a, calle_b) values
+  ('09990000-0000-7000-800a-000000000001', '09990000-0000-7000-8004-000000000002', 1, -33.003, -55.99,  'Calle Ejemplo A', 'Calle Ejemplo 1'),
+  ('09990000-0000-7000-800a-000000000002', '09990000-0000-7000-8004-000000000002', 2, -33.003, -55.985, 'Calle Ejemplo B', 'Calle Ejemplo 1'),
+  ('09990000-0000-7000-800a-000000000003', '09990000-0000-7000-8004-000000000002', 3, -32.997, -55.985, 'Calle Ejemplo B', 'Calle Ejemplo 2'),
+  ('09990000-0000-7000-800a-000000000004', '09990000-0000-7000-8004-000000000002', 4, -32.997, -55.99,  'Calle Ejemplo A', 'Calle Ejemplo 2'),
+  ('09990000-0000-7000-800a-000000000005', '09990000-0000-7000-8004-000000000004', 1, -34.003, -55.49,  'Calle Ejemplo C', 'Calle Ejemplo 3'),
+  ('09990000-0000-7000-800a-000000000006', '09990000-0000-7000-8004-000000000004', 2, -34.003, -55.485, 'Calle Ejemplo D', 'Calle Ejemplo 3'),
+  ('09990000-0000-7000-800a-000000000007', '09990000-0000-7000-8004-000000000004', 3, -33.997, -55.485, 'Calle Ejemplo D', 'Calle Ejemplo 4'),
+  ('09990000-0000-7000-800a-000000000008', '09990000-0000-7000-8004-000000000004', 4, -33.997, -55.49,  'Calle Ejemplo C', 'Calle Ejemplo 4')
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
