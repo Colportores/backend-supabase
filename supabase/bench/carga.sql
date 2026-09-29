@@ -66,12 +66,15 @@ from public.usuario u, generate_series(1, 200) n
 where u.email like 'bench-%@bench.local';
 
 \echo '-- ubicaciones (400 por colportor)'
-insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id, created_by)
+-- Desde 0010 la zona sale de la posición: cada casa cae adentro del cuadrado de su colportor.
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by)
 select public.uuid_generate_v7(), 'CASA', 'Calle ' || (n % 80), n::text,
-       -34.9 + (n % 100) * 0.0001, -56.16 + (n % 100) * 0.0001,
-       '01920000-0000-7000-8000-0000000be001', ins.zona_id, u.id
+       (z.poligono_geojson #>> '{coordinates,0,0,1}')::float8 + 0.0001 + (n % 40) * 0.0001,
+       (z.poligono_geojson #>> '{coordinates,0,0,0}')::float8 + 0.0001 + (n / 40) * 0.0001,
+       '01920000-0000-7000-8000-0000000be001', u.id
 from public.usuario u
-  join public.campania_colportor ins on ins.usuario_id = u.id, generate_series(1, 400) n
+  join public.campania_colportor ins on ins.usuario_id = u.id
+  join public.zona z on z.id = ins.zona_id, generate_series(1, 400) n
 where u.email like 'bench-%@bench.local';
 
 \echo '-- espacios y vínculos'

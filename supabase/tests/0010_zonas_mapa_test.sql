@@ -365,8 +365,8 @@ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -5
                             p_previa => true) as p;
 select is((select p ->> 'guardada' from previa), 'false', 'vista previa: no guarda');
 select is((select jsonb_array_length(p -> 'superposiciones') from previa), 2, 'vista previa: devuelve las 2 superposiciones');
-select ok((select p ? 'ubicaciones_que_cambian' and p -> 'ubicaciones_que_cambian' = 'null'::jsonb from previa),
-          'vista previa: ubicaciones_que_cambian presente y en null hasta #24');
+select is((select p -> 'ubicaciones_que_cambian' from previa), '0'::jsonb,
+          'vista previa: ubicaciones_que_cambian (0: no hay ubicaciones; el conteo lo prueba 0013)');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.zona where nombre = 'Zona C'), 0::bigint, 'vista previa: Zona C no existe');
 

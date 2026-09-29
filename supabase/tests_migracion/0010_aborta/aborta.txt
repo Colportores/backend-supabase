@@ -1,0 +1,8 @@
+no se aplicó
+No se cambió nada
+Rivera 100 (01920000-0000-7000-8000-0000000093a1), zona «Centro» de «Verano»: por su posición
+cae fuera de toda zona de una campaña vigente, y el colportor de esa zona dejaría de verla.
+Rivera 200 (01920000-0000-7000-8000-0000000093a2), zona «Centro» de «Verano»: por su posición
+cae en la zona «Cordón», y el colportor de «Centro» dejaría de verla.
+ubicacion.zona_id = '01920000-0000-7000-8000-0000000093d2'
+volvé a aplicar la migración
