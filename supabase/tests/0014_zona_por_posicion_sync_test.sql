@@ -126,10 +126,59 @@ select is(
   'el de otra zona no recibe las casas de Z2');
 
 -- ---------------------------------------------------------------------------
+-- Cuando una casa CAMBIA de zona, sus espacios salen en el delta de la zona nueva: al
+-- recalcular una zona (u5) y al mover la casa (u6). El tercer camino, la migración, lo prueba
+-- tests_migracion/0010_ok.
+-- ---------------------------------------------------------------------------
+-- u5 (con espacio) queda justo al oeste de Z1; u6 (de b2, con espacio) fuera de toda zona.
+-- b1 registra una casa propia en Z1 para que su watermark avance en las dos tablas.
+select pg_temp.como_servidor();
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by) values
+  ('01920000-0000-7000-8000-000000001405', 'CASA', 'Oeste', '5', -34.915, -56.193, '01920000-0000-7000-8000-0000000014c1', null),
+  ('01920000-0000-7000-8000-000000001406', 'CASA', 'Lejos', '6', -34.95,  -56.30,  '01920000-0000-7000-8000-0000000014c1', '01920000-0000-7000-8000-0000000014b2'),
+  ('01920000-0000-7000-8000-000000001407', 'CASA', 'Propia b1', '7', -34.915, -56.185, '01920000-0000-7000-8000-0000000014c1', '01920000-0000-7000-8000-0000000014b1');
+insert into public.espacio (id, ubicacion_id, created_by) values
+  ('01920000-0000-7000-8000-000000001415', '01920000-0000-7000-8000-000000001405', null),
+  ('01920000-0000-7000-8000-000000001416', '01920000-0000-7000-8000-000000001406', '01920000-0000-7000-8000-0000000014b2'),
+  ('01920000-0000-7000-8000-000000001417', '01920000-0000-7000-8000-000000001407', '01920000-0000-7000-8000-0000000014b1');
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+create temp table delta_b1 as
+select sync.pull(array['ubicacion', 'espacio'], '{}'::jsonb, 1000) as d;
+select is((select jsonb_path_query_array(d, '$.rows.espacio[*].id') from delta_b1),
+          '["01920000-0000-7000-8000-000000001417"]'::jsonb, 'b1 arranca con el espacio de su casa y nada más');
+
+-- 1) El coordinador agranda Z1 hasta cubrir u5.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014a1');
+select is(
+  (public.guardar_zona(p_campania_ciudad_id => '01920000-0000-7000-8000-0000000014f1', p_nombre => 'Z1',
+     p_tipo_forma => 'ESQUINAS', p_zona_id => '01920000-0000-7000-8000-0000000014d1',
+     p_vertices => '[{"orden":1,"lat":-34.92,"lon":-56.195},{"orden":2,"lat":-34.92,"lon":-56.18},{"orden":3,"lat":-34.91,"lon":-56.18},{"orden":4,"lat":-34.91,"lon":-56.195}]',
+     p_poligono_geojson => '{"type":"Polygon","coordinates":[[[-56.195,-34.92],[-56.18,-34.92],[-56.18,-34.91],[-56.195,-34.91],[-56.195,-34.92]]]}')
+   -> 'ubicaciones_que_cambian'),
+  '1'::jsonb, 'agrandar Z1 mueve u5 a Z1');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+create temp table delta_b1_zona as
+select sync.pull(array['ubicacion', 'espacio'], (select d -> 'watermark' from delta_b1), 1000) as d;
+select is((select jsonb_path_query_array(d, '$.rows.espacio[*].id') from delta_b1_zona),
+          '["01920000-0000-7000-8000-000000001415"]'::jsonb,
+          'recálculo de una zona: el espacio de la casa que entra sale en el delta');
+
+-- 2) b2 mueve su casa u6 adentro de Z1 (es suya: puede).
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b2');
+update public.ubicacion set lat = -34.912, lon = -56.182 where id = '01920000-0000-7000-8000-000000001406';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+select is((select jsonb_path_query_array(sync.pull(array['espacio'], d -> 'watermark', 1000), '$.rows.espacio[*].id')
+             from delta_b1_zona),
+          '["01920000-0000-7000-8000-000000001416"]'::jsonb,
+          'mover la casa a otra zona: su espacio sale en el delta de esa zona');
+
+-- ---------------------------------------------------------------------------
 -- Limpieza
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
-drop table delta_b2, delta_b2_rota;
+drop table delta_b2, delta_b2_rota, delta_b1, delta_b1_zona;
+delete from public.zona_vertice where zona_id in (select id from public.zona where campania_ciudad_id in ('01920000-0000-7000-8000-0000000014f0', '01920000-0000-7000-8000-0000000014f1'));
 delete from public.espacio where ubicacion_id in (select id from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000014c1');
 delete from public.house_status where ubicacion_id in (select id from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000014c1');
 delete from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000014c1';

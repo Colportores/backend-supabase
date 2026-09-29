@@ -27,5 +27,10 @@ select is((select sync_version from public.ubicacion where id = '01920000-0000-7
 select is((select sync_version from public.ubicacion where id = '01920000-0000-7000-8000-0000000092a2'), 1::bigint,
           'la que cambia se actualiza (sale en el próximo delta)');
 
+select results_eq(
+  $$ select id, sync_version from public.espacio where id::text like '01920000-0000-7000-8000-0000000092b%' order by id $$,
+  $$ values ('01920000-0000-7000-8000-0000000092b1'::uuid, 0::bigint), ('01920000-0000-7000-8000-0000000092b2'::uuid, 1::bigint) $$,
+  'el espacio de la casa que cambia de zona se republica (sale en el delta de la zona nueva); el otro no se toca');
+
 select * from finish();
 rollback;

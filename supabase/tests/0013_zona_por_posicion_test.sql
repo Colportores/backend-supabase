@@ -182,6 +182,19 @@ update public.ubicacion set tipo = 'NEGOCIO' where id = '01920000-0000-7000-8000
 select is(pg_temp.zona_de('01920000-0000-7000-8000-000000001307'), '01920000-0000-7000-8000-0000000013d3'::uuid,
           'un UPDATE que no la mueve conserva la campaña de su zona (O), aunque A tenga menor id');
 
+-- Mover a otra zona: solo casas propias. 1309 la cargó el servidor en A (zona de b1): b1 la
+-- puede corregir dentro de A, pero no mandarla a B.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
+select lives_ok(
+  $$ update public.ubicacion set lat = -34.913 where id = '01920000-0000-7000-8000-000000001309' $$,
+  'una casa ajena de su zona se puede corregir dentro de la zona');
+select throws_ok(
+  $$ update public.ubicacion set lon = -56.185 where id = '01920000-0000-7000-8000-000000001309' $$,
+  '42501', null,
+  'una casa ajena NO se puede mover a la zona de otro (solo casas propias)');
+select is(pg_temp.zona_de('01920000-0000-7000-8000-000000001309'), '01920000-0000-7000-8000-0000000013d1'::uuid,
+          'y sigue en A');
+
 -- ---------------------------------------------------------------------------
 -- 4. house_status sigue a su ubicación; una baja conserva su zona
 -- ---------------------------------------------------------------------------
@@ -280,6 +293,22 @@ select lives_ok(
   $$ insert into public.ubicacion (tipo, calle, numero, lat, lon, ciudad_id)
      values ('CASA', 'av. italia', ' 2000', -34.80, -56.10, '01920000-0000-7000-8000-0000000013c1') $$,
   'la misma dirección se guarda mientras D1 esté pendiente (el aviso no bloquea)');
+
+-- ---------------------------------------------------------------------------
+-- 7. Lock por ciudad contra la carrera guardar_zona / push (la carrera en sí, con dos
+--    sesiones, no entra en pgTAP: ver el PR). Esta transacción escribió ubicaciones de c1
+--    (compartido) y recalculó zonas de c1 (exclusivo); los dos quedan tomados hasta el final.
+-- ---------------------------------------------------------------------------
+create or replace function pg_temp.tiene_lock_ciudad(p_ciudad uuid, p_modo text) returns boolean language sql as $$
+  select exists (
+    select 1 from pg_locks l
+     where l.locktype = 'advisory' and l.pid = pg_backend_pid() and l.mode = p_modo and l.objsubid = 1
+       and ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('mapa_ciudad:' || p_ciudad::text, 0));
+$$;
+select ok(pg_temp.tiene_lock_ciudad('01920000-0000-7000-8000-0000000013c1', 'ShareLock'),
+          'escribir una ubicación toma el lock de su ciudad compartido');
+select ok(pg_temp.tiene_lock_ciudad('01920000-0000-7000-8000-0000000013c1', 'ExclusiveLock'),
+          'recalcular las zonas de una ciudad lo toma exclusivo');
 
 select * from finish();
 rollback;

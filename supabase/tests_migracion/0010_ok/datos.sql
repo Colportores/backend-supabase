@@ -30,3 +30,8 @@ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona
 insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad) values
   ('01920000-0000-7000-8000-0000000092a1', -34.90,  -56.18,  'CASA', '01920000-0000-7000-8000-0000000092d2', 'RECHAZO', 7),
   ('01920000-0000-7000-8000-0000000092a2', -34.901, -56.181, 'CASA', null, 'SIN_CONTESTAR', 6);
+
+-- Un espacio en u1 (no cambia de zona) y otro en u2 (cambia): el de u2 se republica.
+insert into public.espacio (id, ubicacion_id) values
+  ('01920000-0000-7000-8000-0000000092b1', '01920000-0000-7000-8000-0000000092a1'),
+  ('01920000-0000-7000-8000-0000000092b2', '01920000-0000-7000-8000-0000000092a2');

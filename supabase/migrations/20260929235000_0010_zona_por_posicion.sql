@@ -10,12 +10,21 @@
 --     (ST_Covers sobre zona.poligono_geojson, borde incluido): el valor del cliente se
 --     ignora y zona_id pasa a sync.entidad.columnas_servidor. null = fuera de toda zona. El
 --     colportor puede registrar fuera de su zona (R-CM04).
---   · house_status.zona_id sigue a su ubicación (trigger en las dos tablas).
---   · tg_zona_propia se va: impedía mover una fila a una zona ajena, y ahora la zona sale de
---     la posición. Por lo mismo, las políticas de INSERT de ubicacion y house_status y la de
---     UPDATE de ubicacion dejan de exigir que la zona sea propia (antes la elegía el cliente;
---     ahora, con R-CM04, una casa registrada o corregida en la zona de otro es válida). Qué
---     filas puede tocar cada uno (el USING) no cambia.
+--   · house_status.zona_id sigue a su ubicación (trigger en las dos tablas). Cuando una
+--     ubicación cambia de zona, por el camino que sea, su house_status y sus espacios salen en
+--     el delta de la zona nueva.
+--   · tg_zona_propia se va: la zona ahora sale de la posición. Las políticas de INSERT de
+--     ubicacion y house_status dejan de exigir que la zona sea propia (R-CM04: registrar una
+--     casa que cae en la zona de otro es válido). Mover una casa a otra zona: SOLO casas
+--     propias. Una casa que registró otro colportor se corrige dentro de la zona, pero no se
+--     manda a la de otro (la política de UPDATE exige que la fila nueva le siga siendo visible;
+--     el push queda invalid con 42501). Qué filas puede tocar cada uno (el USING) no cambia.
+--   · Lock por ciudad (advisory, hasta el commit): compartido al escribir una ubicación,
+--     exclusivo al recalcular las zonas de esa ciudad. Así una casa que entra mientras se
+--     guarda una zona no queda con la zona vieja, en ninguno de los dos órdenes.
+--     Si un push ya tiene tomada una fila que el recálculo necesita y espera el compartido,
+--     Postgres corta el deadlock abortando al que esperaba primero (en la práctica el push,
+--     que sale 500 y el motor reintenta).
 --   · Al crear una zona, cambiarle la forma o darla de baja (por cualquier camino), se
 --     recalculan las ubicaciones de su ciudad que están en la forma vieja o en la nueva, o que
 --     tenían esa zona. zona_ubicaciones_que_cambian() deja de devolver null: guardar_zona() y
@@ -41,6 +50,8 @@
 -- dos zonas, o en la franja de hasta 1 m que 0008 acepta como borde, lo cubren las dos, y
 -- queda en la de menor id. Estable: una zona nueva tiene un id mayor (UUID v7), así que no le
 -- saca los puntos del borde a la vecina que ya existía. Si ninguna lo cubre, null.
+-- Mover un punto a otra zona (o fuera de toda zona) solo vale para casas propias: la app no
+-- ofrece mover a otra zona una casa que registró otro colportor.
 --
 -- ## D2 · De qué campaña es la zona (pendiente de Cristian; acá, la opción (a) provisoria)
 --
@@ -306,6 +317,11 @@ begin
     return new;
   end if;
 
+  -- Compartido por ciudad: espera a que termine un recálculo de zonas en curso (que lo toma
+  -- exclusivo) y, como la sentencia siguiente toma un snapshot nuevo, calcula con el mapa ya
+  -- guardado. Sin esto, una casa que entra mientras se guarda una zona queda con la zona vieja.
+  perform pg_advisory_xact_lock_shared(hashtextextended('mapa_ciudad:' || new.ciudad_id::text, 0));
+
   v_se_mueve := tg_op = 'INSERT'
                 or (new.lat, new.lon, new.ciudad_id) is distinct from (old.lat, old.lon, old.ciudad_id);
 
@@ -345,9 +361,12 @@ create trigger house_status_zona_de_su_ubicacion
   before insert or update on public.house_status
   for each row execute function public.tg_house_status_zona_de_su_ubicacion();
 
--- Cuando la ubicación cambia de zona, su house_status la sigue (y sale en el delta). AFTER sin
--- «UPDATE OF zona_id»: la zona la cambia el trigger BEFORE, no el SET del comando.
-create function public.tg_ubicacion_zona_a_house_status()
+-- Cuando la ubicación cambia de zona (por cualquier camino: se mueve, se recalcula una zona, la
+-- migración), lo que cuelga de ella tiene que salir en el delta de los colportores de la zona
+-- nueva, que empiezan a verlo: su house_status toma la zona (y sube su xmin_w) y sus espacios
+-- reciben un UPDATE nulo. AFTER sin «UPDATE OF zona_id»: la zona la cambia el trigger BEFORE,
+-- no el SET del comando.
+create function public.tg_ubicacion_zona_a_dependientes()
 returns trigger
 language plpgsql
 security definer
@@ -359,14 +378,20 @@ begin
    where h.ubicacion_id = new.id
      and h.deleted_at is null
      and h.zona_id is distinct from new.zona_id;
+
+  update public.espacio e
+     set deleted_at = e.deleted_at
+   where e.ubicacion_id = new.id
+     and e.deleted_at is null
+     and e.xmin_w <> pg_current_xact_id();
   return null;
 end;
 $$;
 
-create trigger ubicacion_zona_a_house_status
+create trigger ubicacion_zona_a_dependientes
   after update on public.ubicacion
   for each row when (old.zona_id is distinct from new.zona_id)
-  execute function public.tg_ubicacion_zona_a_house_status();
+  execute function public.tg_ubicacion_zona_a_dependientes();
 
 -- zona_id la pone el servidor: el push la descarta del payload (contrato §5.4).
 update sync.entidad
@@ -383,12 +408,14 @@ create policy ubicacion_por_zona_insert on public.ubicacion
   for insert to authenticated
   with check (created_by = (select auth.uid()));
 
--- WITH CHECK (true): mover una casa que puede editar (de su zona o registrada por él) a otra
--- posición es válido aunque caiga en la zona de otro; antes tg_zona_propia lo impedía.
+-- Mover a otra zona (o fuera de toda zona): SOLO casas propias. La fila nueva tiene que seguir
+-- siendo suya o de una de sus zonas; una casa que registró otro colportor se puede corregir
+-- dentro de la zona, pero no mandarla a la de otro (el push queda invalid con 42501). Es una
+-- protección: la RLS de SELECT sobre la fila nueva ya lo frenaba; acá queda escrito.
 create policy ubicacion_por_zona_update on public.ubicacion
   for update to authenticated
   using (zona_id in (select public.mis_zonas()) or created_by = (select auth.uid()))
-  with check (true);
+  with check (zona_id in (select public.mis_zonas()) or created_by = (select auth.uid()));
 
 -- El estado de una casa que el colportor ve (de su zona, o registrada por él aunque caiga en
 -- otra): la subconsulta pasa por la RLS de ubicacion.
@@ -469,6 +496,11 @@ begin
   end if;
 
   select cc.ciudad_id into v_ciudad from public.campania_ciudad cc where cc.id = new.campania_ciudad_id;
+
+  -- Exclusivo por ciudad hasta el commit: espera a las escrituras de ubicaciones en curso de esa
+  -- ciudad (tienen el compartido) y frena las que llegan hasta que el mapa nuevo esté guardado.
+  -- El recálculo corre después, con un snapshot que ya las ve.
+  perform pg_advisory_xact_lock(hashtextextended('mapa_ciudad:' || v_ciudad::text, 0));
 
   perform public.recalcular_zona_de_ubicaciones(
     v_ciudad, new.id,
@@ -674,7 +706,7 @@ revoke all on function
   public.recalcular_zona_de_ubicaciones(uuid, uuid, extensions.geometry, extensions.geometry),
   public.tg_ubicacion_zona_por_posicion(),
   public.tg_house_status_zona_de_su_ubicacion(),
-  public.tg_ubicacion_zona_a_house_status(),
+  public.tg_ubicacion_zona_a_dependientes(),
   public.tg_zona_recalcular_ubicaciones(),
   public.tg_campania_colportor_republicar_zona(),
   public.posibles_duplicados_de_ubicacion(uuid, text, text, double precision, double precision, uuid)
