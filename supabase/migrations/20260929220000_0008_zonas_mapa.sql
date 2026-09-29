@@ -1313,7 +1313,10 @@ revoke all on function
   public.guardar_zona(uuid, text, text, text, double precision, double precision, integer, jsonb,
                       jsonb, uuid, boolean),
   public.baja_zona(uuid, boolean)
-  from public, anon;
+  from public, anon, authenticated;
+-- `authenticated` también: en una base creada desde cero, los default privileges de la imagen
+-- de Supabase le dan EXECUTE sobre cada función nueva de public (0001 §10 solo lo saca a
+-- public y anon). Tras un db-reset.sh no pasa, y por eso el local no lo mostraba.
 
 -- Funciones puras de geometría: sin datos, las puede usar cualquier autenticado (y las usan
 -- los triggers de #24 sobre ubicacion, que corren como quien escribe).
