@@ -11,7 +11,9 @@ from unnest(array[
   'pais','ciudad','usuario','rol','usuario_rol','horario_colportor','campania','zona',
   'campania_colportor','producto','coleccion','producto_coleccion','precio_por_zona',
   'ubicacion','espacio','espacio_persona','jornada','visita','agenda','venta','venta_item',
-  'entrega','cobranza','house_status'
+  'entrega','cobranza','house_status',
+  -- 0008: el mapa de la campaña
+  'campania_ciudad','zona_vertice'
 ]) as t;
 
 -- ---------------------------------------------------------------------------
@@ -153,8 +155,13 @@ from public.pais where id = '01920000-0000-7000-8000-0000000000ac';
 -- Dos precios abiertos para el mismo producto/zona harían ambiguo "el precio actual".
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
 values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
-insert into public.zona (id, nombre, ciudad_id)
-values ('01920000-0000-7000-8000-0000000000ae', 'Centro', '01920000-0000-7000-8000-0000000000ad');
+insert into public.campania (id, nombre, tipo, fecha_inicio)
+values ('01920000-0000-7000-8000-0000000000b0', 'Verano', 'VERANO', '2026-01-01');
+insert into public.campania_ciudad (id, campania_id, ciudad_id)
+values ('01920000-0000-7000-8000-0000000000b1', '01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000ad');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
+values ('01920000-0000-7000-8000-0000000000ae', 'Centro', '01920000-0000-7000-8000-0000000000b1',
+        'RADIAL', -34.9, -56.16, 300);
 insert into public.producto (id, nombre, tipo)
 values ('01920000-0000-7000-8000-0000000000af', 'Conflicto de los Siglos', 'LIBRO');
 insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde)

@@ -12,9 +12,14 @@ insert into auth.users (id, instance_id, aud, role, email, encrypted_password, c
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000000c0', 'Uruguay', 'UY');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000000c1', 'Montevideo', '01920000-0000-7000-8000-0000000000c0', -34.9, -56.16);
-insert into public.zona (id, nombre, ciudad_id) values
-  ('01920000-0000-7000-8000-0000000000d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000000c1'),
-  ('01920000-0000-7000-8000-0000000000d2', 'Zona Beto', '01920000-0000-7000-8000-0000000000c1');
+-- Desde 0008 toda zona es de una ciudad de una campaña (campania_ciudad) y tiene forma.
+insert into public.campania (id, nombre, tipo, fecha_inicio) values
+  ('01920000-0000-7000-8000-0000000000b0', 'Campaña fixture', 'PERMANENTE', current_date - 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-0000000000b1', '01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000c1');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
+  ('01920000-0000-7000-8000-0000000000d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000000b1', 'RADIAL', -34.90, -56.18, 300),
+  ('01920000-0000-7000-8000-0000000000d2', 'Zona Beto', '01920000-0000-7000-8000-0000000000b1', 'RADIAL', -34.90, -56.14, 300);
 update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d1' where id = '01920000-0000-7000-8000-0000000000a1';
 update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d2' where id = '01920000-0000-7000-8000-0000000000a2';
 
@@ -182,14 +187,15 @@ select lives_ok(
 -- Fixtures como postgres (session_user), que no pasa por RLS.
 select set_config('role', 'postgres', true);
 
-insert into public.zona (id, nombre, ciudad_id) values
-  ('01920000-0000-7000-8000-000000000201', 'Zona campaña vieja', '01920000-0000-7000-8000-0000000000c1'),
-  ('01920000-0000-7000-8000-000000000202', 'Zona campaña viva',  '01920000-0000-7000-8000-0000000000c1');
-insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id) values
-  ('01920000-0000-7000-8000-000000000203', 'Verano 2020', 'VERANO', '2020-01-01', '2020-03-01',
-   '01920000-0000-7000-8000-0000000000c1'),
-  ('01920000-0000-7000-8000-000000000204', 'Permanente', 'PERMANENTE', current_date - 30, null,
-   '01920000-0000-7000-8000-0000000000c1');
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
+  ('01920000-0000-7000-8000-000000000203', 'Verano 2020', 'VERANO', '2020-01-01', '2020-03-01'),
+  ('01920000-0000-7000-8000-000000000204', 'Permanente', 'PERMANENTE', current_date - 30, null);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-000000000207', '01920000-0000-7000-8000-000000000203', '01920000-0000-7000-8000-0000000000c1'),
+  ('01920000-0000-7000-8000-000000000208', '01920000-0000-7000-8000-000000000204', '01920000-0000-7000-8000-0000000000c1');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
+  ('01920000-0000-7000-8000-000000000201', 'Zona campaña vieja', '01920000-0000-7000-8000-000000000207', 'RADIAL', -34.90, -56.18, 300),
+  ('01920000-0000-7000-8000-000000000202', 'Zona campaña viva',  '01920000-0000-7000-8000-000000000208', 'RADIAL', -34.90, -56.18, 300);
 insert into public.campania_colportor (id, campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-000000000205', '01920000-0000-7000-8000-000000000203',
    '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-000000000201'),

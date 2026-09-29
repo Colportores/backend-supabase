@@ -28,9 +28,14 @@ insert into public.pais (id, nombre, iso_code) values
   ('01920000-0000-7000-8000-0000000004c0', 'Uruguay', 'UY');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000004c1', 'Montevideo', '01920000-0000-7000-8000-0000000004c0', -34.9, -56.16);
-insert into public.zona (id, nombre, ciudad_id) values
-  ('01920000-0000-7000-8000-0000000004d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000004c1'),
-  ('01920000-0000-7000-8000-0000000004d2', 'Zona Beto', '01920000-0000-7000-8000-0000000004c1');
+-- Desde 0008 toda zona es de una ciudad de una campaña (campania_ciudad) y tiene forma.
+insert into public.campania (id, nombre, tipo, fecha_inicio) values
+  ('01920000-0000-7000-8000-0000000004b0', 'Campaña sync', 'PERMANENTE', current_date - 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-0000000004b1', '01920000-0000-7000-8000-0000000004b0', '01920000-0000-7000-8000-0000000004c1');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
+  ('01920000-0000-7000-8000-0000000004d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000004b1', 'RADIAL', -34.90, -56.18, 300),
+  ('01920000-0000-7000-8000-0000000004d2', 'Zona Beto', '01920000-0000-7000-8000-0000000004b1', 'RADIAL', -34.90, -56.14, 300);
 update public.usuario set zona_id = '01920000-0000-7000-8000-0000000004d1' where id = '01920000-0000-7000-8000-0000000004a1';
 update public.usuario set zona_id = '01920000-0000-7000-8000-0000000004d2' where id = '01920000-0000-7000-8000-0000000004a2';
 
@@ -423,7 +428,9 @@ delete from public.house_status where ubicacion_id = '01920000-0000-7000-8000-00
 delete from public.jornada   where colportor_id in ('01920000-0000-7000-8000-0000000004a1','01920000-0000-7000-8000-0000000004a2');
 delete from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000004c1';
 delete from public.producto  where id = '01920000-0000-7000-8000-0000000004e1';
-delete from public.zona      where ciudad_id = '01920000-0000-7000-8000-0000000004c1';
+delete from public.zona      where campania_ciudad_id = '01920000-0000-7000-8000-0000000004b1';
+delete from public.campania_ciudad where id = '01920000-0000-7000-8000-0000000004b1';
+delete from public.campania  where id = '01920000-0000-7000-8000-0000000004b0';
 delete from public.ciudad    where id = '01920000-0000-7000-8000-0000000004c1';
 delete from public.pais      where id = '01920000-0000-7000-8000-0000000004c0';
 -- usuario, op_cache y log se van por cascade desde auth.users.

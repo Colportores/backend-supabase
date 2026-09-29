@@ -25,4 +25,10 @@ delete from auth.users;
 drop schema if exists supabase_migrations cascade;
 SQL
 
+# DB_RESET_SIN_MIGRAR=1: solo limpia. Lo usa db-test-migracion.sh, que aplica las migraciones
+# de a una para cargar datos en el medio.
+if [ "${DB_RESET_SIN_MIGRAR:-}" = "1" ]; then
+  exit 0
+fi
+
 exec bash "$(dirname "$0")/db-migrate.sh"
