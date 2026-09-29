@@ -2,7 +2,7 @@
 
 Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
 
-**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4). Las políticas se refinan HU por HU desde Sprint 3.
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
@@ -52,10 +52,12 @@ supabase/
 ├── migrations/        ← forward-only
 │   ├── 20260901000000_0001_esquema_inicial.sql
 │   ├── 20260902180000_0002_sync_infra.sql
-│   └── 20260902200000_0003_rls_performance.sql
+│   ├── 20260902200000_0003_rls_performance.sql
+│   └── 20260929120000_0004_estado_cuenta.sql
 ├── seed.sql            ← datos de ejemplo (ficticios) de zonas, campañas, catálogo y precios
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
-│                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed
+│                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed,
+│                        0006 estado de la cuenta
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
@@ -107,6 +109,20 @@ Tres cosas que conviene saber antes de tocarlo:
 **Las políticas RLS envuelven sus llamadas en `(select ...)`.** `tiene_rol()` suelta en un `USING` se evalúa **por fila**; envuelta es un InitPlan que corre una vez. Medido sobre 390.000 filas, el delta de `ubicacion` pasó de **1.210 ms a 35 ms** (`supabase/bench/README.md`). Un test en `0002_rls_test.sql` falla si una política nueva se aparta.
 
 El registro de entidades (`sync.entidad`) es una tabla y no una lista en el código: el RPC es genérico, y sin lista blanca un cliente podría mandar `entity: "usuario"` y escribir donde no debe. Es el espejo en SQL del `SyncSpec` del motor ([contrato §2](https://github.com/Colportores/docs-organizacion/blob/main/docs/contrato-sync-engine.md)). **`persona` y `nota` no están, y no van a estar.**
+
+## Estado de la cuenta
+
+`select public.estado_cuenta();` devuelve el estado del usuario autenticado: `ACTIVA`, `PENDIENTE_ASIGNACION` o `SUSPENDIDA` (HU-AUTH-008). Lo consume `bff-colportores` en `GET /v1/me` con el JWT del usuario ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-un-bff-por-aplicacion-en-workers.md)); por PostgREST es `POST /rest/v1/rpc/estado_cuenta` y responde un string JSON.
+
+**No es una columna que alguien mantenga**, se deriva:
+
+- `SUSPENDIDA` si `usuario.suspendido_en` no es null. Gana sobre todo lo demás.
+- `ACTIVA` si tiene una inscripción vigente en `campania_colportor`: fila no borrada, campaña no borrada y hoy entre `fecha_inicio` y `fecha_fin`. Cuando HU-CAM-004 inscribe al colportor, la cuenta queda activa sola.
+- `PENDIENTE_ASIGNACION` en cualquier otro caso.
+
+"Vigente" está escrito una sola vez, en `mis_campanias_vigentes()`, y `mis_zonas()` lo usa. Con una diferencia: una inscripción sin zona activa la cuenta, pero no abre ninguna zona.
+
+`suspendido_en` la fija el servidor: un trigger descarta en silencio cualquier cambio que venga con JWT, incluido el de un ADMIN. Quién suspende y reactiva es de HU-ADM-003, que todavía no está decidido.
 
 ## Privacidad
 
