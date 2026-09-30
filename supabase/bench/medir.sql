@@ -4,8 +4,9 @@
 -- filtrado por fila dejó de ser un `where pk_usuario = $1` explícito y pasó a
 -- ser el predicado de la política. Para `jornada`/`venta` ese predicado es
 -- `colportor_id = auth.uid()` — una igualdad, y el índice del delta la lleva
--- adelante. Para `ubicacion`/`espacio`/`house_status` es
--- `zona_id in (select mis_zonas())`, que NO es una igualdad indexable, y para
+-- adelante. Para `ubicacion`/`espacio`/`house_status` es, desde 0011,
+-- `ciudad_id in (select mis_ciudades_de_trabajo())` (antes, la zona), que NO es una
+-- igualdad indexable, y el pull le suma el alcance (su zona o la ciudad). Para
 -- `venta_item` es un EXISTS contra `venta`.
 --
 -- Lo que hay que mirar en cada plan: si aparece **Index Cond** con la columna
@@ -34,7 +35,7 @@ select t.id, t.xmin_w from public.jornada t
 
 \echo ''
 \echo '============================================================'
-\echo ' 2. ubicacion — predicado RLS = mis_zonas() (NO es igualdad)'
+\echo ' 2. ubicacion — predicado RLS = mis_ciudades_de_trabajo() (NO es igualdad)'
 \echo '    Es la pregunta abierta de #6.'
 \echo '============================================================'
 explain (analyze, buffers, costs off)
@@ -76,6 +77,25 @@ select jsonb_array_length(sync.pull(array['jornada','visita','ubicacion','venta'
 \echo '-- pull incremental sin novedades (el latido más común)'
 select sync.pull(array['jornada','visita','ubicacion','venta'],
                  sync.pull(array['jornada','visita','ubicacion','venta']) -> 'watermark') -> 'has_more';
+
+\echo '-- alcance (0011): el área completa de su zona, desde cero (asignar o redibujar la zona)'
+select jsonb_array_length(sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 500)
+                          #> '{rows,ubicacion}') as filas_zona;
+
+\echo '-- alcance: pull incremental de la zona sin novedades'
+select sync.pull(array['ubicacion','espacio','house_status'],
+                 sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 1000) -> 'watermark',
+                 1000) -> 'rows' as filas_incrementales;
+
+\echo '-- alcance: primera página de toda la ciudad'
+select jsonb_array_length(sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 500, null, 'ciudad')
+                          #> '{rows,ubicacion}') as filas_ciudad;
+
+\echo '-- alcance: «Incluye N ubicaciones» de una zona (vista 24)'
+reset role;
+select public.zona_ubicaciones_incluidas(z.campania_ciudad_id, z.poligono_geojson) as incluidas
+  from public.zona z where z.nombre = 'BENCH zona 1';
+set role authenticated;
 
 \echo '-- push de un lote de 100 jornadas (RR-02: 100 registros bajo 30 s)'
 select (sync.push(

@@ -11,7 +11,8 @@ insert into auth.users (id, instance_id, aud, role, email, encrypted_password, c
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000000c0', 'Uruguay', 'UY');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000000c1', 'Montevideo', '01920000-0000-7000-8000-0000000000c0', -34.9, -56.16);
+  ('01920000-0000-7000-8000-0000000000c1', 'Montevideo', '01920000-0000-7000-8000-0000000000c0', -34.9, -56.16),
+  ('01920000-0000-7000-8000-0000000000c2', 'Canelones',  '01920000-0000-7000-8000-0000000000c0', -34.52, -56.28);
 -- Desde 0008 toda zona es de una ciudad de una campaña (campania_ciudad) y tiene forma.
 insert into public.campania (id, nombre, tipo, fecha_inicio) values
   ('01920000-0000-7000-8000-0000000000b0', 'Campaña fixture', 'PERMANENTE', current_date - 30);
@@ -49,22 +50,20 @@ select is((select colportor_id from public.jornada where id = '01920000-0000-700
           '01920000-0000-7000-8000-0000000000a1'::uuid, 'colportor_id se rellena con auth.uid()');
 
 select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f2', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.18,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d1') $$,
+             '01920000-0000-7000-8000-0000000000c1') $$,
   'Ana crea una ubicación en su zona'
 );
 
--- Desde 0010 la zona sale de la posición: la que manda el cliente se ignora.
+-- Desde 0011 la ubicación no guarda zona: se registra en cualquier lado (R-CM04), también en
+-- una ciudad donde no trabaja.
 select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
-     values ('01920000-0000-7000-8000-0000000000f3', 'CASA', 'Otra', '1', -34.9, -56.18,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
-  'Ana manda la zona de Beto en una casa de su zona: no falla'
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
+     values ('01920000-0000-7000-8000-0000000000f3', 'CASA', 'Otra', '1', -34.52, -56.28,
+             '01920000-0000-7000-8000-0000000000c2') $$,
+  'Ana registra una casa en una ciudad donde no trabaja'
 );
-select is((select zona_id from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f3'),
-          '01920000-0000-7000-8000-0000000000d1'::uuid,
-          'la zona que manda Ana se ignora: queda en la de su posición (0010)');
 
 select throws_ok(
   $$ insert into public.jornada (id, inicio, colportor_id)
@@ -90,7 +89,11 @@ select throws_ok(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a2');
 
 select is((select count(*) from public.jornada), 0::bigint, 'Beto no ve las jornadas de Ana');
-select is((select count(*) from public.ubicacion), 0::bigint, 'Beto no ve ubicaciones fuera de su zona');
+-- Desde 0011 la zona no es un permiso: Beto ve las casas de la ciudad donde trabaja (el pull
+-- elige cuáles bajan), pero no las de una ciudad donde no trabaja.
+select results_eq($$ select id from public.ubicacion order by id $$,
+                  $$ values ('01920000-0000-7000-8000-0000000000f2'::uuid) $$,
+                  'Beto ve la casa de Ana en su ciudad, y no la de una ciudad donde no trabaja');
 select is((select count(*) from public.usuario where id = '01920000-0000-7000-8000-0000000000a1'), 0::bigint,
           'Beto no ve el perfil de Ana');
 select is((select count(*) from public.usuario where id = '01920000-0000-7000-8000-0000000000a2'), 1::bigint,
@@ -107,19 +110,20 @@ select is((select count(*) from public.jornada), 1::bigint, 'Beto ve su propia j
 
 -- Sin calle ni numero: el alta por marcador manual sobre el mapa no los conoce (HU-UBI, ADR-018).
 select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id, zona_id)
+  $$ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f6', 'CASA', -34.88, -56.15,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
+             '01920000-0000-7000-8000-0000000000c1') $$,
   'Beto crea una ubicación sin calle ni numero (alta por marcador manual)'
 );
-select is((select count(*) from public.ubicacion), 1::bigint, 'Beto ve su propia ubicación');
+select ok(exists (select 1 from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f6'),
+          'Beto ve su propia ubicación');
 
 -- RF-UB08 es una advertencia del cliente, no un constraint: "crear igual con justificación" es una
 -- salida deliberada de la HU y el cloud no puede rechazarla.
 select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f7', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.18,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
+             '01920000-0000-7000-8000-0000000000c1') $$,
   'una dirección duplicada se acepta (RF-UB08 se resuelve en el cliente)'
 );
 
@@ -135,19 +139,19 @@ select is((select zona_id from public.campania_colportor where usuario_id = '019
           '01920000-0000-7000-8000-0000000000d1'::uuid,
           'Ana NO puede auto-asignarse la zona de Beto (R-SY04: la asignación gana del backend)');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
--- f7 la registró Beto, pero cae en la zona de Ana: desde 0010 es de ella (la zona sale de la
--- posición). Lo de Beto (f6, fuera de toda zona) no lo ve.
+-- Las de Montevideo (suyas y de Beto) y la propia en Canelones.
 select results_eq(
   $$ select id from public.ubicacion order by id $$,
   $$ values ('01920000-0000-7000-8000-0000000000f2'::uuid), ('01920000-0000-7000-8000-0000000000f3'::uuid),
-            ('01920000-0000-7000-8000-0000000000f7'::uuid) $$,
-  'Ana sigue viendo solo las casas de su zona después de intentar la escalada');
+            ('01920000-0000-7000-8000-0000000000f6'::uuid), ('01920000-0000-7000-8000-0000000000f7'::uuid) $$,
+  'Ana ve las casas de su ciudad y las propias, después de intentar la escalada');
 
-update public.ubicacion set zona_id = '01920000-0000-7000-8000-0000000000d2'
-where id = '01920000-0000-7000-8000-0000000000f2';
-select is((select zona_id from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f2'),
-          '01920000-0000-7000-8000-0000000000d1'::uuid,
-          'Ana NO puede mover su ubicación a la zona de Beto');
+-- Una casa ajena de su ciudad la corrige, pero no la manda a una ciudad donde no trabaja.
+select throws_ok(
+  $$ update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000000c2'
+      where id = '01920000-0000-7000-8000-0000000000f6' $$,
+  '42501', null,
+  'Ana NO puede mandar la casa de Beto a una ciudad donde no trabaja');
 
 -- --- sync_version es del servidor también en el INSERT ------------------------------
 select lives_ok(
@@ -161,16 +165,14 @@ select is((select sync_version from public.jornada where id = '01920000-0000-700
 
 -- --- constraints de integridad del dominio ------------------------------------------
 select throws_ok(
-  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad)
-     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA',
-             '01920000-0000-7000-8000-0000000000d1', 'RECHAZO', 1) $$,
+  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad)
+     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA', 'RECHAZO', 1) $$,
   '23514', null,
   'house_status con color y prioridad contradictorios se rechaza (ADR-010)'
 );
 select lives_ok(
-  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad)
-     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA',
-             '01920000-0000-7000-8000-0000000000d1', 'RECHAZO', 7) $$,
+  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad)
+     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA', 'RECHAZO', 7) $$,
   'house_status con el par color/prioridad de ADR-010 se acepta'
 );
 

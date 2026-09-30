@@ -66,3 +66,16 @@ Execution Time: 1209.991 ms
 La causa no es el índice sino la forma de la política: una cadena de `OR` sobre columnas distintas más dos llamadas a función no es indexable, por más índice que se agregue. Arreglarlo requiere sacar el bypass de staff (`COORDINADOR`/`ADMIN`) fuera del `OR` — por ejemplo, dándole al panel del coordinador un camino propio — y eso **cambia el modelo de permisos**, así que no entra por la puerta del rendimiento.
 
 `venta_item`, `entrega` y `cobranza` tienen el mismo patrón por otra razón: su predicado es un `EXISTS` contra `venta`, que tampoco es indexable en la tabla hija. A 60.000 filas son 20 ms.
+
+## Alcance del pull (0011) — 2026-09-30, misma carga
+
+Desde `0011` el pull de `ubicacion`, `espacio` y `house_status` baja según el alcance (HU-SYNC-011). En la carga, cada colportor tiene 400 casas propias dentro de su zona, entre 60.000 de la misma ciudad.
+
+| | |
+|---|---|
+| área completa de su zona, 3 entidades desde cero | 61 ms |
+| pull de la zona sin novedades | ~50 ms |
+| primera página de «ciudad», 3 entidades | 82 ms |
+| «Incluye N ubicaciones» de una zona | 12 ms |
+
+La parte «zona» sale del índice GiST, una vez por consulta, con `ubicaciones_de_mi_zona()` (SECURITY DEFINER). Con el filtro escrito sobre la tabla con RLS, `ST_Covers` no es LEAKPROOF, el planificador no puede usar el índice y evalúa el polígono casa por casa: ~3 µs por casa, 630 ms para bajar el área completa de una zona.

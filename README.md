@@ -60,13 +60,16 @@ supabase/
 │   ├── 20260929200000_0006_asignar_zona.sql
 │   ├── 20260929210000_0007_lecturas_panel.sql
 │   ├── 20260929220000_0008_zonas_mapa.sql
-│   └── 20260929230000_0009_zona_solo_inscripcion.sql
+│   ├── 20260929230000_0009_zona_solo_inscripcion.sql
+│   ├── 20260929235000_0010_zona_por_posicion.sql
+│   └── 20260930120000_0011_zona_al_descargar.sql
 ├── seed.sql            ← datos de ejemplo (ficticios) de zonas, campañas, catálogo y precios
 ├── tests/             ← pgTAP: 0001 esquema/privacidad, 0002 RLS,
 │                        0003 estructura de sync, 0004 push y delta, 0005 idempotencia del seed,
 │                        0006 estado de la cuenta, 0007 inscripción en campaña, 0008 zona,
 │                        0009 lecturas del panel, 0010 mapa de la campaña, 0011 mapa en el delta,
-│                        0012 zona solo en la inscripción
+│                        0012 zona solo en la inscripción, 0013 ubicación sin zona,
+│                        0014 alcance del pull
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-005)
@@ -74,7 +77,7 @@ docs/                  ← documentación propia de este repo (ver docs-organiza
 scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench
 ```
 
-`0004_sync_delta_test.sql` y `0011_zonas_mapa_sync_test.sql` son los únicos que **no** envuelven todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpian sus filas al final.
+`0004_sync_delta_test.sql`, `0011_zonas_mapa_sync_test.sql` y `0014_alcance_del_pull_test.sql` son los únicos que **no** envuelven todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpian sus filas al final.
 
 `db-test-migracion.sh` prueba las migraciones que mueven datos: por cada caso de `supabase/tests_migracion/` limpia la base, aplica las migraciones hasta la versión previa, carga los datos del caso, aplica el resto y verifica (pgTAP, o que aborte con el mensaje esperado). Al final deja la base como `db-reset.sh`.
 
@@ -106,13 +109,13 @@ Lo que ADR-017 §4 pone de este lado: RPC de ingesta batch, cache de `client_op_
 
 ```sql
 select sync.push(jobs, device_id);                       -- ingesta batch
-select sync.pull(entidades, watermark, limite, device);  -- delta
+select sync.pull(entidades, watermark, limite, device, alcance);  -- delta ('zona' o 'ciudad')
 select sync.estado();                                    -- telemetría del colportor (RF-SY06)
 ```
 
 Tres cosas que conviene saber antes de tocarlo:
 
-**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por zona (`mis_zonas()`, que no es una igualdad) y los catálogos globales.
+**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por ciudad (`mis_ciudades_de_trabajo()`, que no es una igualdad) y los catálogos globales.
 
 **El cursor del delta es el xid de la transacción, no el reloj.** `updated_at` se llena con `now()`, que es la hora de *inicio* de transacción: dos escritores concurrentes commitean en un orden que no tiene por qué coincidir con el de sus timestamps, y la fila que commiteó tarde queda detrás de un watermark que ya avanzó — subida, guardada y jamás entregada. Se ordena por `(xmin_w, id)` y se sirve solo lo que está por debajo de `pg_snapshot_xmin(pg_current_snapshot())`. El diagnóstico y el arreglo son de @BrunoFCapri.
 
@@ -173,22 +176,23 @@ select public.baja_zona(zona_id, vista_previa);
 - **Quién.** El coordinador de la campaña o un ADMIN, y solo si la campaña no terminó. Nadie escribe estas tablas directo (ni el privilegio tiene `authenticated`).
 - **No superposición.** Dos zonas vivas de la misma `campania_ciudad` no comparten interior; sí la calle del borde (tolerancia: una franja de menos de 1 m de ancho no cuenta). Se valida con PostGIS en un trigger, así que vale para cualquier camino de escritura. `CZ007` trae en el DETAIL la geometría de la parte superpuesta.
 - **Forma.** `RADIAL`: radio de 1 a 3000 m (hasta ahí el círculo de 128 lados queda a menos de 1 m del geodésico). `ESQUINAS`: al menos 3 esquinas en lugares distintos (a 1 m o menos cuentan como la misma), con `orden` entero, y el borde pasando a 1 m o menos de cada una. Todo lo demás, `CZ008`.
-- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_que_cambian`, cuántas ubicaciones cambiarían de zona (ver abajo). Al guardar devuelve las que cambiaron.
+- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_incluidas`, el «Incluye N ubicaciones» de la vista 24: las ubicaciones vivas de la ciudad que caen dentro de la forma, calculado en el momento con PostGIS. Al guardar devuelve lo mismo. `baja_zona()` devuelve las que incluía la zona. Guardar o dar de baja una zona no toca ninguna ubicación.
 - **Baja.** Lógica. Si la zona tiene colportores asignados se rechaza (`CZ010`) y dice a quiénes reasignar.
 - **Lectura.** El colportor ve las ciudades, zonas y esquinas de las campañas en las que está inscripto (todas las zonas, no solo la suya); el coordinador, las de sus campañas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull. Al crear o reactivar una inscripción, un trigger republica el mapa de esa campaña (UPDATE nulo que les sube el `xmin_w`): si no, un mapa cargado antes del último pull del inscripto quedaría detrás de su watermark y no le llegaría nunca.
 - **Códigos.** `CZ007`..`CZ013`: ver el header de la migración `0008`.
 
-### Zona de cada ubicación
+### Qué ubicaciones baja cada colportor
 
-Desde la migración `0010`, `ubicacion.zona_id` la calcula el servidor por la posición, en todo INSERT y UPDATE. El valor del cliente se ignora, y el push lo descarta porque está en `columnas_servidor`. `house_status.zona_id` sigue a su ubicación. El colportor puede registrar fuera de su zona (R-CM04).
+Desde la migración `0011` (backend-supabase#32, decisión D2 del 29/09) la zona es una guía visual: **las ubicaciones no guardan zona ni campaña** (`ubicacion.zona_id` y `house_status.zona_id`, de `0010`, ya no existen). La zona decide qué casas bajan al teléfono, y eso se calcula al descargar (HU-SYNC-011).
 
-- **Regla** (la app usa la misma, front-colportores-mobile#231). Las candidatas son las zonas vivas que cubren el punto (`ST_Covers`, borde incluido, cálculo plano en lon/lat), de ciudades vivas de campañas vigentes hoy, en la ciudad de la ubicación. Primero van las de la campaña preferida y, entre las que quedan, la de **menor id** (el UUID comparado como texto en minúsculas). Si ninguna cubre el punto, `null`. El desempate por id resuelve el borde compartido y la franja de hasta 1 m que se acepta como borde.
-- **Campaña preferida (D2, opción (a) provisoria).** Al crear o mover la ubicación, las campañas vigentes de quien escribe. En cualquier otro UPDATE y en los recálculos, la campaña de la zona que ya tenía y después las de `created_by`.
-- **Recálculo.** Crear una zona, cambiarle la forma o darla de baja recalcula las ubicaciones de su ciudad que están en la forma vieja o en la nueva, o que tenían esa zona. Vale por cualquier camino. Las que cambian salen en el próximo delta.
-- **Rotación.** Al asignar o cambiar la zona de una inscripción, un trigger republica sus ubicaciones, con su `house_status` y sus espacios. Es un UPDATE nulo, y quien toma la zona recibe las casas ya trabajadas aunque se hayan cargado antes de su último pull.
-- **Bajas.** Una ubicación dada de baja conserva su zona: su tombstone le tiene que llegar a quien tenía la fila.
+- **Quién ve qué.** El colportor ve las ubicaciones de su ciudad de trabajo (`mis_ciudades_de_trabajo()`: la de su zona asignada; sin zona, todas las de sus campañas vigentes, S55) y las que registró él; registra en cualquier lado (R-CM04). El coordinador y el ADMIN las ven todas. `espacio` y `house_status` siguen a su ubicación, y también los ve quien los cargó.
+- **Quién escribe dónde.** La zona acota solo la lectura (decisión de Cristian del 30/09, #36): el colportor corrige ubicaciones y carga espacios y estados en todas las ciudades de sus campañas vigentes, tenga zona o no (`mis_ciudades_de_campania()`, `puedo_escribir_en_ubicacion()`). Lo que cargó sin señal en una casa de otra ciudad de su campaña sube aunque después le asignen una zona en otra ciudad: el espacio, y colgando de él la persona, la visita y la venta. Lo que sigue sin subir es la corrección de una fila que la lectura ya no le deja ver (el push la lee antes: `FILA_INEXISTENTE`, sin borrar nada del teléfono).
+- **Qué baja.** `sync.pull(..., alcance)`: con `'zona'` (el default), las que registró él más las que caen en el polígono de su zona asignada (`ST_Covers`, borde incluido, misma ciudad); sin zona, solo las propias. Con `'ciudad'`, todas las de sus ciudades más las propias. Con cada ubicación bajan sus espacios y su estado, también las bajas (su tombstone). `sync.entidad.columna_ubicacion` marca qué entidades bajan así.
+- **Área completa.** El watermark de esas entidades lleva la huella del área. Si le asignan otra zona, se la redibujan, cambia de alcance o empieza o termina una campaña, la huella cambia y la entidad baja completa, también lo que se cargó antes de su último pull. Cambiarle el nombre o el color a la zona no cambia nada.
+- **Una casa que se mueve.** Si cambia la posición o la ciudad de una ubicación, sus espacios y su estado se republican, y le llegan a quien la empieza a tener en su área. Republicar sube solo `xmin_w`, no `sync_version` ni `updated_at` (la GUC local `colportores.republicar` en `tg_auditoria_update`): así no vuelve `conflict` lo que un teléfono tenga pendiente sobre esas filas. `house_status.lat`/`lon` (el pin) los pone el servidor con la posición de la casa; el push los descarta.
+- **Supuestos de HU-SYNC-011 (decididos el 30/09).** S60: sin alcance baja `'zona'`. S55: «la ciudad» es la de su zona asignada; sin zona, todas las de sus campañas vigentes; acota lo que baja y lo que ve, no dónde escribe. S54: se puede cambiar de alcance; las casas que quedan afuera no se borran.
 - **Posible duplicado** (aviso, no bloqueo). `posibles_duplicados_de_ubicacion(ciudad_id, calle, numero, lat, lon, excluir_id)` devuelve las ubicaciones visibles con la misma dirección normalizada (trim y minúsculas) o a menos de 5 m.
-- **Dirección única (D1).** Pendiente de decisión: no hay índice único. El header de `0010` tiene lo que falta para cerrarlo.
+- **Dirección única (D1).** Decidida el 29/09 (misma dirección a menos de 100 m): la implementa backend-supabase#34.
 
 ## Privacidad
 
