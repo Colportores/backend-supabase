@@ -226,7 +226,9 @@ create policy espacio_por_ubicacion_update on public.espacio
                     and (u.created_by = (select auth.uid())
                          or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
 
--- house_status: igual, y además quien lo escribió.
+-- house_status: igual, y además quien lo escribió. La fila corregida tiene que ser de una casa
+-- que puede corregir (WITH CHECK): sin eso, el autor podría reapuntar su fila (ubicacion_id) a
+-- una casa que la RLS le oculta, y el trigger del pin (SECURITY DEFINER) le copiaría su posición.
 create policy house_status_por_ubicacion_select on public.house_status
   for select to authenticated
   using (created_by = (select auth.uid())
@@ -244,7 +246,11 @@ create policy house_status_por_ubicacion_update on public.house_status
          or exists (select 1 from public.ubicacion u
                      where u.id = ubicacion_id
                        and (u.created_by = (select auth.uid())
-                            or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
+                            or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))))
+  with check (exists (select 1 from public.ubicacion u
+                       where u.id = ubicacion_id
+                         and (u.created_by = (select auth.uid())
+                              or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
 
 -- ----------------------------------------------------------------------------
 -- 5. Una ubicación que se mueve republica sus espacios y su house_status
@@ -255,7 +261,9 @@ create policy house_status_por_ubicacion_update on public.house_status
 -- no cambió para nadie, y subir sync_version haría que el job pendiente de cualquier teléfono
 -- sobre esa fila vuelva `conflict` (LWW: gana el servidor con la misma fila de antes y la acción
 -- del colportor se pierde). El republicado lo marca con la GUC local colportores.republicar,
--- solo mientras dura su UPDATE. Mismo cuerpo que en 0002 fuera de eso.
+-- solo mientras dura su UPDATE, y cuenta solo adentro de un trigger (pg_trigger_depth() > 1: el
+-- UPDATE sale del AFTER de ubicacion): un UPDATE de primer nivel con la GUC puesta a mano sube la
+-- versión igual. Mismo cuerpo que en 0002 fuera de eso.
 create or replace function public.tg_auditoria_update()
 returns trigger
 language plpgsql
@@ -267,7 +275,7 @@ begin
   -- Sin esto, una fila actualizada conserva el xid de su INSERT, queda detrás del watermark de
   -- cualquier cliente que ya la bajó, y la modificación no se propaga nunca (0002).
   new.xmin_w := pg_current_xact_id();
-  if current_setting('colportores.republicar', true) = 'on' then
+  if current_setting('colportores.republicar', true) = 'on' and pg_trigger_depth() > 1 then
     new.updated_at := old.updated_at;
     new.sync_version := old.sync_version;
   else

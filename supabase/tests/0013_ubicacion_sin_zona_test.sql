@@ -234,6 +234,31 @@ select throws_ok(
   $$ insert into public.espacio (ubicacion_id) values ('01920000-0000-7000-8000-000000001302') $$,
   '42501', null, 'pero no los escribe: no trabaja la ciudad');
 
+-- b3 no puede reapuntar su estado a una casa que no ve: el pin (que copia el servidor) le
+-- revelaría su posición.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
+insert into public.ubicacion (id, tipo, lat, lon, ciudad_id) values
+  ('01920000-0000-7000-8000-000000001309', 'CASA', -34.81, -56.01, '01920000-0000-7000-8000-0000000013c2');
+insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad) values
+  ('01920000-0000-7000-8000-000000001309', 0, 0, 'CASA', 'RECHAZO', 7);
+select throws_ok(
+  $$ update public.house_status set ubicacion_id = '01920000-0000-7000-8000-000000001302'
+      where ubicacion_id = '01920000-0000-7000-8000-000000001309' $$,
+  '42501', null, 'b3 NO reapunta su estado a una casa de otra ciudad (no ve su posición)');
+select is((select array[lat, lon] from public.house_status where ubicacion_id = '01920000-0000-7000-8000-000000001309'),
+          array[-34.81, -56.01]::float8[], 'su estado sigue en su casa, con el pin de ella');
+
+-- La GUC del republicado solo cuenta adentro de un trigger: puesta a mano, la versión sube igual.
+select pg_temp.actuar_como_servidor();
+create temp table version_1302 on commit drop as
+select sync_version from public.ubicacion where id = '01920000-0000-7000-8000-000000001302';
+select set_config('colportores.republicar', 'on', true);
+update public.ubicacion set calle = 'Rivera bis' where id = '01920000-0000-7000-8000-000000001302';
+select set_config('colportores.republicar', 'off', true);
+select is((select sync_version from public.ubicacion where id = '01920000-0000-7000-8000-000000001302'),
+          (select sync_version + 1 from version_1302),
+          'un UPDATE de primer nivel con colportores.republicar = on sube la versión igual');
+
 -- ---------------------------------------------------------------------------
 -- 5. «Incluye N ubicaciones» (vista 24): calculado en el momento, sin recalcular nada
 -- ---------------------------------------------------------------------------
