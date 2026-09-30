@@ -30,17 +30,19 @@
 --
 -- El colportor elige en cada pull si baja las casas de su zona o las de toda la ciudad, así que
 -- la RLS tiene que dejarle ver la ciudad: la zona deja de ser un permiso. Ve una ubicación si la
--- registró él o si es de una ciudad de sus campañas vigentes (mis_ciudades_de_trabajo(), con la
--- vigencia de mis_zonas()), y la puede corregir en los mismos casos. El coordinador y el ADMIN
+-- registró él o si es de su ciudad de trabajo (mis_ciudades_de_trabajo(), con la vigencia de
+-- mis_zonas()): la ciudad de su zona asignada; sin zona asignada, todas las ciudades de sus
+-- campañas vigentes (S55, abajo). La puede corregir en los mismos casos. El coordinador y el ADMIN
 -- las ven todas, como antes. espacio y house_status siguen a su ubicación: los ve quien ve la
 -- ubicación, y los escribe quien la puede corregir; house_status, además, quien lo escribió.
 --
 -- ## Qué baja en el pull (sync.pull, parámetro nuevo p_alcance)
 --
---   · 'zona' (default): las ubicaciones que registró él, más las que caen dentro del polígono
+--   · 'zona' (default, S60): las ubicaciones que registró él, más las que caen dentro del polígono
 --     (ST_Covers, borde incluido) de alguna de sus zonas asignadas (mis_zonas()) y son de la
 --     ciudad de esa zona. Sin zona asignada, solo las propias.
---   · 'ciudad': las que registró él, más todas las de las ciudades de sus campañas vigentes.
+--   · 'ciudad': las que registró él, más todas las de su ciudad de trabajo: la de su zona; sin
+--     zona asignada, todas las ciudades de sus campañas vigentes (S55).
 -- Con cada ubicación bajan sus espacios y su house_status (sync.entidad.columna_ubicacion). Las
 -- bajas lógicas bajan como las vivas: el tombstone le llega a quien tiene la casa.
 -- La parte «zona» sale del índice GiST, una vez por consulta (ubicaciones_de_mi_zona()). Con
@@ -73,25 +75,34 @@
 -- ubicaciones_que_cambian: las ubicaciones vivas de la ciudad que caen dentro de la forma,
 -- calculado en el momento con PostGIS (índice GiST). Es la regla de la parte «zona» del pull.
 --
--- ## Pendientes de Cristian (supuestos de HU-SYNC-011)
+-- ## Supuestos de HU-SYNC-011: decisión de Cristian (30/09, backend-supabase#32)
 --
---   · S60, qué baja si el colportor omite la elección: p_alcance es opcional y su default es
---     'zona', que es lo que bajaba hasta ahora (su zona y lo propio).
---   · S55, cuál es «la ciudad» si la campaña tiene varias, y qué baja sin zona asignada:
---     provisorio, todas las ciudades de sus campañas vigentes, tenga zona o no. Cambiarlo es
---     cambiar mis_ciudades_de_trabajo().
---   · S54, cambiar de alcance después: el servidor ya lo soporta (cambia la huella y baja
---     completo el alcance nuevo). Qué hace la app con las casas que quedan afuera es de
---     front-colportores-mobile#244: el servidor no borra nada por ausencia.
+--   · S60, qué baja si el colportor omite la elección: su zona y lo propio. p_alcance es
+--     opcional y su default es 'zona'. Sin zona asignada, solo lo propio.
+--   · S55, cuál es «la ciudad» si la campaña tiene varias: la ciudad de su zona asignada; sin
+--     zona asignada, todas las ciudades de sus campañas vigentes. La RLS sigue la misma regla.
+--     Las dos cosas salen de mis_ciudades_de_trabajo(). Se calcula por inscripción: hoy hay una
+--     sola vigente por colportor (EN_OTRA_CAMPANIA, 0005). Una zona dada de baja, o de una ciudad
+--     que salió de la campaña, cuenta como sin zona (la misma vigencia que mis_zonas()).
+--   · S54, cambiar de alcance después: sí, desde Ajustes. El servidor cambia la huella y baja
+--     completo el alcance nuevo. Lo que queda afuera NO se borra del teléfono (ocultarlo del mapa
+--     es solo visual, front-colportores-mobile#244): el servidor no manda borrados por ausencia.
+--     Tampoco al asignarle una zona: la RLS se achica a la ciudad de esa zona, pero lo que ya bajó
+--     queda en el teléfono. Lo que cargue después en una casa de otra ciudad que no registró él
+--     (un espacio, un estado) el push lo rechaza (`invalid`, RLS); las ventas, visitas y personas
+--     no dependen de esto (son suyas por colportor_id).
+--   · Una casa que sale del área de quien la tenía (otro la corrige afuera): el pull va a avisar
+--     los ids que salieron desde el último pull. No va acá: es backend-supabase#37.
 --
 -- ## Datos existentes (criterio 2: nada se pierde)
 --
 -- zona_id era un dato derivado: desde 0010 lo calcula el servidor con la posición, que queda.
 -- Ninguna venta, visita, persona ni espacio depende de él. No se toca ninguna fila: ubicacion y
 -- house_status no pierden filas ni cambia ninguna otra columna, y su sync_version no sube. Nadie
--- deja de ver una ubicación viva: la zona de cada una es de su ciudad (0010), y esa ciudad es de
--- las campañas vigentes de quien tiene la zona. La primera vez que cada app sincronice después
--- de esto, ubicacion, espacio y house_status bajan completos (su watermark no tiene huella).
+-- deja de ver una ubicación viva: antes veía las propias y las de su zona; la zona de cada una
+-- es de su ciudad (0010), y esa ciudad es la de la zona de quien la tiene asignada (S55). La
+-- primera vez que cada app sincronice después de esto, ubicacion, espacio y house_status bajan
+-- completos (su watermark no tiene huella).
 --
 -- Forward-only: esta migración no se edita una vez aplicada.
 -- ============================================================================
@@ -164,10 +175,12 @@ update sync.entidad set columna_ubicacion = 'ubicacion_id' where nombre in ('esp
 -- 4. RLS: la ciudad, no la zona
 -- ----------------------------------------------------------------------------
 
--- Las ciudades de las campañas vigentes del usuario autenticado (ciudades vivas en la campaña).
--- Misma vigencia que mis_zonas(), sin pedir zona asignada. Es «la ciudad» de HU-SYNC-011, con
--- el supuesto S55 pendiente (ver la cabecera). SECURITY DEFINER y search_path vacío, como
--- mis_zonas(): la usan las políticas y no puede depender de la RLS que ayuda a evaluar.
+-- La ciudad de trabajo del usuario autenticado, «la ciudad» de HU-SYNC-011 (S55, decisión de
+-- Cristian del 30/09): por cada inscripción vigente, la ciudad de su zona asignada; sin zona
+-- asignada, todas las ciudades vivas de esa campaña. Misma vigencia que mis_zonas(): una zona
+-- dada de baja, o de una ciudad que salió de la campaña, cuenta como sin zona. SECURITY DEFINER
+-- y search_path vacío, como mis_zonas(): la usan las políticas y no puede depender de la RLS que
+-- ayuda a evaluar.
 create function public.mis_ciudades_de_trabajo()
 returns setof uuid
 language sql
@@ -175,15 +188,29 @@ stable
 security definer
 set search_path = ''
 as $$
-  select distinct cc.ciudad_id
-    from public.mis_campanias_vigentes() v
-    join public.campania_ciudad cc on cc.campania_id = v.campania_id
-   where cc.deleted_at is null;
+  with inscripcion as (
+    select v.campania_id, zc.ciudad_id as ciudad_de_su_zona
+      from public.mis_campanias_vigentes() v
+      left join public.zona z
+        on z.id = v.zona_id and z.deleted_at is null
+      left join public.campania_ciudad zc
+        on zc.id = z.campania_ciudad_id and zc.deleted_at is null
+  )
+  select i.ciudad_de_su_zona
+    from inscripcion i
+   where i.ciudad_de_su_zona is not null
+  union
+  select cc.ciudad_id
+    from inscripcion i
+    join public.campania_ciudad cc on cc.campania_id = i.campania_id
+   where i.ciudad_de_su_zona is null
+     and cc.deleted_at is null;
 $$;
 
 comment on function public.mis_ciudades_de_trabajo() is
-  'Ciudades vivas de las campañas vigentes del usuario autenticado. Deciden qué ubicaciones ve y '
-  'corrige un colportor, y qué baja con el alcance «ciudad» del pull (HU-SYNC-011, S55 pendiente).';
+  'Ciudad de trabajo del usuario autenticado (S55 de HU-SYNC-011): la de su zona asignada; sin '
+  'zona asignada, todas las ciudades vivas de sus campañas vigentes. Decide qué ubicaciones ve y '
+  'corrige un colportor, y qué baja con el alcance «ciudad» del pull.';
 
 -- La ve quien la registró, quien trabaja en su ciudad, el coordinador y el ADMIN (como antes).
 create policy ubicacion_por_ciudad_select on public.ubicacion
@@ -879,8 +906,7 @@ begin
       using errcode = 'insufficient_privilege';
   end if;
 
-  -- S60 (qué baja si el colportor no eligió) está pendiente: sin alcance, 'zona', que es lo
-  -- que bajaba hasta 0011.
+  -- S60 (decisión de Cristian del 30/09): si el colportor no eligió, 'zona' (su zona y lo propio).
   if v_alcance not in ('zona', 'ciudad') then
     raise exception 'El alcance del pull tiene que ser «zona» o «ciudad», y llegó «%». Actualizá la app.',
         v_alcance

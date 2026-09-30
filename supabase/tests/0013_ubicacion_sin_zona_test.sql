@@ -54,19 +54,21 @@ $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
 -- Montevideo (c1) en Verano (e1, vigente, coordina a1) y en Vieja (e3, terminada); Otra ciudad
--- (c2) en Otra (e2, vigente). Zonas de Verano: A y B.
--- b1: Verano, zona A. b2: Verano, sin zona. b3: Otra, sin zona. b4: solo Vieja.
+-- (c2) en Otra (e2, vigente); Canelones (c3) también en Verano. Zonas de Verano: A y B en
+-- Montevideo, D en Canelones.
+-- b1: Verano, zona A. b2: Verano, sin zona. b3: Otra, sin zona. b4: solo Vieja. b5: Verano, zona D.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000013' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'sinzona-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a1','b1','b2','b3','b4']) s;
+  from unnest(array['a1','b1','b2','b3','b4','b5']) s;
 insert into public.usuario_rol (usuario_id, rol_id)
 select '01920000-0000-7000-8000-0000000013a1', r.id from public.rol r where r.codigo = 'COORDINADOR';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000013c0', 'Pais sin zona', 'ZP');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000013c1', 'Montevideo sz', '01920000-0000-7000-8000-0000000013c0', -34.9, -56.2),
-  ('01920000-0000-7000-8000-0000000013c2', 'Otra ciudad sz', '01920000-0000-7000-8000-0000000013c0', -34.8, -56.0);
+  ('01920000-0000-7000-8000-0000000013c2', 'Otra ciudad sz', '01920000-0000-7000-8000-0000000013c0', -34.8, -56.0),
+  ('01920000-0000-7000-8000-0000000013c3', 'Canelones sz',   '01920000-0000-7000-8000-0000000013c0', -34.7, -56.1);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000013e1', 'Verano', 'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000013a1'),
   ('01920000-0000-7000-8000-0000000013e2', 'Otra',   'PERMANENTE', current_date - 10, null,              null),
@@ -74,21 +76,26 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   ('01920000-0000-7000-8000-0000000013f1', '01920000-0000-7000-8000-0000000013e1', '01920000-0000-7000-8000-0000000013c1'),
   ('01920000-0000-7000-8000-0000000013f2', '01920000-0000-7000-8000-0000000013e2', '01920000-0000-7000-8000-0000000013c2'),
-  ('01920000-0000-7000-8000-0000000013f3', '01920000-0000-7000-8000-0000000013e3', '01920000-0000-7000-8000-0000000013c1');
+  ('01920000-0000-7000-8000-0000000013f3', '01920000-0000-7000-8000-0000000013e3', '01920000-0000-7000-8000-0000000013c1'),
+  ('01920000-0000-7000-8000-0000000013f4', '01920000-0000-7000-8000-0000000013e1', '01920000-0000-7000-8000-0000000013c3');
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, poligono_geojson) values
   ('01920000-0000-7000-8000-0000000013d1', 'A', '01920000-0000-7000-8000-0000000013f1', 'ESQUINAS', pg_temp.rect(-56.20, -34.92, -56.19, -34.91)),
-  ('01920000-0000-7000-8000-0000000013d2', 'B', '01920000-0000-7000-8000-0000000013f1', 'ESQUINAS', pg_temp.rect(-56.19, -34.92, -56.18, -34.91));
+  ('01920000-0000-7000-8000-0000000013d2', 'B', '01920000-0000-7000-8000-0000000013f1', 'ESQUINAS', pg_temp.rect(-56.19, -34.92, -56.18, -34.91)),
+  ('01920000-0000-7000-8000-0000000013d3', 'D', '01920000-0000-7000-8000-0000000013f4', 'ESQUINAS', pg_temp.rect(-56.11, -34.71, -56.10, -34.70));
 insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-0000000013e1', '01920000-0000-7000-8000-0000000013b1', '01920000-0000-7000-8000-0000000013d1'),
   ('01920000-0000-7000-8000-0000000013e1', '01920000-0000-7000-8000-0000000013b2', null),
   ('01920000-0000-7000-8000-0000000013e2', '01920000-0000-7000-8000-0000000013b3', null),
-  ('01920000-0000-7000-8000-0000000013e3', '01920000-0000-7000-8000-0000000013b4', null);
+  ('01920000-0000-7000-8000-0000000013e3', '01920000-0000-7000-8000-0000000013b4', null),
+  ('01920000-0000-7000-8000-0000000013e1', '01920000-0000-7000-8000-0000000013b5', '01920000-0000-7000-8000-0000000013d3');
 
--- u1 en A, u2 en Montevideo fuera de toda zona, u3 en la otra ciudad. Las carga el servidor.
+-- u1 en A, u2 en Montevideo fuera de toda zona, u3 en la otra ciudad, u30 en Canelones fuera de D.
+-- Las carga el servidor.
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id) values
   ('01920000-0000-7000-8000-000000001301', 'CASA', 'Rivera', '1', -34.915, -56.195, '01920000-0000-7000-8000-0000000013c1'),
   ('01920000-0000-7000-8000-000000001302', 'CASA', 'Rivera', '2', -34.95,  -56.25,  '01920000-0000-7000-8000-0000000013c1'),
-  ('01920000-0000-7000-8000-000000001303', 'CASA', 'Rivera', '3', -34.915, -56.195, '01920000-0000-7000-8000-0000000013c2');
+  ('01920000-0000-7000-8000-000000001303', 'CASA', 'Rivera', '3', -34.915, -56.195, '01920000-0000-7000-8000-0000000013c2'),
+  ('01920000-0000-7000-8000-000000001330', 'CASA', 'Artigas', '30', -34.72, -56.12, '01920000-0000-7000-8000-0000000013c3');
 
 -- ---------------------------------------------------------------------------
 -- 1. Forma
@@ -132,16 +139,21 @@ select ok(has_function_privilege('authenticated',
           'authenticated ejecuta posibles_duplicados_de_ubicacion (la RLS decide qué filas)');
 
 -- ---------------------------------------------------------------------------
--- 2. mis_ciudades_de_trabajo(): las ciudades de sus campañas vigentes
+-- 2. mis_ciudades_de_trabajo(): la ciudad de su zona; sin zona, todas las de sus campañas
+--    vigentes (S55, decisión de Cristian del 30/09)
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
 select results_eq($$ select * from public.mis_ciudades_de_trabajo() $$,
                   $$ values ('01920000-0000-7000-8000-0000000013c1'::uuid) $$,
-                  'b1 (Verano, zona A) trabaja en Montevideo');
-select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b2');
+                  'b1 (Verano, zona A en Montevideo) trabaja en la ciudad de su zona, no en Canelones (S55)');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b5');
 select results_eq($$ select * from public.mis_ciudades_de_trabajo() $$,
-                  $$ values ('01920000-0000-7000-8000-0000000013c1'::uuid) $$,
-                  'b2 también, aunque no tenga zona (S55, provisorio)');
+                  $$ values ('01920000-0000-7000-8000-0000000013c3'::uuid) $$,
+                  'b5 (Verano, zona D en Canelones) trabaja en Canelones, no en Montevideo (S55)');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b2');
+select results_eq($$ select * from public.mis_ciudades_de_trabajo() order by 1 $$,
+                  $$ values ('01920000-0000-7000-8000-0000000013c1'::uuid), ('01920000-0000-7000-8000-0000000013c3'::uuid) $$,
+                  'b2 (Verano, sin zona) trabaja en todas las ciudades de Verano (S55)');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b4');
 select is((select count(*) from public.mis_ciudades_de_trabajo()), 0::bigint,
           'b4 solo está en una campaña terminada: ninguna');
@@ -149,20 +161,35 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013a1');
 select is((select count(*) from public.mis_ciudades_de_trabajo()), 0::bigint,
           'el coordinador no tiene inscripciones: ninguna (ve todo por su rol)');
 
+-- Una zona dada de baja cuenta como sin zona (la misma vigencia que mis_zonas()). baja_zona()
+-- no deja dar de baja una zona asignada: se fuerza como servidor, y se deshace enseguida.
+select pg_temp.actuar_como_servidor();
+update public.zona set deleted_at = now() where id = '01920000-0000-7000-8000-0000000013d3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b5');
+select results_eq($$ select * from public.mis_ciudades_de_trabajo() order by 1 $$,
+                  $$ values ('01920000-0000-7000-8000-0000000013c1'::uuid), ('01920000-0000-7000-8000-0000000013c3'::uuid) $$,
+                  'con su zona dada de baja, b5 cuenta como sin zona: todas las ciudades de Verano');
+select pg_temp.actuar_como_servidor();
+update public.zona set deleted_at = null where id = '01920000-0000-7000-8000-0000000013d3';
+
 -- ---------------------------------------------------------------------------
 -- 3. Quién ve qué ubicación: la ciudad, no la zona
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
 select is(pg_temp.ids_visibles(),
           array['01920000-0000-7000-8000-000000001301', '01920000-0000-7000-8000-000000001302']::uuid[],
-          'b1 ve las casas de su ciudad, dentro y fuera de su zona; no las de otra ciudad');
+          'b1 ve las casas de la ciudad de su zona, dentro y fuera de ella; ni las de Canelones (otra ciudad de Verano, S55) ni las de otra campaña');
 select is((select array_agg(x order by x) from public.ubicaciones_de_mi_zona() x),
           array['01920000-0000-7000-8000-000000001301']::uuid[],
           'la parte «zona» del pull de b1: la casa de A (no la de afuera ni la de otra ciudad)');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b2');
 select is(pg_temp.ids_visibles(),
-          array['01920000-0000-7000-8000-000000001301', '01920000-0000-7000-8000-000000001302']::uuid[],
-          'b2, sin zona, también (la zona no es un permiso)');
+          array['01920000-0000-7000-8000-000000001301', '01920000-0000-7000-8000-000000001302',
+                '01920000-0000-7000-8000-000000001330']::uuid[],
+          'b2, sin zona, ve las de todas las ciudades de Verano (S55); no las de otra campaña');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b5');
+select is(pg_temp.ids_visibles(), array['01920000-0000-7000-8000-000000001330']::uuid[],
+          'b5 (zona D) ve las de Canelones, también fuera de su zona; no las de Montevideo (S55)');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
 select is(pg_temp.ids_visibles(), array['01920000-0000-7000-8000-000000001303']::uuid[],
           'b3 ve solo las de su ciudad');
@@ -189,6 +216,12 @@ select throws_ok(
   $$ update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000013c2'
       where id = '01920000-0000-7000-8000-000000001302' $$,
   '42501', null, 'b2 NO la manda a una ciudad donde no trabaja');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
+select throws_ok(
+  $$ update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000013c3'
+      where id = '01920000-0000-7000-8000-000000001302' $$,
+  '42501', null, 'b1 (zona en Montevideo) NO manda una casa ajena a Canelones, aunque sea de Verano (S55)');
+update public.ubicacion set calle = 'Pirata' where id = '01920000-0000-7000-8000-000000001330';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
 update public.ubicacion set calle = 'Pirata' where id = '01920000-0000-7000-8000-000000001301';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b4');
@@ -199,6 +232,8 @@ select lives_ok(
 select pg_temp.actuar_como_servidor();
 select is((select calle from public.ubicacion where id = '01920000-0000-7000-8000-000000001301'), 'Rivera',
           'b3 no tocó una casa de otra ciudad (para él no existe)');
+select is((select calle from public.ubicacion where id = '01920000-0000-7000-8000-000000001330'), 'Artigas',
+          'b1 tampoco tocó una casa de Canelones: no es la ciudad de su zona (S55)');
 
 -- ---------------------------------------------------------------------------
 -- 4. espacio y house_status siguen a su ubicación
