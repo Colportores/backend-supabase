@@ -5,8 +5,9 @@
 -- Materializa TODAS las tablas V1 que viven en el cloud:
 --   · pull  (cloud → app): pais, ciudad, zona, campania, producto, coleccion,
 --                          producto_coleccion, precio_por_zona
---   · push  (app → cloud): jornada, visita, agenda, venta, venta_item, entrega, cobranza
---   · push + alsoPull    : ubicacion, espacio, espacio_persona (solo IDs), house_status
+--   · push  (app → cloud): jornada, visita, agenda, venta, venta_item, entrega, cobranza,
+--                          espacio_persona (solo IDs, sin alsoPull: ADR-017)
+--   · push + alsoPull    : ubicacion, espacio, house_status
 --   · identidad          : usuario (perfil de auth.users), rol, usuario_rol,
 --                          horario_colportor, campania_colportor
 --
@@ -20,14 +21,14 @@
 --   5. SIN DATOS DE PERSONA (Ley 18.331): no existen persona ni nota, ni columnas telefono/notas.
 --      Un PR que las agregue se rechaza. espacio_persona.persona_id es un UUID opaco sin FK: la
 --      persona vive solo en el dispositivo. La DIRECCIÓN de la casa (calle, numero, numero_depto)
---      sí vive acá: la frontera de privacidad es la persona, no la casa (ADR-018). Sin dirección
+--      sí vive acá: la frontera de privacidad es la persona, no la casa (ADR-004). Sin dirección
 --      no funciona el traspaso de zona entre colportores ni el tablero del coordinador.
---   6. RLS habilitada en todas las tablas. La RLS es la autoridad de permisos (ADR-016).
+--   6. RLS habilitada en todas las tablas. La RLS es la autoridad de permisos (ADR-012).
 --      Lo que RLS no alcanza por ser a nivel fila (columnas server-authoritative como zona_id)
 --      se cierra con triggers, no con confianza en el cliente.
 --   7. Forward-only: esta migración no se edita una vez aplicada en un entorno compartido.
 --
--- Lo que NO está acá (dueño @BrunoFCapri, ADR-017): RPC de ingesta, cache de client_op_id,
+-- Lo que NO está acá (dueño @BrunoFCapri, ADR-008): RPC de ingesta, cache de client_op_id,
 -- sync_log. Llegan en Sprint 3 con su propia migración.
 -- ============================================================================
 
@@ -83,7 +84,7 @@ comment on function public.tg_auditoria_insert() is
 -- Auditoría en UPDATE: updated_at y sync_version los pone el servidor, nunca el cliente.
 -- created_at y created_by se preservan: el cliente manda la fila entera en el LWW y no debe poder
 -- reescribir quién creó el registro ni cuándo. Se coercionan en silencio en vez de fallar, para no
--- mandar a INVALID un job de sync que por lo demás es válido (ADR-013 §Clasificación de errores).
+-- mandar a INVALID un job de sync que por lo demás es válido (ADR-007 §Clasificación de errores).
 create or replace function public.tg_auditoria_update()
 returns trigger
 language plpgsql
@@ -336,7 +337,7 @@ alter table public.precio_por_zona
   ) where (deleted_at is null and coleccion_id is not null);
 
 -- ----------------------------------------------------------------------------
--- 5. Modelo Espacio (push + alsoPull) — ADR-001, ADR-012
+-- 5. Modelo Espacio (ubicacion y espacio: push + alsoPull; espacio_persona: push) — ADR-001, ADR-004, ADR-017
 -- ----------------------------------------------------------------------------
 
 create table public.ubicacion (
@@ -357,7 +358,7 @@ create table public.ubicacion (
   sync_version  bigint not null default 0
 );
 comment on table public.ubicacion is
-  'Casa del territorio, con su dirección. Sin datos de persona (ADR-018). Compartida por zona: '
+  'Casa del territorio, con su dirección. Sin datos de persona (ADR-004). Compartida por zona: '
   'al rotar el colportor, quien toma la zona recibe las casas ya trabajadas con su estado.';
 
 -- Índice de deduplicación: NO es único. RF-UB08/R-UB08 definen la dedup como una advertencia del
@@ -383,8 +384,8 @@ create table public.espacio (
   sync_version  bigint not null default 0
 );
 comment on column public.espacio.numero_depto is
-  'Va al cloud siempre. ADR-012 lo propagaba solo con operaciones financieras; ADR-018 eliminó '
-  'esa política diferenciada junto con la de calle/numero.';
+  'Va al cloud siempre. ADR-004 descartó propagarlo solo con operaciones financieras: va con '
+  'la casa, igual que calle/numero.';
 create index espacio_ubicacion_idx on public.espacio (ubicacion_id);
 create index espacio_created_by_idx on public.espacio (created_by);
 
@@ -533,7 +534,7 @@ create table public.cobranza (
 create index cobranza_venta_idx on public.cobranza (venta_id);
 
 -- ----------------------------------------------------------------------------
--- 7. Cache de mapa (push + alsoPull) — ADR-010
+-- 7. Cache de mapa (push + alsoPull) — ADR-003
 -- ----------------------------------------------------------------------------
 
 create table public.house_status (
@@ -557,7 +558,7 @@ create table public.house_status (
   created_by      uuid default auth.uid() references public.usuario(id) on delete set null,
   deleted_at      timestamptz,
   sync_version    bigint not null default 0,
-  -- color y prioridad son el mismo dato en dos formas: ADR-010 fija el mapeo 1:1. Se guardan
+  -- color y prioridad son el mismo dato en dos formas: ADR-003 fija el mapeo 1:1. Se guardan
   -- ambos porque el cliente calcula la cache y sube la fila entera, pero no pueden contradecirse
   -- o el mapa pinta un pin de un color y lo ordena por otro.
   check (prioridad = case color
@@ -650,7 +651,7 @@ as $$
     where ur.usuario_id = auth.uid()
       and r.codigo = p_codigo
       and ur.deleted_at is null
-      -- La baja administrativa (ADR-011) revoca las sesiones, pero eso pasa fuera de esta base.
+      -- La baja administrativa (ADR-005) revoca las sesiones, pero eso pasa fuera de esta base.
       -- Si la revocación falla o llega tarde, el rol tiene que caerse igual acá.
       and u.deleted_at is null
       and r.deleted_at is null
@@ -756,7 +757,7 @@ create trigger house_status_zona_propia
 
 -- La imagen de Supabase define default privileges que dan ALL a anon/authenticated sobre lo que
 -- crea `postgres`. Se ajustan para esta y para las migraciones futuras:
---   · anon no ve nada: todo pasa por el BFF con el JWT del usuario (ADR-016).
+--   · anon no ve nada: todo pasa por el BFF con el JWT del usuario (ADR-013).
 --   · authenticated: nunca DELETE ni TRUNCATE (soft delete vía UPDATE).
 --   · service_role: todo (seeds, jobs).
 alter default privileges for role postgres in schema public revoke all on tables from anon;
@@ -937,7 +938,7 @@ end
 $$;
 
 -- ----------------------------------------------------------------------------
--- 11. Realtime: solo catálogo (ADR-002, contrato §2 `realtime: true`)
+-- 11. Realtime: solo catálogo (ADR-007, contrato §2 `realtime: true`)
 -- ----------------------------------------------------------------------------
 
 do $$
