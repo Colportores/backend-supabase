@@ -468,11 +468,8 @@ select lives_ok(
 select is(
   (select public.baja_zona((select (a -> 'zona' ->> 'id')::uuid from zonas_ab), true)
           -> 'colportores_asignados' -> 0 ->> 'apellido'),
-  'Zeta', 'vista previa de la baja: lista a quién hay que reasignar');
-select throws_ok(
-  $$ select public.baja_zona((select (a -> 'zona' ->> 'id')::uuid from zonas_ab)) $$,
-  'CZ010', 'La zona «Zona A» tiene colportores asignados: Uno Zeta. Reasignalos a otra zona antes de darla de baja.',
-  'baja de una zona con colportores asignados → CZ010 con los nombres');
+  'Zeta', 'vista previa de la baja: lista quiénes quedarían sin zona');
+-- La baja con asignados ya no se rechaza (CZ010): los deja sin zona. Lo prueba 0015.
 
 select is(
   (select public.baja_zona((select (b -> 'zona' ->> 'id')::uuid from zonas_ab)) ->> 'dada_de_baja'),
