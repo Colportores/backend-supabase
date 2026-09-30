@@ -103,6 +103,10 @@ select hasnt_trigger('public', 'campania_colportor', 'campania_colportor_republi
                      'asignar una zona no republica (lo reemplaza la huella del área en el pull)');
 select has_trigger('public', 'ubicacion', 'ubicacion_posicion_a_dependientes',
                    'mover una ubicación republica sus espacios y su house_status');
+select has_trigger('public', 'house_status', 'house_status_posicion_de_su_ubicacion',
+                   'el pin (house_status.lat/lon) es la posición de su ubicación');
+select ok((select columnas_servidor @> array['lat', 'lon'] from sync.entidad where nombre = 'house_status'),
+          'house_status.lat/lon son del servidor: el push las descarta');
 select hasnt_function('public', f, 'se fue ' || f)
   from unnest(array['zona_de_posicion', 'ubicacion_campanias_preferidas', 'recalcular_zona_de_ubicaciones',
                     'ubicaciones_de_zona_cambiada', 'zona_ubicaciones_que_cambian']) f;

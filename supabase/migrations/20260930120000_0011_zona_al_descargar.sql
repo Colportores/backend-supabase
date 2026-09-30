@@ -59,9 +59,13 @@
 -- Un pull de estas entidades sin nada nuevo en el área deja el cursor en el horizonte: lo de
 -- abajo ya se revisó entero, y el pull siguiente no lo vuelve a recorrer.
 --
--- Cuando una ubicación cambia de posición o de ciudad, sus espacios y su house_status reciben un
--- UPDATE nulo: pueden entrar en el área de otro colportor, y sin eso quedarían debajo de su
--- watermark.
+-- Cuando una ubicación cambia de posición o de ciudad, sus espacios y su house_status se
+-- republican: pueden entrar en el área de otro colportor, y sin eso quedarían debajo de su
+-- watermark. Republicar sube solo xmin_w, no sync_version ni updated_at (colportores.republicar en
+-- tg_auditoria_update): si subiera la versión, el job pendiente de cualquier teléfono sobre esas
+-- filas volvería `conflict` y se perdería (el lote [casa movida, estado, piso] daba
+-- accepted/conflict/conflict). house_status.lat/lon pasan a ser del servidor: son la posición de
+-- su ubicación (el pin), la copia un trigger y el push las descarta.
 --
 -- ## «Incluye N ubicaciones» (vista 24)
 --
@@ -246,10 +250,80 @@ create policy house_status_por_ubicacion_update on public.house_status
 -- 5. Una ubicación que se mueve republica sus espacios y su house_status
 -- ----------------------------------------------------------------------------
 
+-- Republicar sin invalidar lo pendiente. Un UPDATE nulo que solo tiene que hacer salir una fila
+-- en el delta de alguien más sube el cursor (xmin_w), pero no la versión ni updated_at: la fila
+-- no cambió para nadie, y subir sync_version haría que el job pendiente de cualquier teléfono
+-- sobre esa fila vuelva `conflict` (LWW: gana el servidor con la misma fila de antes y la acción
+-- del colportor se pierde). El republicado lo marca con la GUC local colportores.republicar,
+-- solo mientras dura su UPDATE. Mismo cuerpo que en 0002 fuera de eso.
+create or replace function public.tg_auditoria_update()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.created_at := old.created_at;
+  new.created_by := old.created_by;
+  -- Sin esto, una fila actualizada conserva el xid de su INSERT, queda detrás del watermark de
+  -- cualquier cliente que ya la bajó, y la modificación no se propaga nunca (0002).
+  new.xmin_w := pg_current_xact_id();
+  if current_setting('colportores.republicar', true) = 'on' then
+    new.updated_at := old.updated_at;
+    new.sync_version := old.sync_version;
+  else
+    new.updated_at := now();
+    new.sync_version := old.sync_version + 1;
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_auditoria_update() is
+  'BEFORE UPDATE: updated_at = now(), sync_version = old + 1, xmin_w = xid actual; '
+  'created_at/created_by inmutables. Con colportores.republicar = on (republicado, 0011) solo sube '
+  'xmin_w.';
+
+-- house_status.lat/lon son la copia de la posición de su ubicación: de ahí sale el pin del mapa
+-- (ADR-003). Las pone el servidor, como la zona en 0010: el push las descarta
+-- (columnas_servidor) y este trigger las copia en todo INSERT y UPDATE. Así el pin no queda en
+-- la posición vieja cuando otro corrige la casa, ni vuelve a ella con el push de un teléfono que
+-- todavía no se enteró. SECURITY DEFINER: lee la ubicación aunque la RLS no se la muestre.
+create function public.tg_house_status_posicion_de_su_ubicacion()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_lat double precision;
+  v_lon double precision;
+begin
+  select u.lat, u.lon into v_lat, v_lon from public.ubicacion u where u.id = new.ubicacion_id;
+  if found then
+    new.lat := v_lat;
+    new.lon := v_lon;
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_house_status_posicion_de_su_ubicacion() is
+  'BEFORE INSERT/UPDATE de house_status: lat y lon son las de su ubicación (el pin, ADR-003).';
+
+create trigger house_status_posicion_de_su_ubicacion
+  before insert or update on public.house_status
+  for each row execute function public.tg_house_status_posicion_de_su_ubicacion();
+
+update sync.entidad
+   set columnas_servidor = columnas_servidor || array['lat', 'lon']
+ where nombre = 'house_status';
+
 -- AFTER UPDATE de ubicacion, cuando cambia la posición o la ciudad (por cualquier camino). La
 -- casa puede entrar en el área de otro colportor: ella misma sale en su delta (el UPDATE le sube
--- el xmin_w), pero sus espacios y su house_status no, y quedarían debajo de su watermark. UPDATE
--- nulo sobre los vivos; lo ya tocado en esta transacción no se vuelve a tocar.
+-- el xmin_w), pero sus espacios y su house_status no, y quedarían debajo de su watermark.
+-- Republicado (sin subir la versión) de los vivos. Lo ya tocado en esta transacción no se vuelve
+-- a tocar, salvo el house_status si su pin quedó en otra posición (el mismo lote del teléfono
+-- puede subir el estado antes que la casa movida).
 -- SECURITY DEFINER: escribe filas que la RLS de quien mueve la casa puede no dejarle tocar.
 create function public.tg_ubicacion_posicion_a_dependientes()
 returns trigger
@@ -257,25 +331,36 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_antes text := current_setting('colportores.republicar', true);
 begin
+  perform set_config('colportores.republicar', 'on', true);
+
+  -- El trigger de house_status le copia la posición nueva.
   update public.house_status h
      set deleted_at = h.deleted_at
    where h.ubicacion_id = new.id
      and h.deleted_at is null
-     and h.xmin_w <> pg_current_xact_id();
+     and (h.xmin_w <> pg_current_xact_id()
+          or (h.lat, h.lon) is distinct from (new.lat, new.lon));
 
   update public.espacio e
      set deleted_at = e.deleted_at
    where e.ubicacion_id = new.id
      and e.deleted_at is null
      and e.xmin_w <> pg_current_xact_id();
+
+  -- Solo durante el republicado: lo que siga en la transacción (el próximo job del lote) sube
+  -- la versión como siempre.
+  perform set_config('colportores.republicar', coalesce(v_antes, 'off'), true);
   return null;
 end;
 $$;
 
 comment on function public.tg_ubicacion_posicion_a_dependientes() is
-  'AFTER UPDATE de ubicacion que la mueve (lat, lon o ciudad): UPDATE nulo sobre sus espacios y su '
-  'house_status, para que entren en el delta de quien la empieza a tener en su área.';
+  'AFTER UPDATE de ubicacion que la mueve (lat, lon o ciudad): republica (xmin_w, sin subir la '
+  'versión) sus espacios y su house_status, para que entren en el delta de quien la empieza a '
+  'tener en su área sin invalidar lo pendiente de nadie.';
 
 create trigger ubicacion_posicion_a_dependientes
   after update on public.ubicacion
@@ -921,6 +1006,7 @@ revoke all on function
   public.mis_ciudades_de_trabajo(),
   public.ubicaciones_de_mi_zona(),
   public.tg_ubicacion_posicion_a_dependientes(),
+  public.tg_house_status_posicion_de_su_ubicacion(),
   public.zona_ubicaciones_incluidas(uuid, jsonb)
   from public, anon, authenticated;
 revoke all on function

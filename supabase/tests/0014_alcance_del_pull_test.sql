@@ -258,6 +258,81 @@ select is(pg_temp.ids(sync.pull(array['ubicacion'], '{}'::jsonb, 1000, null, nul
           'sin alcance es «zona» (S60 pendiente: lo que bajaba hasta ahora)');
 
 -- ---------------------------------------------------------------------------
+-- 8. Mover la casa no invalida lo pendiente de nadie (revisión de #36)
+-- ---------------------------------------------------------------------------
+-- 1408 es de b1, en Z1, con su estado y un espacio (versión 0). El estado se carga con otra
+-- posición: el pin es siempre la de la casa.
+select pg_temp.como_servidor();
+insert into public.ubicacion (id, tipo, lat, lon, ciudad_id, created_by) values
+  ('01920000-0000-7000-8000-000000001408', 'CASA', -34.912, -56.188, '01920000-0000-7000-8000-0000000014c1',
+   '01920000-0000-7000-8000-0000000014b1');
+insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad, created_by) values
+  ('01920000-0000-7000-8000-000000001408', 0, 0, 'CASA', 'SIN_CONTESTAR', 6, '01920000-0000-7000-8000-0000000014b1');
+insert into public.espacio (id, ubicacion_id, created_by) values
+  ('01920000-0000-7000-8000-000000001418', '01920000-0000-7000-8000-000000001408', '01920000-0000-7000-8000-0000000014b1');
+select is((select array[lat, lon] from public.house_status where ubicacion_id = '01920000-0000-7000-8000-000000001408'),
+          array[-34.912, -56.188]::float8[], 'el pin toma la posición de la casa, no la que se manda');
+
+-- b1 corrige el pin 3 m, marca la visita y el piso, en un lote (lo pendiente de su teléfono).
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+create temp table lote_b1 as
+select sync.push(jsonb_build_array(
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'ubicacion', 'op', 'update', 'sync_version', 0,
+                     'payload', jsonb_build_object('id', '01920000-0000-7000-8000-000000001408',
+                                                   'lat', -34.91203, 'lon', -56.188)),
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'house_status', 'op', 'update', 'sync_version', 0,
+                     'payload', jsonb_build_object('ubicacion_id', '01920000-0000-7000-8000-000000001408',
+                                                   'lat', -34.91203, 'lon', -56.188,
+                                                   'color', 'VENTA_COMPLETA', 'prioridad', 4)),
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'espacio', 'op', 'update', 'sync_version', 0,
+                     'payload', jsonb_build_object('id', '01920000-0000-7000-8000-000000001418', 'piso', '2')))) as r;
+select is((select jsonb_path_query_array(r, '$.results[*].outcome') from lote_b1),
+          '["accepted", "accepted", "accepted"]'::jsonb,
+          'mover la casa, cambiar el estado y el piso en un lote: entran los tres (mover no sube la versión de los dependientes)');
+select pg_temp.como_servidor();
+select is((select array[color, lat::text, sync_version::text] from public.house_status
+            where ubicacion_id = '01920000-0000-7000-8000-000000001408'),
+          array['VENTA_COMPLETA', '-34.91203', '1'], 'el estado queda como lo dejó b1, con el pin en la posición nueva');
+select is((select array[piso, sync_version::text] from public.espacio where id = '01920000-0000-7000-8000-000000001418'),
+          array['2', '1'], 'y el piso');
+
+-- b2 (trabaja la ciudad) corrige la casa mientras b1 tiene pendiente otro estado.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b2');
+update public.ubicacion set lat = -34.9125 where id = '01920000-0000-7000-8000-000000001408';
+select pg_temp.como_servidor();
+select is((select array[lat::text, sync_version::text] from public.house_status
+            where ubicacion_id = '01920000-0000-7000-8000-000000001408'),
+          array['-34.9125', '1'], 'el pin sigue a la casa que corrigió otro, sin subir la versión del estado');
+select is((select sync_version from public.espacio where id = '01920000-0000-7000-8000-000000001418'), 1::bigint,
+          'ni la del espacio');
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+select is(sync.push(jsonb_build_array(
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'house_status', 'op', 'update', 'sync_version', 1,
+                     'payload', jsonb_build_object('ubicacion_id', '01920000-0000-7000-8000-000000001408',
+                                                   'lat', -34.91203, 'lon', -56.188,
+                                                   'color', 'RECHAZO', 'prioridad', 7)))) #>> '{results,0,outcome}',
+          'accepted', 'el estado pendiente de b1 entra aunque otro haya movido la casa');
+select pg_temp.como_servidor();
+select is((select array[color, lat::text] from public.house_status where ubicacion_id = '01920000-0000-7000-8000-000000001408'),
+          array['RECHAZO', '-34.9125'], 'y su posición vieja no pisa el pin');
+
+-- El lote en el otro orden: el estado antes que la casa movida. El pin igual queda en la nueva.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+select is(jsonb_path_query_array(sync.push(jsonb_build_array(
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'house_status', 'op', 'update', 'sync_version', 2,
+                     'payload', jsonb_build_object('ubicacion_id', '01920000-0000-7000-8000-000000001408',
+                                                   'color', 'SIN_CONTESTAR', 'prioridad', 6)),
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'ubicacion', 'op', 'update', 'sync_version', 2,
+                     'payload', jsonb_build_object('id', '01920000-0000-7000-8000-000000001408', 'lat', -34.913)))),
+          '$.results[*].outcome'),
+          '["accepted", "accepted"]'::jsonb, 'estado y después la casa movida: entran los dos');
+select pg_temp.como_servidor();
+select is((select array[color, lat::text] from public.house_status where ubicacion_id = '01920000-0000-7000-8000-000000001408'),
+          array['SIN_CONTESTAR', '-34.913'], 'y el pin queda en la posición nueva');
+drop table lote_b1;
+
+-- ---------------------------------------------------------------------------
 -- Limpieza
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
