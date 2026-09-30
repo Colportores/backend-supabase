@@ -28,8 +28,13 @@
 --
 -- En un pull en delta (el área es la misma del watermark), para cada ubicación con movimientos en
 -- el tramo del cursor que cubre la respuesta, (watermark que llegó, watermark nuevo], la posición
--- que tenía al último pull es la de ANTES de su primer movimiento del tramo. Salió del área si esa
--- posición estaba en el área del pull y la de ahora no. El área es la misma regla que el pull
+-- que tenía al último pull es la de ANTES de su primer movimiento del tramo, y la que tiene al FINAL
+-- del tramo es la de antes de su primer movimiento posterior al tramo o, si no hay, la de la fila.
+-- Salió del área si la primera estaba en el área del pull y la segunda no. No sirve la posición de
+-- la fila a secas: el snapshot del pull puede ver movimientos que caen después del tramo (con
+-- has_more, o si el tramo termina en la última fila entregada), y esos se evalúan en el tramo
+-- siguiente: una casa que sale, vuelve y sale otra vez se perdía sin aviso, y una corregida adentro
+-- que después salía se avisaba dos veces (revisión del PR #48). El área es la misma regla que el pull
 -- (0011, S55, S60): 'zona', dentro del polígono de sus zonas y de la ciudad de cada una; 'ciudad',
 -- en su ciudad de trabajo (mis_ciudades_de_trabajo()). Las que registró él nunca salen (siempre
 -- bajan). Los tramos de pulls seguidos se tocan sin pisarse, igual que las filas: nada se avisa
@@ -95,6 +100,10 @@ create table sync.ubicacion_movida (
   created_at    timestamptz not null default now(),
   primary key (xmin_w, ubicacion_id)
 );
+
+-- El primer movimiento de una casa después del tramo (ubicaciones_que_salieron()) y el on delete
+-- cascade desde ubicacion buscan por casa: la PK arranca por xmin_w.
+create index ubicacion_movida_ubicacion_idx on sync.ubicacion_movida (ubicacion_id, xmin_w);
 
 comment on table sync.ubicacion_movida is
   'Cada cambio de posición o ciudad de una ubicación, con la posición y la ciudad de ANTES y el xid '
@@ -173,22 +182,38 @@ as $$
   select p.ubicacion_id
     from primera p
     join public.ubicacion u on u.id = p.ubicacion_id
+    -- La posición al final del tramo: la de antes del primer movimiento posterior; si no hay, la
+    -- de la fila.
+    left join lateral (
+      select m.ciudad_id, m.lat, m.lon
+        from sync.ubicacion_movida m
+       where m.ubicacion_id = p.ubicacion_id
+         and (m.xmin_w, m.ubicacion_id) > (p_hasta_xid, p_hasta_id)
+       order by m.xmin_w
+       limit 1
+    ) sig on true
+    cross join lateral (
+      select coalesce(sig.ciudad_id, u.ciudad_id) as ciudad_id,
+             coalesce(sig.lat, u.lat) as lat,
+             coalesce(sig.lon, u.lon) as lon
+    ) fin
    where u.created_by is distinct from auth.uid()
      -- estaba en el área
      and (exists (select 1 from zonas z
                    where z.ciudad_id = p.ciudad_id
                      and extensions.st_covers(z.geom, public.ubicacion_geometria(p.lat, p.lon)))
           or p.ciudad_id in (select c.ciudad_id from ciudades c))
-     -- y ya no
+     -- y al final del tramo ya no
      and not (exists (select 1 from zonas z
-                       where z.ciudad_id = u.ciudad_id
-                         and extensions.st_covers(z.geom, public.ubicacion_geometria(u.lat, u.lon)))
-              or u.ciudad_id in (select c.ciudad_id from ciudades c));
+                       where z.ciudad_id = fin.ciudad_id
+                         and extensions.st_covers(z.geom, public.ubicacion_geometria(fin.lat, fin.lon)))
+              or fin.ciudad_id in (select c.ciudad_id from ciudades c));
 $$;
 
 comment on function public.ubicaciones_que_salieron(text, xid8, uuid, xid8, uuid) is
   'Ids de las ubicaciones que estaban en el área del pull del usuario autenticado (alcance zona o '
-  'ciudad) al principio del tramo (desde, hasta] del cursor y ya no están, porque se movieron. '
+  'ciudad) al principio del tramo (desde, hasta] del cursor y al final del tramo ya no, porque se '
+  'movieron. '
   'Las propias nunca. Interna del pull (0016).';
 
 revoke all on function public.tg_ubicacion_registrar_movida(),

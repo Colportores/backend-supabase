@@ -54,6 +54,7 @@ $$;
 --   05 de b1, en Z1 (sale, pero es suya)             06 en c2 (pasa a c3)
 --   07 en Z1 (sale y vuelve)                          08 en Z1 (se mueve adentro de Z1)
 --   09 en c1 fuera de las zonas (dos movimientos en una transacción)   0a en Z2
+--   0b..0e en Z1, se cargan en 5b (salir, volver y salir; corregir adentro y salir)
 -- ---------------------------------------------------------------------------
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
@@ -191,13 +192,63 @@ create temp table p6 as select sync.pull(array['ubicacion'], (select d -> 'water
 select ok(not (d ? 'out_of_area'), 'y no se repite') from p6;
 
 -- ---------------------------------------------------------------------------
+-- 5b. «Al final del tramo», no «ahora» (revisión del PR #48): el snapshot del pull puede ver
+--     movimientos posteriores al tramo, y esos se evalúan en el tramo siguiente.
+--     0b sale, vuelve y sale otra vez con un pull paginado en el medio; 0d se corrige adentro y
+--     después sale. 0c y 0e son otras casas de Z1 que se editan entre medio.
+-- ---------------------------------------------------------------------------
+select pg_temp.como_servidor();
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by) values
+  (pg_temp.u('0b'), 'CASA', 'Rivera', '11', -34.9152, -56.1852, pg_temp.u('c1'), null),
+  (pg_temp.u('0c'), 'CASA', 'Rivera', '12', -34.9153, -56.1853, pg_temp.u('c1'), null),
+  (pg_temp.u('0d'), 'CASA', 'Rivera', '13', -34.9154, -56.1854, pg_temp.u('c1'), null),
+  (pg_temp.u('0e'), 'CASA', 'Rivera', '14', -34.9155, -56.1855, pg_temp.u('c1'), null);
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table pa as select sync.pull(array['ubicacion'], (select d -> 'watermark' from p6), 1000) as d;
+select is(pg_temp.filas(d), array['0b','0c','0d','0e'], 'b1 baja las cuatro casas nuevas de Z1') from pa;
+
+-- 0b: sale (M1), se edita 0c, vuelve (M2); pull con límite 1 (la página corta en 0c); sale otra vez (M3).
+select pg_temp.como_servidor();
+update public.ubicacion set lat = -34.95 where id = pg_temp.u('0b');
+update public.ubicacion set calle = 'Rivera once' where id = pg_temp.u('0c');
+update public.ubicacion set lat = -34.9151 where id = pg_temp.u('0b');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table pb as select sync.pull(array['ubicacion'], (select d -> 'watermark' from pa), 1) as d;
+select is(pg_temp.filas(d), array['0c'], 'la página trae solo 0c') from pb;
+select ok((select (d ->> 'has_more')::boolean from pb), 'y hay más');
+select is(pg_temp.fuera(d), array['0b'],
+          'el tramo cubre la salida de 0b (M1) y al final del tramo 0b seguía afuera: se avisa, aunque «ahora» esté adentro')
+  from pb;
+select pg_temp.como_servidor();
+update public.ubicacion set lat = -34.96 where id = pg_temp.u('0b');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table pc as select sync.pull(array['ubicacion'], (select d -> 'watermark' from pb), 1000) as d;
+select ok(not (d ? 'out_of_area'), 'M2 y M3 en el tramo siguiente: 0b ya estaba afuera al principio, no se repite') from pc;
+select is(d -> 'rows', '{}'::jsonb, 'y 0b no baja como fila (está afuera)') from pc;
+
+-- 0d: se corrige adentro (M1), se edita 0e, sale (M2).
+select pg_temp.como_servidor();
+update public.ubicacion set lat = -34.9156 where id = pg_temp.u('0d');
+update public.ubicacion set calle = 'Rivera catorce' where id = pg_temp.u('0e');
+update public.ubicacion set lat = -34.95 where id = pg_temp.u('0d');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table pd as select sync.pull(array['ubicacion'], (select d -> 'watermark' from pc), 1000) as d;
+select is(pg_temp.filas(d), array['0e'], 'baja la edición de 0e') from pd;
+select ok(not (d ? 'out_of_area'),
+          'el tramo termina en 0e y cubre solo M1: al final del tramo 0d seguía adentro, todavía no se avisa') from pd;
+create temp table pe as select sync.pull(array['ubicacion'], (select d -> 'watermark' from pd), 1000) as d;
+select is(pg_temp.fuera(d), array['0d'], 'se avisa en el pull siguiente') from pe;
+create temp table pf as select sync.pull(array['ubicacion'], (select d -> 'watermark' from pe), 1000) as d;
+select ok(not (d ? 'out_of_area'), 'una sola vez') from pf;
+
+-- ---------------------------------------------------------------------------
 -- 6. Cambia el área: area_reset, sin lista
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select lives_ok($$ select public.asignar_zona(pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d2')) $$,
                 'el coordinador le pasa a b1 a Z2');
 select pg_temp.actuar_como(pg_temp.u('b1'));
-create temp table p7 as select sync.pull(array['ubicacion', 'espacio', 'house_status'], (select d -> 'watermark' from p6), 1000) as d;
+create temp table p7 as select sync.pull(array['ubicacion', 'espacio', 'house_status'], (select d -> 'watermark' from pf), 1000) as d;
 select is(d -> 'area_reset', '["ubicacion", "espacio", "house_status"]'::jsonb,
           'otra zona: area_reset con las tres entidades (lo que tenía y no vuelve a bajar quedó fuera)') from p7;
 select ok(not (d ? 'out_of_area'), 'y sin out_of_area: la entidad baja completa') from p7;
@@ -241,7 +292,7 @@ select is((select array_agg(lat::text) from sync.ubicacion_movida where ubicacio
 -- Limpieza (borrar la ubicación borra su registro de movimientos)
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
-drop table p1, p2, p3, p4, p5, p6, p7, p8, q1, q2, q3, r1;
+drop table p1, p2, p3, p4, p5, p6, pa, pb, pc, pd, pe, pf, p7, p8, q1, q2, q3, r1;
 delete from public.ubicacion where id::text like '01920000-0000-7000-8000-0000000019%';
 select is((select count(*)::int from sync.ubicacion_movida where ubicacion_id::text like '01920000-0000-7000-8000-0000000019%'),
           0, 'el registro se va con la ubicación');
