@@ -2,7 +2,7 @@
 
 Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
 
-**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS sin superposición, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
@@ -170,16 +170,17 @@ Una campaña abarca una o más ciudades (`campania_ciudad`) y cada ciudad se div
 select public.agregar_ciudad_a_campania(campania_id, ciudad_id);   -- «+ Agregar ciudad»
 select public.guardar_zona(campania_ciudad_id, nombre, tipo_forma, color, centro_lat, centro_lon,
                            radio_m, vertices, poligono_geojson, zona_id, vista_previa);
-select public.baja_zona(zona_id, vista_previa);
+select public.baja_zona(zona_id, vista_previa);                     -- «Eliminar zona»
+select public.quitar_zona(campania_id, usuario_id);                -- «Quitar» (0012)
 ```
 
 - **Quién.** El coordinador de la campaña o un ADMIN, y solo si la campaña no terminó. Nadie escribe estas tablas directo (ni el privilegio tiene `authenticated`).
-- **No superposición.** Dos zonas vivas de la misma `campania_ciudad` no comparten interior; sí la calle del borde (tolerancia: una franja de menos de 1 m de ancho no cuenta). Se valida con PostGIS en un trigger, así que vale para cualquier camino de escritura. `CZ007` trae en el DETAIL la geometría de la parte superpuesta.
+- **Superposición.** Las zonas se pueden superponer (S56, migración `0013`): no hay regla ni tolerancia, y nada se rechaza por tocar o cubrir parte de otra zona. El nombre sí es único entre las zonas vivas de la misma `campania_ciudad` (`CZ009`).
 - **Forma.** `RADIAL`: radio de 1 a 3000 m (hasta ahí el círculo de 128 lados queda a menos de 1 m del geodésico). `ESQUINAS`: al menos 3 esquinas en lugares distintos (a 1 m o menos cuentan como la misma), con `orden` entero, y el borde pasando a 1 m o menos de cada una. Todo lo demás, `CZ008`.
-- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono, las superposiciones y `ubicaciones_incluidas`, el «Incluye N ubicaciones» de la vista 24: las ubicaciones vivas de la ciudad que caen dentro de la forma, calculado en el momento con PostGIS. Al guardar devuelve lo mismo. `baja_zona()` devuelve las que incluía la zona. Guardar o dar de baja una zona no toca ninguna ubicación.
-- **Baja.** Lógica. Si la zona tiene colportores asignados se rechaza (`CZ010`) y dice a quiénes reasignar.
-- **Lectura.** El colportor ve las ciudades, zonas y esquinas de las campañas en las que está inscripto (todas las zonas, no solo la suya); el coordinador, las de sus campañas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull. Al crear o reactivar una inscripción, un trigger republica el mapa de esa campaña (UPDATE nulo que les sube el `xmin_w`): si no, un mapa cargado antes del último pull del inscripto quedaría detrás de su watermark y no le llegaría nunca.
-- **Códigos.** `CZ007`..`CZ013`: ver el header de la migración `0008`.
+- **Vista previa.** Con `vista_previa` no se guarda nada: devuelve el polígono y `ubicaciones_incluidas`, el «Incluye N ubicaciones» de la vista 24: las ubicaciones vivas de la ciudad que caen dentro de la forma, calculado en el momento con PostGIS. Al guardar devuelve lo mismo. `baja_zona()` devuelve las que incluía la zona. Guardar o dar de baja una zona no toca ninguna ubicación.
+- **Baja y «Quitar».** La baja es lógica. Los colportores asignados quedan sin zona y devuelve quiénes (`colportores_asignados`) y cuántos (`colportores_sin_zona`), también en la vista previa (`0012`). `quitar_zona()` deja sin zona a un colportor. `asignar_zona()` rechaza una cuenta suspendida (`CZ014`), que conserva la zona que tenía.
+- **Lectura.** El colportor ve las ciudades, zonas y esquinas de sus campañas **vigentes** (todas las zonas, no solo la suya; S56, `0013`): ni las de una terminada ni las de una futura, que le llega el día que empieza. El coordinador ve las de las campañas que coordina, terminadas incluidas; el ADMIN, todas. `campania_ciudad`, `zona` y `zona_vertice` viajan por el delta como pull, y su watermark lleva la huella de las campañas que ve (`sync.entidad.sigue_campanias`). Si cambian (empieza o termina una campaña, lo inscriben o lo reactivan), el mapa baja completo, también lo que se cargó antes de su último pull. El servidor no manda borrados: el mapa de una campaña terminada queda en el teléfono y la app decide si lo muestra.
+- **Códigos.** `CZ008`..`CZ014`: ver los headers de las migraciones `0008` y `0012`. `CZ007` (superposición) y `CZ010` (baja con asignados) ya no se usan.
 
 ### Qué ubicaciones baja cada colportor
 
