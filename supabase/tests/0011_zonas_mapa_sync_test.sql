@@ -1,4 +1,5 @@
--- pgTAP · migración 0008 — el mapa de la campaña en el delta (sync.pull).
+-- pgTAP · migraciones 0008 y 0013 — el mapa de la campaña en el delta (sync.pull): solo el de
+-- las campañas vigentes (S56), y completo cuando cambian las campañas que ve (huella).
 --
 -- Como 0004_sync_delta_test, NO va en una transacción: el delta solo sirve lo que quedó por
 -- debajo del horizonte del snapshot, así que las filas tienen que estar commiteadas. Limpia
@@ -108,8 +109,9 @@ select is(
   'el inscripto en otra campaña recibe solo las zonas de esa campaña');
 
 -- ---------------------------------------------------------------------------
--- 3. Inscribirlo en una campaña cuyo mapa se preparó antes de su último pull: esas filas
---    tienen un xmin_w menor que su watermark, y sin republicarlas el delta no las trae nunca.
+-- 3. Una campaña futura cuyo mapa se preparó antes de su último pull (0013, S56): no la ve
+--    hasta que empieza, y ese día el pull la trae completa aunque sus filas tengan un xmin_w
+--    menor que su watermark (cambió la huella de sus campañas).
 -- ---------------------------------------------------------------------------
 create or replace function pg_temp.como_servidor() returns void language plpgsql as $$
 begin
@@ -118,12 +120,25 @@ begin
   perform set_config('request.jwt.claim.sub', '', false);
 end $$;
 
+-- Los ids (o nombres, u órdenes) de una entidad en la respuesta de un pull, como texto.
+create or replace function pg_temp.col(p_delta jsonb, p_entidad text, p_col text) returns text[]
+language sql as $$
+  select coalesce(array_agg(e ->> p_col order by e ->> p_col), array[]::text[])
+    from jsonb_array_elements(coalesce(p_delta -> 'rows' -> p_entidad, '[]'::jsonb)) e;
+$$;
+
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
 create temp table delta_b1_antes as
 select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], '{}'::jsonb, 1000) as d;
 select ok(
   (select not jsonb_path_exists(d, '$.rows.zona[*] ? (@.nombre == "Futura sync")') from delta_b1_antes),
   'antes de inscribirse no recibe el mapa de la campaña futura');
+select is((select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_antes) is not null, true,
+          'el watermark del mapa lleva la huella de sus campañas');
+select is(
+  (select d -> 'rows' from (select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], d -> 'watermark', 1000) as d
+                              from delta_b1_antes) x),
+  '{}'::jsonb, 'sin cambios, el pull siguiente no trae nada (con la huella guardada no vuelve a bajar completo)');
 
 select pg_temp.como_servidor();
 insert into public.campania_colportor (campania_id, usuario_id) values
@@ -132,40 +147,78 @@ insert into public.campania_colportor (campania_id, usuario_id) values
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
 create temp table delta_b1_inscripto as
 select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], (select d -> 'watermark' from delta_b1_antes), 1000) as d;
+select is((select d -> 'rows' from delta_b1_inscripto), '{}'::jsonb,
+          'inscripto en una campaña futura, todavía no recibe su mapa (solo el de las vigentes, S56)');
+
+-- La campaña empieza.
+select pg_temp.como_servidor();
+update public.campania set fecha_inicio = current_date - 1 where id = '01920000-0000-7000-8000-0000000011e3';
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
+create temp table delta_b1_empieza as
+select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], (select d -> 'watermark' from delta_b1_inscripto), 1000) as d;
+select isnt((select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_empieza),
+            (select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_inscripto),
+            'cuando la campaña empieza, cambia la huella de sus campañas');
+select is(pg_temp.col(d, 'campania_ciudad', 'id'),
+          array['01920000-0000-7000-8000-0000000011f1', '01920000-0000-7000-8000-0000000011f3'],
+          'y el pull siguiente trae completo el mapa: la ciudad de la campaña que empezó (cargada antes) y la de Verano')
+  from delta_b1_empieza;
+select is(pg_temp.col(d, 'zona', 'nombre'), array['Esquinas sync', 'Futura sync', 'Radial sync'],
+          'con las zonas de las dos campañas') from delta_b1_empieza;
+select is(pg_temp.col(d, 'zona_vertice', 'id'),
+          array['01920000-0000-7000-8000-0000000011a1', '01920000-0000-7000-8000-0000000011a2', '01920000-0000-7000-8000-0000000011a3',
+                '01920000-0000-7000-8000-0000000011a4', '01920000-0000-7000-8000-0000000011a5', '01920000-0000-7000-8000-0000000011a6'],
+          'y sus esquinas') from delta_b1_empieza;
+
+-- Otro inscripto en Verano no vuelve a bajar nada: inscribir a b1 ya no republica el mapa.
+select pg_temp.como_servidor();
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at) values
+  ('01920000-0000-7000-8000-0000000011b3', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+   'mapa-sync-b3@example.com', 'x', now(), now());
+insert into public.campania_colportor (campania_id, usuario_id) values
+  ('01920000-0000-7000-8000-0000000011e1', '01920000-0000-7000-8000-0000000011b3');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b3');
+create temp table delta_b3 as
+select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], '{}'::jsonb, 1000) as d;
+select pg_temp.como_servidor();
+insert into public.campania_colportor (campania_id, usuario_id) values
+  ('01920000-0000-7000-8000-0000000011e1', '01920000-0000-7000-8000-0000000011b2');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b3');
 select is(
-  (select jsonb_path_query_array(d, '$.rows.campania_ciudad[*].id') from delta_b1_inscripto),
-  '["01920000-0000-7000-8000-0000000011f3"]'::jsonb,
-  'al inscribirlo, el delta siguiente le trae la ciudad de la campaña aunque se cargó antes');
-select is(
-  (select jsonb_path_query_array(d, '$.rows.zona[*].nombre') from delta_b1_inscripto),
-  '["Futura sync"]'::jsonb,
-  'al inscribirlo, el delta siguiente le trae las zonas de esa campaña (y nada más)');
-select is(
-  (select jsonb_path_query_array(d, '$.rows.zona_vertice[*].orden') from delta_b1_inscripto),
-  '[1, 2, 3]'::jsonb,
-  'al inscribirlo, el delta siguiente le trae las esquinas de esas zonas');
+  (select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], d -> 'watermark', 1000) -> 'rows' from delta_b3),
+  '{}'::jsonb, 'los demás inscriptos de la campaña no vuelven a bajar el mapa cuando se inscribe otro');
 
 -- Baja y reactivación de la inscripción (solo por el camino de servidor: con JWT, 0005 no
--- deja reactivar): al reactivarla, el mapa vuelve a salir en el delta.
+-- deja reactivar).
 select pg_temp.como_servidor();
 update public.campania_colportor set deleted_at = now()
  where campania_id = '01920000-0000-7000-8000-0000000011e3' and usuario_id = '01920000-0000-7000-8000-0000000011b1';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
 create temp table delta_b1_baja as
-select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], (select d -> 'watermark' from delta_b1_inscripto), 1000) as d;
-select is(
-  (select jsonb_path_query_array(d, '$.rows.zona[*].nombre') from delta_b1_baja),
-  '[]'::jsonb,
-  'la baja de la inscripción no republica el mapa');
+select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], (select d -> 'watermark' from delta_b1_empieza), 1000) as d;
+select ok(not (pg_temp.col(d, 'zona', 'nombre') @> array['Futura sync']),
+          'dada de baja la inscripción, el mapa de esa campaña deja de bajar (el que ya bajó queda: no hay borrados)')
+  from delta_b1_baja;
+select is(pg_temp.col(d, 'zona', 'nombre'), array['Esquinas sync', 'Radial sync'],
+          'cambió la huella: baja completo lo que sigue viendo (Verano)') from delta_b1_baja;
 select pg_temp.como_servidor();
 update public.campania_colportor set deleted_at = null
  where campania_id = '01920000-0000-7000-8000-0000000011e3' and usuario_id = '01920000-0000-7000-8000-0000000011b1';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
-select is(
-  (select jsonb_path_query_array(sync.pull(array['zona'], d -> 'watermark', 1000), '$.rows.zona[*].nombre')
-     from delta_b1_baja),
-  '["Futura sync"]'::jsonb,
-  'al reactivar la inscripción, el delta siguiente vuelve a traer el mapa de la campaña');
+create temp table delta_b1_reactiva as
+select sync.pull(array['zona'], (select d -> 'watermark' from delta_b1_baja), 1000) as d;
+select ok(pg_temp.col(d, 'zona', 'nombre') @> array['Futura sync'],
+          'al reactivar la inscripción, el pull siguiente vuelve a traer el mapa de la campaña') from delta_b1_reactiva;
+
+-- La campaña termina: su mapa deja de bajar.
+select pg_temp.como_servidor();
+update public.campania set fecha_inicio = current_date - 20, fecha_fin = current_date - 1
+ where id = '01920000-0000-7000-8000-0000000011e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
+select is(pg_temp.col(sync.pull(array['zona'], d -> 'watermark', 1000), 'zona', 'nombre'),
+          array['Esquinas sync', 'Radial sync'],
+          'terminada la campaña, su mapa deja de bajar (S56); baja completo lo que sigue viendo') from delta_b1_reactiva;
 
 -- ---------------------------------------------------------------------------
 -- Limpieza
@@ -174,7 +227,7 @@ reset role;
 select set_config('request.jwt.claims', '', false);
 select set_config('request.jwt.claim.sub', '', false);
 
-drop table delta_b1, delta_b1_antes, delta_b1_inscripto, delta_b1_baja;
+drop table delta_b1, delta_b1_antes, delta_b1_inscripto, delta_b1_empieza, delta_b3, delta_b1_baja, delta_b1_reactiva;
 delete from public.campania_colportor where campania_id in ('01920000-0000-7000-8000-0000000011e1', '01920000-0000-7000-8000-0000000011e2', '01920000-0000-7000-8000-0000000011e3');
 delete from public.zona_vertice where zona_id in ('01920000-0000-7000-8000-0000000011d1', '01920000-0000-7000-8000-0000000011d4');
 delete from public.zona where campania_ciudad_id in ('01920000-0000-7000-8000-0000000011f1', '01920000-0000-7000-8000-0000000011f2', '01920000-0000-7000-8000-0000000011f3');
@@ -182,6 +235,7 @@ delete from public.campania_ciudad where id in ('01920000-0000-7000-8000-0000000
 delete from public.campania where id in ('01920000-0000-7000-8000-0000000011e1', '01920000-0000-7000-8000-0000000011e2', '01920000-0000-7000-8000-0000000011e3');
 delete from public.ciudad where id = '01920000-0000-7000-8000-0000000011c1';
 delete from public.pais where id = '01920000-0000-7000-8000-0000000011c0';
-delete from auth.users where id in ('01920000-0000-7000-8000-0000000011b1', '01920000-0000-7000-8000-0000000011b2');
+delete from auth.users where id in ('01920000-0000-7000-8000-0000000011b1', '01920000-0000-7000-8000-0000000011b2',
+                                    '01920000-0000-7000-8000-0000000011b3');
 
 select * from finish();
