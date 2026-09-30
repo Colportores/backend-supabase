@@ -16,6 +16,17 @@
 -- UPDATE (tg_auditoria_update), así que «lo cargó él» no se puede fabricar. Para el espacio de otro
 -- que ya no se ve, todo sigue igual: FILA_INEXISTENTE (`invalid`).
 --
+-- Mover el espacio de casa. La rama created_by del WITH CHECK dejaría al autor reapuntar su espacio
+-- (ubicacion_id) a una casa de fuera de sus campañas, y el equipo de esa ciudad lo vería y lo
+-- bajaría con el pull 'ciudad'. Un WITH CHECK no ve la fila vieja, así que lo cierra un trigger
+-- BEFORE UPDATE: si cambia ubicacion_id, la casa de destino la tiene que poder escribir
+-- (puedo_escribir_en_ubicacion), igual que para insertar. Corregir otros campos no lo toca. Sin
+-- usuario autenticado (mantenimiento del servidor) no se exige.
+--
+-- Decisión pendiente de Cristian, sin tocar: un ex colportor (sin campaña vigente) sigue
+-- corrigiendo y dando de baja SUS espacios, y el equipo actual de la casa ve esos cambios. Lo
+-- documenta el test 0021.
+--
 -- Fuera de alcance. La venta del último día que sincroniza con la campaña ya terminada (la vigencia
 -- usa current_date en UTC) es una decisión pendiente de Cristian: no se toca acá.
 --
@@ -31,3 +42,26 @@ create policy espacio_por_ubicacion_update on public.espacio
          or public.puedo_escribir_en_ubicacion(ubicacion_id))
   with check (created_by = (select auth.uid())
               or public.puedo_escribir_en_ubicacion(ubicacion_id));
+
+create function public.tg_espacio_no_mover_a_casa_ajena()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if (select auth.uid()) is not null
+     and not public.puedo_escribir_en_ubicacion(new.ubicacion_id) then
+    raise exception 'No podés mover el espacio a una casa de fuera de tus campañas. Dejalo en su casa o pedile a un coordinador que lo corrija.'
+      using errcode = 'insufficient_privilege';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.tg_espacio_no_mover_a_casa_ajena() from public, anon, authenticated;
+
+create trigger espacio_no_mover_a_casa_ajena
+  before update of ubicacion_id on public.espacio
+  for each row
+  when (old.ubicacion_id is distinct from new.ubicacion_id)
+  execute function public.tg_espacio_no_mover_a_casa_ajena();

@@ -97,5 +97,37 @@ select pg_temp.actuar_como_servidor();
 select is((select piso from public.espacio where id = '01920000-0000-7000-8000-000000002112'), null,
           'el espacio de b2 quedó como estaba (ni b1 ni b3 lo tocaron por UPDATE directo)');
 
+-- Mover el propio a una casa de fuera de sus campañas: rechazado (push y UPDATE directo), aunque
+-- lo haya cargado él. u2 está en otra ciudad (sin campaña de b1 ni de b2).
+select pg_temp.actuar_como_servidor();
+insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000021c2', 'Pais espprop 2', 'ZR');
+insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
+values ('01920000-0000-7000-8000-0000000021c3', 'Ciudad espprop 2', '01920000-0000-7000-8000-0000000021c2', -30.0, -51.0);
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
+values ('01920000-0000-7000-8000-000000002102', 'CASA', 'Lejos', '2', -30.0, -51.0, '01920000-0000-7000-8000-0000000021c3');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000021b1');
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', '{"id": "01920000-0000-7000-8000-000000002111",
+                                               "ubicacion_id": "01920000-0000-7000-8000-000000002102"}', 1)))),
+          array['invalid 42501'], 'el autor no mueve su espacio a una casa de fuera de sus campañas (push)');
+select throws_ok($q$update public.espacio set ubicacion_id = '01920000-0000-7000-8000-000000002102'
+                      where id = '01920000-0000-7000-8000-000000002111'$q$,
+                 '42501', null, 'ni por UPDATE directo');
+select pg_temp.actuar_como_servidor();
+select is((select ubicacion_id from public.espacio where id = '01920000-0000-7000-8000-000000002111'),
+          '01920000-0000-7000-8000-000000002101'::uuid, 'el espacio sigue en su casa');
+
+-- Comportamiento actual, pendiente de decisión de Cristian: b3 fue colportor (campaña terminada)
+-- y sigue corrigiendo lo que cargó; lo ve el equipo actual.
+insert into public.campania_colportor (campania_id, usuario_id, zona_id)
+values ('01920000-0000-7000-8000-0000000021e1', '01920000-0000-7000-8000-0000000021b3', null);
+insert into public.espacio (id, ubicacion_id, numero_depto, created_by)
+values ('01920000-0000-7000-8000-000000002114', '01920000-0000-7000-8000-000000002101', '4', '01920000-0000-7000-8000-0000000021b3');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000021b3');
+update public.espacio set piso = '5' where id = '01920000-0000-7000-8000-000000002114';
+select pg_temp.actuar_como_servidor();
+select is((select piso from public.espacio where id = '01920000-0000-7000-8000-000000002114'), '5',
+          'DOCUMENTA el comportamiento actual: un ex colportor (campaña terminada) sigue corrigiendo su espacio (decisión pendiente de Cristian)');
+
 select * from finish();
 rollback;
