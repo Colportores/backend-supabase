@@ -138,7 +138,7 @@ select ok(not has_function_privilege('authenticated', f, 'execute'), 'authentica
   from unnest(array[
     'public.zona_superposiciones(uuid,jsonb,uuid)', 'public.motivo_mapa_de_campania(uuid)',
     'public.lanzar_motivo_mapa(text)', 'public.bloquear_mapa(uuid)',
-    'public.zona_ubicaciones_que_cambian(uuid,uuid,jsonb)']) f;
+    'public.zona_ubicaciones_incluidas(uuid,jsonb)']) f;
 select is((select array_agg(p.proname::text order by p.proname) from pg_proc p
             where p.pronamespace = 'public'::regnamespace
               and p.proname in ('guardar_zona', 'baja_zona', 'agregar_ciudad_a_campania')
@@ -359,14 +359,14 @@ select is(
      -> 'superposiciones' -> 0 -> 'interseccion' ->> 'type'),
   'Polygon', 'el DETAIL trae la geometría de la parte superpuesta (para marcarla en rojo)');
 
--- La vista previa no guarda: devuelve las superposiciones y el punto de extensión de #24.
+-- La vista previa no guarda: devuelve las superposiciones y cuántas ubicaciones incluye.
 create temp table previa on commit drop as
 select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90,
                             p_previa => true) as p;
 select is((select p ->> 'guardada' from previa), 'false', 'vista previa: no guarda');
 select is((select jsonb_array_length(p -> 'superposiciones') from previa), 2, 'vista previa: devuelve las 2 superposiciones');
-select is((select p -> 'ubicaciones_que_cambian' from previa), '0'::jsonb,
-          'vista previa: ubicaciones_que_cambian (0: no hay ubicaciones; el conteo lo prueba 0013)');
+select is((select p -> 'ubicaciones_incluidas' from previa), '0'::jsonb,
+          'vista previa: ubicaciones_incluidas (0: no hay ubicaciones; el conteo lo prueba 0013)');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.zona where nombre = 'Zona C'), 0::bigint, 'vista previa: Zona C no existe');
 

@@ -151,7 +151,7 @@ select is(
 
 select ok(has_function_privilege('authenticated', 'sync.push(jsonb,uuid)', 'execute'),
           'authenticated puede llamar a sync.push');
-select ok(has_function_privilege('authenticated', 'sync.pull(text[],jsonb,integer,uuid)', 'execute'),
+select ok(has_function_privilege('authenticated', 'sync.pull(text[],jsonb,integer,uuid,text)', 'execute'),
           'authenticated puede llamar a sync.pull');
 select ok(not has_function_privilege('authenticated', 'sync.purgar_cache(interval)', 'execute'),
           'authenticated NO puede correr la purga (es SECURITY DEFINER, la corre pg_cron)');
