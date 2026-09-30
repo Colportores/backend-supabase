@@ -358,7 +358,7 @@ create table public.ubicacion (
   sync_version  bigint not null default 0
 );
 comment on table public.ubicacion is
-  'Casa del territorio, con su dirección. Sin datos de persona (ADR-004). Compartida por zona: '
+  'Casa del territorio, con su dirección. Sin datos de persona (ADR-018). Compartida por zona: '
   'al rotar el colportor, quien toma la zona recibe las casas ya trabajadas con su estado.';
 
 -- Índice de deduplicación: NO es único. RF-UB08/R-UB08 definen la dedup como una advertencia del
@@ -384,8 +384,8 @@ create table public.espacio (
   sync_version  bigint not null default 0
 );
 comment on column public.espacio.numero_depto is
-  'Va al cloud siempre. ADR-004 descartó propagarlo solo con operaciones financieras: va con '
-  'la casa, igual que calle/numero.';
+  'Va al cloud siempre. ADR-012 lo propagaba solo con operaciones financieras; ADR-018 eliminó '
+  'esa política diferenciada junto con la de calle/numero.';
 create index espacio_ubicacion_idx on public.espacio (ubicacion_id);
 create index espacio_created_by_idx on public.espacio (created_by);
 
@@ -651,7 +651,7 @@ as $$
     where ur.usuario_id = auth.uid()
       and r.codigo = p_codigo
       and ur.deleted_at is null
-      -- La baja administrativa (ADR-005) revoca las sesiones, pero eso pasa fuera de esta base.
+      -- La baja administrativa (ADR-011) revoca las sesiones, pero eso pasa fuera de esta base.
       -- Si la revocación falla o llega tarde, el rol tiene que caerse igual acá.
       and u.deleted_at is null
       and r.deleted_at is null

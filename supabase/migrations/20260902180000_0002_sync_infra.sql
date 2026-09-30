@@ -117,7 +117,7 @@ comment on function public.tg_auditoria_update() is
 create schema sync;
 
 comment on schema sync is
-  'Maquinaria de sincronización (ADR-008). No se expone en la Data API: config.toml '
+  'Maquinaria de sincronización (ADR-017 §4). No se expone en la Data API: config.toml '
   'lista solo public y graphql_public. Se llega por los RPC, con el JWT del usuario.';
 
 -- El registro es una tabla y no una lista en el código a propósito: el RPC es
@@ -364,7 +364,7 @@ exception
   -- cliente mandó algo que no le corresponde escribir.
   --
   -- Los tres son INVALID: visibles, corregibles con requeue(), sin reintento
-  -- automático (contrato §5.1, ADR-007). Y ninguno puede tumbar a los demás jobs
+  -- automático (contrato §5.1, ADR-013). Y ninguno puede tumbar a los demás jobs
   -- del lote: sin esto un solo job venenoso hace fallar el push entero, el motor
   -- lo clasifica como 5xx transitorio y lo reintenta para siempre — la cola del
   -- colportor queda bloqueada y ninguna venta vuelve a subir.
