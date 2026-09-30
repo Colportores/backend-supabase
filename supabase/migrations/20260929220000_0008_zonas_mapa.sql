@@ -609,7 +609,7 @@ create trigger zona_mapa before insert or update on public.zona
 
 -- Las filas de campania_ciudad que ve el usuario autenticado: las de las campañas que
 -- coordina y las de las campañas en las que tiene una inscripción viva (vigente o no). Sin
--- el ADMIN, que las políticas suman aparte. Un usuario dado de baja no ve nada (ADR-011).
+-- el ADMIN, que las políticas suman aparte. Un usuario dado de baja no ve nada (ADR-005).
 create function public.mis_campania_ciudades()
 returns setof uuid
 language sql

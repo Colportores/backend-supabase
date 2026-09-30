@@ -575,7 +575,7 @@ select is((select array_agg(nombre order by nombre) from public.zona), array['Zo
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010ad');
 select ok((select count(*) >= 7 from public.zona), 'el ADMIN ve las zonas de todas las campañas');
 
--- Un usuario dado de baja pierde el mapa (ADR-011).
+-- Un usuario dado de baja pierde el mapa (ADR-005).
 select pg_temp.actuar_como_servidor();
 update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000010b1';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010b1');

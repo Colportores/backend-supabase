@@ -1,16 +1,16 @@
 # backend-supabase
 
-Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
+Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-012](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-012-backend-supabase-sa-east-1.md)).
 
-**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS sin superposición, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-008](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-008-sync-engine-paquete-dart.md)); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS sin superposición, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
 Parte del sistema [Colportaje App](https://github.com/Colportores). El modelo de datos, la arquitectura y las decisiones viven en la [documentación de la organización](https://github.com/Colportores/docs-organizacion) — en particular [`esquema-datos.md`](https://github.com/Colportores/docs-organizacion/blob/main/docs/esquema-datos.md) y el [contrato de sync](https://github.com/Colportores/docs-organizacion/blob/main/docs/contrato-sync-engine.md) §2, que fija qué entidades viven acá.
 
-- **La RLS es la autoridad de permisos** de todo el sistema. Los BFF reenvían el JWT del usuario; no deciden nada por su cuenta ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)).
+- **La RLS es la autoridad de permisos** de todo el sistema. Los BFF reenvían el JWT del usuario; no deciden nada por su cuenta ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-un-bff-por-aplicacion-en-workers.md)).
 - La lógica de dominio que toca varias tablas vive en **RPCs de Postgres**, no en los BFF.
-- Push FCM vía Edge Functions ([ADR-005](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-005-notificaciones.md)).
+- Push FCM vía Edge Functions ([ADR-014](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-014-push-con-fcm-desde-edge-functions.md)).
 
 ## Reglas del esquema
 
@@ -72,7 +72,7 @@ supabase/
 │                        0014 alcance del pull
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
-└── functions/         ← Edge Functions Deno (llegan con ADR-005)
+└── functions/         ← Edge Functions Deno (llegan con ADR-014)
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
 scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench
 ```
@@ -105,7 +105,7 @@ También se puede disparar a mano contra cualquier environment desde la pestaña
 
 ## Infraestructura de sincronización
 
-Lo que ADR-017 §4 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
+Lo que ADR-008 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
 
 ```sql
 select sync.push(jobs, device_id);                       -- ingesta batch
@@ -115,7 +115,7 @@ select sync.estado();                                    -- telemetría del colp
 
 Tres cosas que conviene saber antes de tocarlo:
 
-**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por ciudad (`mis_ciudades_de_trabajo()`, que no es una igualdad) y los catálogos globales.
+**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-un-bff-por-aplicacion-en-workers.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por ciudad (`mis_ciudades_de_trabajo()`, que no es una igualdad) y los catálogos globales.
 
 **El cursor del delta es el xid de la transacción, no el reloj.** `updated_at` se llena con `now()`, que es la hora de *inicio* de transacción: dos escritores concurrentes commitean en un orden que no tiene por qué coincidir con el de sus timestamps, y la fila que commiteó tarde queda detrás de un watermark que ya avanzó — subida, guardada y jamás entregada. Se ordena por `(xmin_w, id)` y se sirve solo lo que está por debajo de `pg_snapshot_xmin(pg_current_snapshot())`. El diagnóstico y el arreglo son de @BrunoFCapri.
 
