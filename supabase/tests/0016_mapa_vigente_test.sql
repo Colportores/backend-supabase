@@ -1,5 +1,6 @@
--- pgTAP · migración 0013 (backend-supabase#39, S56): el colportor ve solo el mapa de sus
--- campañas vigentes; el coordinador, el de las que coordina (terminadas incluidas); y ya no
+-- pgTAP · migración 0013 (backend-supabase#39, S56): el colportor ve el mapa de sus campañas
+-- en curso o por empezar (decisión del 30/09), no el de las terminadas; el coordinador, el de las
+-- que coordina (terminadas incluidas); y ya no
 -- hay regla de superposición. Lo que baja en el delta (necesita filas commiteadas) lo prueba
 -- 0011_zonas_mapa_sync; las zonas superpuestas por los RPC, 0010.
 begin;
@@ -95,7 +96,7 @@ select ok(has_function_privilege('authenticated', 'sync.huella_del_mapa()', 'exe
 select ok(not has_function_privilege('anon', 'public.mis_campanias_del_mapa()', 'execute'), 'anon no');
 
 -- ---------------------------------------------------------------------------
--- 2. El colportor: solo el mapa de sus campañas vigentes
+-- 2. El colportor: el mapa de sus campañas en curso o por empezar, no el de las terminadas
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b1');
 select results_eq($$ select * from public.mis_campanias_del_mapa() $$,
@@ -111,13 +112,34 @@ select is(pg_temp.zonas(), array[]::text[], 'b2 (solo Terminada) no ve ninguna z
 select is(pg_temp.ciudades_de_campania(), array[]::uuid[], 'ni ciudades de campaña');
 select is(pg_temp.esquinas(), 0::bigint, 'ni esquinas');
 
+-- Decisión del 30/09: el mapa de una campaña por empezar se baja antes del primer día.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
-select is(pg_temp.zonas(), array[]::text[], 'b3 (solo Futura) tampoco: le llega cuando empieza');
+select results_eq($$ select * from public.mis_campanias_del_mapa() $$,
+                  $$ values ('01920000-0000-7000-8000-0000000016e3'::uuid) $$,
+                  'b3 (solo Futura): la campaña por empezar');
+select is(pg_temp.zonas(), array['M16 Futura'], 'b3 ve la zona de la campaña por empezar');
+select is(pg_temp.ciudades_de_campania(), array['01920000-0000-7000-8000-0000000016f3']::uuid[],
+          'y su ciudad');
+create temp table huella_b3 on commit drop as select sync.huella_del_mapa() as h;
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date where id = '01920000-0000-7000-8000-0000000016e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select is(sync.huella_del_mapa(), (select h from huella_b3),
+          'cuando la campaña empieza, su huella no cambia: el mapa ya había bajado');
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date - 1, fecha_fin = current_date - 1
+ where id = '01920000-0000-7000-8000-0000000016e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select is(pg_temp.zonas(), array[]::text[], 'terminada, b3 deja de ver su mapa');
+select isnt(sync.huella_del_mapa(), (select h from huella_b3), 'y cambia su huella');
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date + 30, fecha_fin = current_date + 90
+ where id = '01920000-0000-7000-8000-0000000016e3';
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b4');
 select is(pg_temp.zonas(), array[]::text[], 'b4 (inscripción dada de baja) no ve nada');
 
--- La huella cambia cuando cambian sus campañas vigentes.
+-- La huella cambia cuando termina una de sus campañas.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b1');
 create temp table huella_b1 on commit drop as select sync.huella_del_mapa() as h;
 select pg_temp.actuar_como_servidor();
