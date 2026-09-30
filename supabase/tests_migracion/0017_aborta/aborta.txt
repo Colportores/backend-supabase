@@ -1,0 +1,11 @@
+La migración 0017 (dirección única a menos de 100 m) no se aplicó
+No se cambió nada
+Av. Itália 100 (01920000-0000-7000-8000-0000000097a2, registrada por nadie el 02/09/2026)
+de Av. Italia 100 (01920000-0000-7000-8000-0000000097a1), con la misma dirección, y tiene personas en sus espacios.
+rivera 9 (01920000-0000-7000-8000-0000000097a4
+(01920000-0000-7000-8000-0000000097a3), con la misma dirección, y tiene estado en el mapa.
+(01920000-0000-7000-8000-0000000097a5), con la misma dirección, y tiene departamentos o espacios cargados.
+(01920000-0000-7000-8000-0000000097a9), con la misma dirección, y tiene cobranzas o agendas que la usan como dirección alternativa.
+marcala como duplicado de la otra desde la app (vista 10, «Posibles duplicados»
+Además, 1 duplicada(s) sin nada colgado se van a dar de baja solas al volver a aplicar.
+Resolvé cada ubicación de la lista y volvé a aplicar la migración.
