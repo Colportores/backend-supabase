@@ -57,7 +57,8 @@
 --     PENDIENTE_ASIGNACION, de la más nueva a la más vieja (created_at desc, id desc como
 --     desempate estable).
 --   · con texto: hasta 10 cuentas cuyo nombre completo («nombre apellido») o email CONTIENE el
---     texto, sin distinguir mayúsculas ni tildes («martinez» encuentra «Martínez»). El texto se
+--     texto, sin distinguir mayúsculas ni tildes («martinez» encuentra «Martínez», también con
+--     la tilde combinada, NFD). El texto se
 --     busca literal (strpos, no LIKE: un «%» o un «_» no son comodines). Orden: primero las que
 --     EMPIEZAN con el texto (el nombre completo, el apellido o el email), después por nombre
 --     completo normalizado con collate "C" (palabra por palabra: «ana martinez» antes que
@@ -213,8 +214,10 @@ comment on function public.colportores_de_campania(uuid) is
 -- 4. buscar_candidatos()
 -- ----------------------------------------------------------------------------
 
--- Minúsculas, sin tildes y con los espacios colapsados; null si queda vacío. translate() antes
--- de lower() para no depender del locale de la base con las mayúsculas acentuadas. Interna.
+-- Minúsculas, sin tildes y con los espacios colapsados; null si queda vacío. normalize(NFC)
+-- primero: una tilde combinada (NFD, «i» + U+0301, como la mandan algunos teclados o el copiar y
+-- pegar) pasa a la letra con tilde, que translate() sí conoce. translate() antes de lower() para
+-- no depender del locale de la base con las mayúsculas acentuadas. Interna.
 create function public.normalizar_busqueda(p_texto text)
 returns text
 language sql
@@ -222,7 +225,7 @@ immutable
 set search_path = ''
 as $$
   select nullif(btrim(regexp_replace(
-           lower(translate(coalesce(p_texto, ''),
+           lower(translate(normalize(coalesce(p_texto, ''), NFC),
                            'ÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÕÚÙÜÛÑÇáàäâãéèëêíìïîóòöôõúùüûñç',
                            'AAAAAEEEEIIIIOOOOOUUUUNCaaaaaeeeeiiiiooooouuuunc')),
            '\s+', ' ', 'g')), '');

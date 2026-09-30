@@ -37,7 +37,7 @@ $$;
 --   bd Ignacio Núñez       pendiente                                   +5 (empate con be)
 --   be Melina Vázquez      pendiente                                   +5
 --   bc Laura Suárez        pendiente, inscripta en Borrada             +3
---   bf Sofía Pérez         pendiente                                   +2
+--   bf Sofía Pérez         pendiente, con la tilde guardada en NFD     +2
 --   b0 Adriana Luz         pendiente                                   +1
 --   b3 Mariana Olivera     suspendida                                  +20
 --   b4 Rodrigo Silva       en Otoño Norte (vigente)                    +20
@@ -72,7 +72,7 @@ select pg_temp.u(x.s), '00000000-0000-0000-0000-000000000000', 'authenticated', 
     ('bc', 'laura@correo.uy', 'Laura', 'Suárez'),
     ('bd', 'inunez@correo.uy', 'Ignacio', 'Núñez'),
     ('be', 'mvazquez@correo.uy', 'Melina', 'Vázquez'),
-    ('bf', 'sperez@correo.uy', 'Sofía', 'Pérez')) x(s, email, n, a);
+    ('bf', 'sperez@correo.uy', U&'Sofi\0301a', 'Pérez')) x(s, email, n, a);  -- «Sofía» con la tilde combinada (NFD)
 
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
@@ -259,6 +259,12 @@ select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('
                   $$ values (pg_temp.u('bd')) $$, '«nunez» encuentra a Núñez');
 select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'Suárez') $$,
                   $$ values (pg_temp.u('bc')) $$, 'con tilde en el texto también');
+select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), U&'MARTI\0301NEZ') $$,
+                  $$ values (pg_temp.u('b1')) $$, 'el texto con la tilde combinada (NFD) encuentra a Martínez');
+select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'sofía') $$,
+                  $$ values (pg_temp.u('bf')) $$, 'y un nombre guardado en NFD se encuentra con «sofía» y con…');
+select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'sofia') $$,
+                  $$ values (pg_temp.u('bf')) $$, '…«sofia»');
 select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'RBARRIOS@') $$,
                   $$ values (pg_temp.u('b5')) $$, 'por email, sin mayúsculas');
 select is_empty($$ select * from public.buscar_candidatos(pg_temp.u('e1'), '%') $$,
