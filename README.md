@@ -1,16 +1,16 @@
 # backend-supabase
 
-Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-002](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-002-proveedor-cloud.md)).
+Backend del ecosistema Colportaje sobre Supabase: schema, migraciones, RLS, RPCs, Edge Functions y seed. Región **sa-east-1** ([ADR-012](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-012-backend-supabase-sa-east-1.md)).
 
-**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-017](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-017-sync-engine-paquete.md) §4); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
+**Estado: esquema inicial + infra de sync** — migración `0001` con todas las tablas V1 del cloud y RLS con políticas base; migración `0002` con el RPC de ingesta batch, el cache de `client_op_id` y el delta pull ([ADR-008](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-008-sync-engine-paquete-dart.md)); migración `0004` con el estado de la cuenta (`estado_cuenta()`, HU-AUTH-008); migración `0005` con la inscripción en campaña (`inscribir_colportor()`, HU-CAM-004); migración `0006` con la zona del colportor (`asignar_zona()`, HU-CAM-006); migración `0007` con las lecturas del panel; migración `0008` con el mapa de la campaña (ciudades, zonas RADIAL/ESQUINAS, PostGIS). Las políticas se refinan HU por HU desde Sprint 3.
 
 ## Contexto
 
 Parte del sistema [Colportaje App](https://github.com/Colportores). El modelo de datos, la arquitectura y las decisiones viven en la [documentación de la organización](https://github.com/Colportores/docs-organizacion) — en particular [`esquema-datos.md`](https://github.com/Colportores/docs-organizacion/blob/main/docs/esquema-datos.md) y el [contrato de sync](https://github.com/Colportores/docs-organizacion/blob/main/docs/contrato-sync-engine.md) §2, que fija qué entidades viven acá.
 
-- **La RLS es la autoridad de permisos** de todo el sistema. Los BFF reenvían el JWT del usuario; no deciden nada por su cuenta ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)).
+- **La RLS es la autoridad de permisos** de todo el sistema. Los BFF reenvían el JWT del usuario; no deciden nada por su cuenta ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-un-bff-por-aplicacion-en-workers.md)).
 - La lógica de dominio que toca varias tablas vive en **RPCs de Postgres**, no en los BFF.
-- Push FCM vía Edge Functions ([ADR-005](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-005-notificaciones.md)).
+- Push FCM vía Edge Functions ([ADR-014](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-014-push-con-fcm-desde-edge-functions.md)).
 
 ## Reglas del esquema
 
@@ -72,7 +72,7 @@ supabase/
 │                        0014 alcance del pull
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
-└── functions/         ← Edge Functions Deno (llegan con ADR-005)
+└── functions/         ← Edge Functions Deno (llegan con ADR-014)
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
 scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench
 ```
@@ -105,7 +105,7 @@ También se puede disparar a mano contra cualquier environment desde la pestaña
 
 ## Infraestructura de sincronización
 
-Lo que ADR-017 §4 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
+Lo que ADR-008 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
 
 ```sql
 select sync.push(jobs, device_id);                       -- ingesta batch
@@ -115,7 +115,7 @@ select sync.estado();                                    -- telemetría del colp
 
 Tres cosas que conviene saber antes de tocarlo:
 
-**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-016](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-016-bff-por-aplicacion.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por ciudad (`mis_ciudades_de_trabajo()`, que no es una igualdad) y los catálogos globales.
+**La RLS es la autoridad de permisos, también en el push.** Los RPC son `SECURITY INVOKER` y no reciben el usuario por parámetro: lo sacan de `auth.uid()`. El BFF reenvía el JWT y no decide nada ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-un-bff-por-aplicacion-en-workers.md)). Por eso no hay filtro manual por columna de dueño — un `select` dentro de estas funciones ya devuelve solo lo que el usuario puede ver, y eso cubre los tres casos que un filtro por columna no cubría: `venta_item`/`entrega`/`cobranza` (sin columna propia, heredan el permiso vía `venta`), las tablas compartidas por ciudad (`mis_ciudades_de_trabajo()`, que no es una igualdad) y los catálogos globales.
 
 **El cursor del delta es el xid de la transacción, no el reloj.** `updated_at` se llena con `now()`, que es la hora de *inicio* de transacción: dos escritores concurrentes commitean en un orden que no tiene por qué coincidir con el de sus timestamps, y la fila que commiteó tarde queda detrás de un watermark que ya avanzó — subida, guardada y jamás entregada. Se ordena por `(xmin_w, id)` y se sirve solo lo que está por debajo de `pg_snapshot_xmin(pg_current_snapshot())`. El diagnóstico y el arreglo son de @BrunoFCapri.
 
@@ -186,11 +186,12 @@ select public.quitar_zona(campania_id, usuario_id);                -- «Quitar»
 
 Desde la migración `0011` (backend-supabase#32, decisión D2 del 29/09) la zona es una guía visual: **las ubicaciones no guardan zona ni campaña** (`ubicacion.zona_id` y `house_status.zona_id`, de `0010`, ya no existen). La zona decide qué casas bajan al teléfono, y eso se calcula al descargar (HU-SYNC-011).
 
-- **Quién ve qué.** El colportor ve y corrige las ubicaciones de las ciudades de sus campañas vigentes (`mis_ciudades_de_trabajo()`) y las que registró él; registra en cualquier lado (R-CM04). El coordinador y el ADMIN las ven todas. `espacio` y `house_status` siguen a su ubicación.
+- **Quién ve qué.** El colportor ve las ubicaciones de su ciudad de trabajo (`mis_ciudades_de_trabajo()`: la de su zona asignada; sin zona, todas las de sus campañas vigentes, S55) y las que registró él; registra en cualquier lado (R-CM04). El coordinador y el ADMIN las ven todas. `espacio` y `house_status` siguen a su ubicación, y también los ve quien los cargó.
+- **Quién escribe dónde.** La zona acota solo la lectura (decisión de Cristian del 30/09, #36): el colportor corrige ubicaciones y carga espacios y estados en todas las ciudades de sus campañas vigentes, tenga zona o no (`mis_ciudades_de_campania()`, `puedo_escribir_en_ubicacion()`). Lo que cargó sin señal en una casa de otra ciudad de su campaña sube aunque después le asignen una zona en otra ciudad: el espacio, y colgando de él la persona, la visita y la venta. Lo que sigue sin subir es la corrección de una fila que la lectura ya no le deja ver (el push la lee antes: `FILA_INEXISTENTE`, sin borrar nada del teléfono).
 - **Qué baja.** `sync.pull(..., alcance)`: con `'zona'` (el default), las que registró él más las que caen en el polígono de su zona asignada (`ST_Covers`, borde incluido, misma ciudad); sin zona, solo las propias. Con `'ciudad'`, todas las de sus ciudades más las propias. Con cada ubicación bajan sus espacios y su estado, también las bajas (su tombstone). `sync.entidad.columna_ubicacion` marca qué entidades bajan así.
 - **Área completa.** El watermark de esas entidades lleva la huella del área. Si le asignan otra zona, se la redibujan, cambia de alcance o empieza o termina una campaña, la huella cambia y la entidad baja completa, también lo que se cargó antes de su último pull. Cambiarle el nombre o el color a la zona no cambia nada.
 - **Una casa que se mueve.** Si cambia la posición o la ciudad de una ubicación, sus espacios y su estado se republican, y le llegan a quien la empieza a tener en su área. Republicar sube solo `xmin_w`, no `sync_version` ni `updated_at` (la GUC local `colportores.republicar` en `tg_auditoria_update`): así no vuelve `conflict` lo que un teléfono tenga pendiente sobre esas filas. `house_status.lat`/`lon` (el pin) los pone el servidor con la posición de la casa; el push los descarta.
-- **Pendientes (supuestos de HU-SYNC-011).** S60: sin alcance baja `'zona'`, lo mismo que antes. S55: «la ciudad» son todas las de sus campañas vigentes, tenga zona o no (provisorio). S54: el servidor ya soporta cambiar de alcance; las casas que quedan afuera no se borran.
+- **Supuestos de HU-SYNC-011 (decididos el 30/09).** S60: sin alcance baja `'zona'`. S55: «la ciudad» es la de su zona asignada; sin zona, todas las de sus campañas vigentes; acota lo que baja y lo que ve, no dónde escribe. S54: se puede cambiar de alcance; las casas que quedan afuera no se borran.
 - **Posible duplicado** (aviso, no bloqueo). `posibles_duplicados_de_ubicacion(ciudad_id, calle, numero, lat, lon, excluir_id)` devuelve las ubicaciones visibles con la misma dirección normalizada (trim y minúsculas) o a menos de 5 m.
 - **Dirección única (D1).** Decidida el 29/09 (misma dirección a menos de 100 m): la implementa backend-supabase#34.
 
