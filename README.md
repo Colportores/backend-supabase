@@ -177,6 +177,7 @@ Desde la migración `0009`, la inscripción es el **único** lugar donde vive la
 - **Qué reglas.** Campaña vigente; colportor con inscripción viva en esa campaña; zona viva de una ciudad de esa campaña (desde `0008`: `CZ006` si es de otra campaña, `CZ005` si su ciudad se quitó de la campaña). Los códigos son `CZ001`..`CZ006`: ver el header de las migraciones `0006` y `0008`.
 - **Un solo camino.** Es el único camino para cambiar `zona_id` con JWT: un trigger rechaza el UPDATE directo de esa columna, incluso del ADMIN.
 - **Con quién comparte el permiso.** El chequeo de permiso y campaña vigente (`motivo_campania_del_coordinador()`) es el mismo que usa `inscribir_colportor()`.
+- **Historial de zonas** (`0022`, decisión del 02/10). `campania_colportor.zona_id` sigue siendo la zona actual; además `campania_colportor_zona_historial` guarda un tramo por zona (`desde`, `hasta`, quién la asignó en `created_by` y quién la cerró en `cerrada_por`), para auditoría. Lo llena solo un trigger de `campania_colportor`, al asignar, cambiar, quitar o dar de baja la zona; no hay nada que llamar. El tramo vigente tiene `hasta` en `null`. Los tramos que ya existían al activarlo van con `inicial = true`: su `desde` es el de la migración, no el de la asignación real. Lo leen el ADMIN y el coordinador de la campaña (`select … from campania_colportor_zona_historial where campania_colportor_id = …`); nadie lo escribe directo y no baja al teléfono (no va por el pull ni por el push).
 
 ## Mapa de la campaña
 
