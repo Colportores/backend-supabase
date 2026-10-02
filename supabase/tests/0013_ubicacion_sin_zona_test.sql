@@ -462,11 +462,11 @@ select is(
      '01920000-0000-7000-8000-0000000013c1', '  AV. ITALIA ', '2000 ', -34.80, -56.10)),
   array['01920000-0000-7000-8000-000000001320 true'],
   'la misma dirección con mayúsculas y espacios distintos, lejos → aparece como misma dirección');
--- D1 (backend-supabase#34) todavía no está: hoy no hay único, así que se guarda (con el aviso).
+-- D1 (0017, backend-supabase#34) solo bloquea a menos de 100 m: esta está lejos, se guarda (con el aviso).
 select lives_ok(
   $$ insert into public.ubicacion (tipo, calle, numero, lat, lon, ciudad_id)
      values ('CASA', 'av. italia', ' 2000', -34.80, -56.10, '01920000-0000-7000-8000-0000000013c1') $$,
-  'la misma dirección se guarda mientras falte D1 (el aviso no bloquea)');
+  'la misma dirección lejos se guarda (el aviso no bloquea; D1 es solo a menos de 100 m)');
 
 select * from finish();
 rollback;

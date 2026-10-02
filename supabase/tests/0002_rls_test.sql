@@ -118,13 +118,21 @@ select lives_ok(
 select ok(exists (select 1 from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f6'),
           'Beto ve su propia ubicación');
 
--- RF-UB08 es una advertencia del cliente, no un constraint: "crear igual con justificación" es una
--- salida deliberada de la HU y el cloud no puede rechazarla.
-select lives_ok(
+-- RF-UB08 con D1 (0017, backend-supabase#34): la misma dirección a menos de 100 m de otra viva se
+-- rechaza, aunque la otra sea de Ana; a 100 m o más se acepta (el resto del aviso de duplicado
+-- sigue siendo del cliente). Detalle en 0020_direccion_unica_test.
+select throws_ok(
   $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f7', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.18,
              '01920000-0000-7000-8000-0000000000c1') $$,
-  'una dirección duplicada se acepta (RF-UB08 se resuelve en el cliente)'
+  '23505', null,
+  'la misma dirección que f2 en el mismo punto se rechaza (D1)'
+);
+select lives_ok(
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
+     values ('01920000-0000-7000-8000-0000000000f7', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.1785,
+             '01920000-0000-7000-8000-0000000000c1') $$,
+  'la misma dirección a ~137 m se acepta (D1: a 100 m o más)'
 );
 
 -- --- escalada de privilegios: las columnas que deciden qué filas se ven -------------
