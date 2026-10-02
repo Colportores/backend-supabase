@@ -329,9 +329,9 @@ begin
         else format('and t.%I in (select public.ubicaciones_de_mi_zona())', v_col_ubic)
       end;
 
-    -- El mapa (0013): qué filas ve depende de sus campañas (las que coordina y las vigentes en
-    -- las que está inscripto). Si cambiaron desde su último pull (empezó o terminó una campaña,
-    -- lo inscribieron, le dieron una campaña para coordinar), la entidad baja completa: esas
+    -- El mapa (0013): qué filas ve depende de sus campañas (las que coordina y las que no
+    -- terminaron en las que está inscripto). Si cambiaron desde su último pull (terminó una
+    -- campaña, lo inscribieron, le dieron una campaña para coordinar), la entidad baja completa: esas
     -- filas pueden ser más viejas que su watermark. La RLS decide qué filas; acá no hay filtro.
     elsif v_sigue then
       if v_huella_mapa is null then

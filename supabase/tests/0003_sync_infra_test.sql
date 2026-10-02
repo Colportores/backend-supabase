@@ -117,7 +117,7 @@ select ok(
 -- 5. Seguridad de las funciones
 -- ---------------------------------------------------------------------------
 
--- La decisión de ADR-016 hecha código: si la ingesta corriera como su dueño, la
+-- La decisión de ADR-012 hecha código: si la ingesta corriera como su dueño, la
 -- RLS no la alcanzaría y la autorización pasaría a depender del BFF.
 select is(
   (select array_agg(p.proname::text order by p.proname)
