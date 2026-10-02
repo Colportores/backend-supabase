@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0013 · S56: zonas superpuestas permitidas y el mapa solo de las campañas vigentes
+-- 0013 · S56: zonas superpuestas permitidas y el mapa solo de las campañas que no terminaron
 --        (backend-supabase#39)
 --
 -- Decisión de Cristian del 30/09 sobre el supuesto S56 de HU-CAM-006 (docs-organizacion#19,
@@ -23,18 +23,22 @@
 --     de usarse y no se reutiliza.
 --   · El nombre sigue siendo único por ciudad de la campaña (CZ009), con el lock del mapa.
 --
--- ## 2. El colportor ve solo el mapa de sus campañas vigentes
+-- ## 2. El colportor ve el mapa de sus campañas en curso o por empezar
 --
--- Antes veía las ciudades, zonas y esquinas de toda campaña con una inscripción viva, vigente o
--- no (0008). Ahora, solo las de sus inscripciones vigentes (mis_campanias_vigentes(): la misma
--- vigencia de mis_zonas() y del pull de ubicaciones). Tampoco ve el de una campaña futura: le
--- llega el día que empieza. El coordinador sigue viendo el mapa de las campañas que coordina,
--- terminadas incluidas (el panel las muestra), y el ADMIN todo.
+-- Antes veía las ciudades, zonas y esquinas de toda campaña con una inscripción viva, terminada
+-- o no (0008). Ahora, las de toda campaña en la que está inscripto y que todavía no terminó: en
+-- curso o por empezar (decisión de Cristian del 30/09, backend-supabase#45). Caso: una
+-- colportora inscripta en una campaña que empieza el 1/12 baja el mapa el 28/11, con wifi en su
+-- casa, para trabajar sin señal desde el primer día. Las terminadas siguen sin mapa. Si el
+-- coordinador cambia zonas antes del inicio, el pull siguiente trae el mapa actualizado (el
+-- delta de siempre). El mapa no es la zona asignada: mis_zonas() y el pull de ubicaciones siguen
+-- con las inscripciones vigentes hoy (mis_campanias_vigentes()). El coordinador sigue viendo el
+-- mapa de las campañas que coordina, terminadas incluidas (el panel las muestra), y el ADMIN todo.
 --   · mis_campanias_del_mapa() (nueva): las campañas cuyo mapa ve. mis_campania_ciudades(), que
 --     usan las políticas del mapa, sale de ella.
---   · El sync. Una campaña que empieza vuelve visible un mapa que se cargó antes: sus filas
---     quedan por debajo del watermark y el delta no las traería nunca. Pasa lo mismo al
---     inscribirlo o reactivarlo. Como la huella del área de 0011: el watermark de
+--   · El sync. Inscribirlo o reactivarlo vuelve visible un mapa que se cargó antes: sus filas
+--     quedan por debajo del watermark y el delta no las traería nunca. Como la huella del área
+--     de 0011: el watermark de
 --     campania_ciudad, zona y zona_vertice guarda la huella de las campañas que ve ('area': md5
 --     de esas campañas y de si es ADMIN), y si cambió, la entidad baja completa. Las marca
 --     sync.entidad.sigue_campanias.
@@ -60,9 +64,9 @@
 -- ----------------------------------------------------------------------------
 
 -- Las campañas cuyo mapa ve el usuario autenticado: las que coordina (terminadas incluidas) y
--- las vigentes en las que está inscripto. Sin el ADMIN, que las políticas suman aparte. Un
--- usuario dado de baja no ve nada (ADR-011): el coordinador se filtra acá, el inscripto en
--- mis_campanias_vigentes().
+-- las que no terminaron (en curso o por empezar, decisión del 30/09) en las que está inscripto,
+-- con la inscripción viva. Sin el ADMIN, que las políticas suman aparte. Un usuario dado de baja
+-- no ve nada (ADR-011).
 create function public.mis_campanias_del_mapa()
 returns setof uuid
 language sql
@@ -75,12 +79,21 @@ as $$
     join public.usuario u on u.id = c.coordinador_id
    where c.coordinador_id = auth.uid() and u.deleted_at is null
   union
-  select v.campania_id from public.mis_campanias_vigentes() v;
+  select cc.campania_id
+    from public.campania_colportor cc
+    join public.usuario u on u.id = cc.usuario_id
+    join public.campania c on c.id = cc.campania_id
+   where cc.usuario_id = auth.uid()
+     and cc.deleted_at is null
+     and u.deleted_at is null
+     and c.deleted_at is null
+     and (c.fecha_fin is null or c.fecha_fin >= current_date);
 $$;
 
 comment on function public.mis_campanias_del_mapa() is
-  'Campañas cuyo mapa ve el usuario autenticado: las que coordina y las vigentes en las que está '
-  'inscripto (S56, 0013). La usan mis_campania_ciudades() y la huella del mapa en el pull.';
+  'Campañas cuyo mapa ve el usuario autenticado: las que coordina y las que no terminaron (en '
+  'curso o por empezar) en las que está inscripto (S56, 0013; decisión del 30/09). La usan '
+  'mis_campania_ciudades() y la huella del mapa en el pull.';
 
 -- Misma firma que en 0008: ahora sale de mis_campanias_del_mapa().
 create or replace function public.mis_campania_ciudades()
@@ -97,7 +110,8 @@ $$;
 
 comment on function public.mis_campania_ciudades() is
   'campania_ciudad visibles para el usuario autenticado: las de mis_campanias_del_mapa() (las '
-  'campañas que coordina y las vigentes en las que está inscripto). La usan las políticas del mapa.';
+  'campañas que coordina y las que no terminaron en las que está inscripto). La usan las políticas '
+  'del mapa.';
 
 -- ----------------------------------------------------------------------------
 -- 2. Sync: la huella de las campañas en el watermark del mapa
@@ -222,9 +236,9 @@ begin
         else format('and t.%I in (select public.ubicaciones_de_mi_zona())', v_col_ubic)
       end;
 
-    -- El mapa (0013): qué filas ve depende de sus campañas (las que coordina y las vigentes en
-    -- las que está inscripto). Si cambiaron desde su último pull (empezó o terminó una campaña,
-    -- lo inscribieron, le dieron una campaña para coordinar), la entidad baja completa: esas
+    -- El mapa (0013): qué filas ve depende de sus campañas (las que coordina y las que no
+    -- terminaron en las que está inscripto). Si cambiaron desde su último pull (terminó una
+    -- campaña, lo inscribieron, le dieron una campaña para coordinar), la entidad baja completa: esas
     -- filas pueden ser más viejas que su watermark. La RLS decide qué filas; acá no hay filtro.
     elsif v_sigue then
       if v_huella_mapa is null then

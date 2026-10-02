@@ -48,6 +48,15 @@ language sql as $$
                                                            p_metros, radians(90))) g) x;
 $$;
 
+-- Un job del push, y los outcome (con el code, si hay) de una respuesta, en orden.
+create or replace function pg_temp.job(p_ent text, p_op text, p_payload jsonb) returns jsonb language sql as $$
+  select jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', p_ent, 'op', p_op, 'payload', p_payload);
+$$;
+create or replace function pg_temp.resultados(p_r jsonb) returns text[] language sql as $$
+  select array_agg((e ->> 'outcome') || coalesce(' ' || (e ->> 'code'), '') order by i)
+    from jsonb_array_elements(p_r -> 'results') with ordinality x(e, i);
+$$;
+
 create or replace function pg_temp.ids_visibles() returns uuid[] language sql as $$
   select coalesce(array_agg(id order by id), array[]::uuid[]) from public.ubicacion;
 $$;
@@ -130,6 +139,11 @@ select ok((select indexdef !~* ' where ' from pg_indexes
 select has_index('public', 'ubicacion', 'ubicacion_geografia_idx', 'índice geography + GiST para los 5 m');
 select ok(has_function_privilege('authenticated', 'public.mis_ciudades_de_trabajo()', 'execute'),
           'authenticated ejecuta mis_ciudades_de_trabajo (la usan las políticas)');
+select ok(has_function_privilege('authenticated', 'public.mis_ciudades_de_campania()', 'execute')
+          and has_function_privilege('authenticated', 'public.puedo_escribir_en_ubicacion(uuid)', 'execute'),
+          'authenticated ejecuta mis_ciudades_de_campania y puedo_escribir_en_ubicacion (políticas de escritura)');
+select ok(not has_function_privilege('anon', 'public.puedo_escribir_en_ubicacion(uuid)', 'execute'),
+          'anon no');
 select ok(has_function_privilege('authenticated', 'public.ubicaciones_de_mi_zona()', 'execute'),
           'authenticated ejecuta ubicaciones_de_mi_zona (la usa el pull, que corre como él)');
 select ok(not has_function_privilege('authenticated', 'public.zona_ubicaciones_incluidas(uuid,jsonb)', 'execute'),
@@ -220,7 +234,8 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
 select throws_ok(
   $$ update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000013c3'
       where id = '01920000-0000-7000-8000-000000001302' $$,
-  '42501', null, 'b1 (zona en Montevideo) NO manda una casa ajena a Canelones, aunque sea de Verano (S55)');
+  '42501', null,
+  'b1 (zona en Montevideo) NO manda una casa ajena a Canelones: podría escribir allá, pero dejaría de verla (el UPDATE la lee, S55)');
 update public.ubicacion set calle = 'Pirata' where id = '01920000-0000-7000-8000-000000001330';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
 update public.ubicacion set calle = 'Pirata' where id = '01920000-0000-7000-8000-000000001301';
@@ -282,6 +297,102 @@ select throws_ok(
   '42501', null, 'b3 NO reapunta su estado a una casa de otra ciudad (no ve su posición)');
 select is((select array[lat, lon] from public.house_status where ubicacion_id = '01920000-0000-7000-8000-000000001309'),
           array[-34.81, -56.01]::float8[], 'su estado sigue en su casa, con el pin de ella');
+
+-- ---------------------------------------------------------------------------
+-- 4b. Escribir no se acota a la zona (decisión de Cristian del 30/09 sobre S55, #36): se
+--     aceptan las escrituras en todas las ciudades de sus campañas vigentes, tenga zona o no
+-- ---------------------------------------------------------------------------
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
+select results_eq($$ select * from public.mis_ciudades_de_campania() order by 1 $$,
+                  $$ values ('01920000-0000-7000-8000-0000000013c1'::uuid), ('01920000-0000-7000-8000-0000000013c3'::uuid) $$,
+                  'b1 (zona A en Montevideo) escribe en todas las ciudades de Verano, también Canelones');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
+select results_eq($$ select * from public.mis_ciudades_de_campania() $$,
+                  $$ values ('01920000-0000-7000-8000-0000000013c2'::uuid) $$,
+                  'b3 (Otra) solo en la ciudad de Otra');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b4');
+select is((select count(*) from public.mis_ciudades_de_campania()), 0::bigint,
+          'b4 (solo una campaña terminada) en ninguna');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013a1');
+select is((select count(*) from public.mis_ciudades_de_campania()), 0::bigint,
+          'el coordinador (sin inscripciones) en ninguna');
+
+-- El caso de la decisión: b1 trabajó sin señal en una casa de Canelones que no registró él
+-- (1330: no la ve, porque su zona es de Montevideo) y le vendió a alguien de un depto nuevo.
+-- A la noche sincroniza: el espacio, el vínculo, la visita, la venta y el estado suben.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
+select is((select count(*) from public.ubicacion where id = '01920000-0000-7000-8000-000000001330'), 0::bigint,
+          'la lectura sigue acotada a su zona: b1 no ve la casa de Canelones (S55)');
+create temp table lote_canelones on commit drop as
+select sync.push(jsonb_build_array(
+  pg_temp.job('espacio', 'insert', '{"id": "01920000-0000-7000-8000-000000001331",
+                                     "ubicacion_id": "01920000-0000-7000-8000-000000001330", "numero_depto": "3"}'),
+  pg_temp.job('espacio_persona', 'insert', '{"id": "01920000-0000-7000-8000-000000001332",
+                                             "espacio_id": "01920000-0000-7000-8000-000000001331",
+                                             "persona_id": "01920000-0000-7000-8000-000000001333"}'),
+  pg_temp.job('visita', 'insert', jsonb_build_object('id', '01920000-0000-7000-8000-000000001334',
+                                                     'espacio_persona_id', '01920000-0000-7000-8000-000000001332',
+                                                     'fecha', now(), 'tipo_resultado', 'VENTA')),
+  pg_temp.job('venta', 'insert', jsonb_build_object('id', '01920000-0000-7000-8000-000000001335',
+                                                    'espacio_persona_id', '01920000-0000-7000-8000-000000001332',
+                                                    'numero_talonario', 'T-1335', 'monto_total', 150000,
+                                                    'fecha', now(), 'visita_id', '01920000-0000-7000-8000-000000001334')),
+  pg_temp.job('house_status', 'insert', '{"ubicacion_id": "01920000-0000-7000-8000-000000001330",
+                                          "tipo_ubicacion": "CASA", "color": "VENTA_COMPLETA", "prioridad": 4}')
+)) as r;
+select is((select pg_temp.resultados(r) from lote_canelones),
+          array['accepted', 'accepted', 'accepted', 'accepted', 'accepted'],
+          'b1 (zona en Montevideo) sube el espacio, el vínculo, la visita, la venta y el estado de una casa de Canelones');
+select is((select array_agg(e ->> 'sync_version' order by i)
+             from lote_canelones, jsonb_array_elements(r -> 'results') with ordinality x(e, i)),
+          array['0', '0', '0', '0', '0'], 'cada uno con su versión (el push lee lo que acaba de escribir)');
+select is((select count(*) from public.espacio where id = '01920000-0000-7000-8000-000000001331'), 1::bigint,
+          'b1 ve el depto que cargó (la rama de quien lo cargó, como en house_status)');
+select is((select count(*) from public.ubicacion where id = '01920000-0000-7000-8000-000000001330'), 0::bigint,
+          'pero la casa sigue sin verla');
+select lives_ok(
+  $$ update public.espacio set piso = '4' where id = '01920000-0000-7000-8000-000000001331' $$,
+  'b1 corrige el depto que cargó allá');
+select lives_ok(
+  $$ update public.house_status set color = 'ENTREGA_Y_COBRANZA_PENDIENTE', prioridad = 1
+      where ubicacion_id = '01920000-0000-7000-8000-000000001330' $$,
+  'y el estado (lo ve porque lo escribió él)');
+
+select pg_temp.actuar_como_servidor();
+select is((select colportor_id from public.venta where id = '01920000-0000-7000-8000-000000001335'),
+          '01920000-0000-7000-8000-0000000013b1'::uuid, 'la venta quedó en el servidor, de b1');
+select is((select array[ubicacion_id::text, piso] from public.espacio where id = '01920000-0000-7000-8000-000000001331'),
+          array['01920000-0000-7000-8000-000000001330', '4'], 'y el depto, en la casa de Canelones, con la corrección');
+select is((select array[color, created_by::text] from public.house_status
+            where ubicacion_id = '01920000-0000-7000-8000-000000001330'),
+          array['ENTREGA_Y_COBRANZA_PENDIENTE', '01920000-0000-7000-8000-0000000013b1'],
+          'y el estado, con la corrección');
+
+-- Por el INSERT directo, en el otro sentido: b5 (zona D en Canelones) carga un espacio en una casa
+-- ajena de Montevideo, que no ve.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b5');
+select lives_ok(
+  $$ insert into public.espacio (id, ubicacion_id)
+     values ('01920000-0000-7000-8000-000000001336', '01920000-0000-7000-8000-000000001302') $$,
+  'b5 (zona en Canelones) carga un espacio en una casa ajena de Montevideo, otra ciudad de Verano');
+
+-- Fuera de sus campañas sigue rechazado, por el push y por el INSERT directo.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'insert', '{"id": "01920000-0000-7000-8000-000000001337",
+                                               "ubicacion_id": "01920000-0000-7000-8000-000000001330"}'),
+            pg_temp.job('house_status', 'insert', '{"ubicacion_id": "01920000-0000-7000-8000-000000001302",
+                                                    "tipo_ubicacion": "CASA", "color": "RECHAZO", "prioridad": 7}')))),
+          array['invalid 42501', 'invalid 42501'],
+          'b3 (Otra) no carga un espacio ni un estado en casas de Verano: no es su campaña');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b4');
+select throws_ok(
+  $$ insert into public.espacio (ubicacion_id) values ('01920000-0000-7000-8000-000000001330') $$,
+  '42501', null, 'b4 (campaña terminada) tampoco');
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.espacio
+            where id in ('01920000-0000-7000-8000-000000001337')), 0::bigint,
+          'lo rechazado no se escribió');
 
 -- La GUC del republicado solo cuenta adentro de un trigger: puesta a mano, la versión sube igual.
 select pg_temp.actuar_como_servidor();

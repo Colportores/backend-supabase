@@ -32,9 +32,16 @@
 -- la RLS tiene que dejarle ver la ciudad: la zona deja de ser un permiso. Ve una ubicación si la
 -- registró él o si es de su ciudad de trabajo (mis_ciudades_de_trabajo(), con la vigencia de
 -- mis_zonas()): la ciudad de su zona asignada; sin zona asignada, todas las ciudades de sus
--- campañas vigentes (S55, abajo). La puede corregir en los mismos casos. El coordinador y el ADMIN
--- las ven todas, como antes. espacio y house_status siguen a su ubicación: los ve quien ve la
--- ubicación, y los escribe quien la puede corregir; house_status, además, quien lo escribió.
+-- campañas vigentes (S55, abajo). El coordinador y el ADMIN las ven todas, como antes.
+--
+-- Escribir no se acota a la zona (decisión de Cristian del 30/09 sobre S55, abajo): un colportor
+-- corrige una ubicación, y carga espacios y estados en ella, si la registró él o si es de una
+-- ciudad de sus campañas vigentes, tenga zona o no (mis_ciudades_de_campania()). espacio y
+-- house_status siguen a su ubicación: los ve quien ve la ubicación o quien los cargó, y los escribe
+-- quien la puede corregir (puedo_escribir_en_ubicacion(), que mira la ubicación sin pasar por la
+-- RLS de lectura); house_status, además, quien lo escribió. Que vea lo que cargó hace falta para
+-- el push: su INSERT lleva ON CONFLICT (id), y con eso Postgres le exige a la fila nueva la
+-- política de lectura.
 --
 -- ## Qué baja en el pull (sync.pull, parámetro nuevo p_alcance)
 --
@@ -80,17 +87,26 @@
 --   · S60, qué baja si el colportor omite la elección: su zona y lo propio. p_alcance es
 --     opcional y su default es 'zona'. Sin zona asignada, solo lo propio.
 --   · S55, cuál es «la ciudad» si la campaña tiene varias: la ciudad de su zona asignada; sin
---     zona asignada, todas las ciudades de sus campañas vigentes. La RLS sigue la misma regla.
---     Las dos cosas salen de mis_ciudades_de_trabajo(). Se calcula por inscripción: hoy hay una
---     sola vigente por colportor (EN_OTRA_CAMPANIA, 0005). Una zona dada de baja, o de una ciudad
---     que salió de la campaña, cuenta como sin zona (la misma vigencia que mis_zonas()).
+--     zona asignada, todas las ciudades de sus campañas vigentes. La RLS de LECTURA sigue la
+--     misma regla: las dos salen de mis_ciudades_de_trabajo(). Se calcula por inscripción: hoy
+--     hay una sola vigente por colportor (EN_OTRA_CAMPANIA, 0005). Una zona dada de baja, o de
+--     una ciudad que salió de la campaña, cuenta como sin zona (la misma vigencia que mis_zonas()).
+--     Las ESCRITURAS no (decisión de Cristian del 30/09, backend-supabase#36): se aceptan en
+--     todas las ciudades de sus campañas vigentes, tenga zona o no. La zona acota lo que baja y
+--     lo que ve, no dónde se vende. Caso: sin zona, carga sin señal un espacio, una persona, una
+--     visita y una venta en una casa de otra ciudad de la campaña; al mediodía le asignan una
+--     zona en otra ciudad; a la noche sincroniza, y todo sube. Sin esto, el espacio volvía
+--     `invalid` (42501) y, colgando de él, el vínculo, la visita y la venta (23503): la venta no
+--     llegaba nunca. Regla que lo motiva: nunca se pierde el registro de una venta ni de una
+--     persona. Lo que la zona sigue acotando al escribir es solo lo que el push tiene que LEER
+--     antes: corregir un espacio o un estado que la RLS de lectura ya no le deja ver vuelve
+--     `FILA_INEXISTENTE` (0002), sin borrar nada del teléfono (front-colportores-mobile#178).
 --   · S54, cambiar de alcance después: sí, desde Ajustes. El servidor cambia la huella y baja
 --     completo el alcance nuevo. Lo que queda afuera NO se borra del teléfono (ocultarlo del mapa
 --     es solo visual, front-colportores-mobile#244): el servidor no manda borrados por ausencia.
---     Tampoco al asignarle una zona: la RLS se achica a la ciudad de esa zona, pero lo que ya bajó
---     queda en el teléfono. Lo que cargue después en una casa de otra ciudad que no registró él
---     (un espacio, un estado) el push lo rechaza (`invalid`, RLS); las ventas, visitas y personas
---     no dependen de esto (son suyas por colportor_id).
+--     Tampoco al asignarle una zona: la RLS de lectura se achica a la ciudad de esa zona, pero lo
+--     que ya bajó queda en el teléfono, y lo que cargue en una casa de otra ciudad de su campaña
+--     sube igual (S55, arriba).
 --   · Una casa que sale del área de quien la tenía (otro la corrige afuera): el pull va a avisar
 --     los ids que salieron desde el último pull. No va acá: es backend-supabase#37.
 --
@@ -209,8 +225,51 @@ $$;
 
 comment on function public.mis_ciudades_de_trabajo() is
   'Ciudad de trabajo del usuario autenticado (S55 de HU-SYNC-011): la de su zona asignada; sin '
-  'zona asignada, todas las ciudades vivas de sus campañas vigentes. Decide qué ubicaciones ve y '
-  'corrige un colportor, y qué baja con el alcance «ciudad» del pull.';
+  'zona asignada, todas las ciudades vivas de sus campañas vigentes. Decide qué ubicaciones ve un '
+  'colportor (RLS de lectura) y qué baja con el alcance «ciudad» del pull. Dónde escribe lo decide '
+  'mis_ciudades_de_campania().';
+
+-- Dónde escribe el usuario autenticado (decisión de Cristian del 30/09 sobre S55): todas las
+-- ciudades vivas de sus campañas vigentes, tenga zona o no. La zona acota solo la lectura.
+create function public.mis_ciudades_de_campania()
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select distinct cc.ciudad_id
+    from public.mis_campanias_vigentes() v
+    join public.campania_ciudad cc on cc.campania_id = v.campania_id
+   where cc.deleted_at is null;
+$$;
+
+comment on function public.mis_ciudades_de_campania() is
+  'Ciudades vivas de las campañas vigentes del usuario autenticado, tenga zona o no (decisión del '
+  '30/09 sobre S55: la zona acota solo la lectura). Decide dónde corrige ubicaciones y carga '
+  'espacios y estados un colportor (RLS de escritura).';
+
+-- Si el usuario autenticado puede escribir en la ubicación (corregirla, cargarle espacios y
+-- estados): la registró él o es de una ciudad de sus campañas vigentes. SECURITY DEFINER: mira la
+-- ubicación sin pasar por la RLS de lectura, que con zona asignada le oculta las casas ajenas de
+-- las otras ciudades de su campaña (en las que igual puede vender).
+create function public.puedo_escribir_en_ubicacion(p_ubicacion_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (select 1 from public.ubicacion u
+                  where u.id = p_ubicacion_id
+                    and (u.created_by = auth.uid()
+                         or u.ciudad_id in (select public.mis_ciudades_de_campania())));
+$$;
+
+comment on function public.puedo_escribir_en_ubicacion(uuid) is
+  'Si el usuario autenticado escribe en la ubicación: la registró él o es de una ciudad de sus '
+  'campañas vigentes (mis_ciudades_de_campania()). Sin pasar por la RLS de lectura: la usan las '
+  'políticas de escritura de espacio y house_status.';
 
 -- La ve quien la registró, quien trabaja en su ciudad, el coordinador y el ADMIN (como antes).
 create policy ubicacion_por_ciudad_select on public.ubicacion
@@ -225,37 +284,39 @@ create policy ubicacion_por_ciudad_insert on public.ubicacion
   for insert to authenticated
   with check (created_by = (select auth.uid()));
 
--- La corrige quien la registró o quien trabaja en su ciudad. La fila corregida tiene que seguir
--- cumpliendo lo mismo: una casa ajena no se manda a una ciudad donde no trabaja.
+-- La corrige quien la registró o quien trabaja en una ciudad de su campaña (escribir no se acota a
+-- la zona). La fila corregida tiene que seguir cumpliendo lo mismo: una casa ajena no se manda a
+-- una ciudad fuera de sus campañas. Para corregirla, además, la tiene que ver (el UPDATE la lee).
 create policy ubicacion_por_ciudad_update on public.ubicacion
   for update to authenticated
   using (created_by = (select auth.uid())
-         or ciudad_id in (select public.mis_ciudades_de_trabajo()))
+         or ciudad_id in (select public.mis_ciudades_de_campania()))
   with check (created_by = (select auth.uid())
-              or ciudad_id in (select public.mis_ciudades_de_trabajo()));
+              or ciudad_id in (select public.mis_ciudades_de_campania()));
 
 -- espacio: lo ve quien ve la ubicación (la subconsulta pasa por la RLS de ubicacion, que ya
--- incluye al coordinador y al ADMIN); lo escribe quien la puede corregir.
+-- incluye al coordinador y al ADMIN) y quien lo cargó; lo escribe quien puede escribir en ella,
+-- la vea o no. La rama de quien lo cargó es la de house_status, y la necesita el push: su INSERT
+-- lleva ON CONFLICT (id), y Postgres le exige entonces a la fila nueva la política de lectura.
+-- Sin ella, el depto que un colportor con zona carga en una casa de otra ciudad de su campaña
+-- vuelve `invalid` (42501), y con él su vínculo, su visita y su venta (23503). El pull no cambia:
+-- baja el espacio según el alcance de su ubicación, no por quién lo cargó.
 create policy espacio_por_ubicacion_select on public.espacio
   for select to authenticated
-  using (exists (select 1 from public.ubicacion u where u.id = ubicacion_id));
+  using (created_by = (select auth.uid())
+         or exists (select 1 from public.ubicacion u where u.id = ubicacion_id));
 create policy espacio_por_ubicacion_insert on public.espacio
   for insert to authenticated
   with check (created_by = (select auth.uid())
-              and exists (select 1 from public.ubicacion u
-                           where u.id = ubicacion_id
-                             and (u.created_by = (select auth.uid())
-                                  or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
+              and public.puedo_escribir_en_ubicacion(ubicacion_id));
 create policy espacio_por_ubicacion_update on public.espacio
   for update to authenticated
-  using (exists (select 1 from public.ubicacion u
-                  where u.id = ubicacion_id
-                    and (u.created_by = (select auth.uid())
-                         or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
+  using (public.puedo_escribir_en_ubicacion(ubicacion_id));
 
 -- house_status: igual, y además quien lo escribió. La fila corregida tiene que ser de una casa
--- que puede corregir (WITH CHECK): sin eso, el autor podría reapuntar su fila (ubicacion_id) a
--- una casa que la RLS le oculta, y el trigger del pin (SECURITY DEFINER) le copiaría su posición.
+-- en la que puede escribir (WITH CHECK): sin eso, el autor podría reapuntar su fila
+-- (ubicacion_id) a una casa de fuera de sus campañas, y el trigger del pin (SECURITY DEFINER)
+-- le copiaría su posición.
 create policy house_status_por_ubicacion_select on public.house_status
   for select to authenticated
   using (created_by = (select auth.uid())
@@ -263,21 +324,12 @@ create policy house_status_por_ubicacion_select on public.house_status
 create policy house_status_por_ubicacion_insert on public.house_status
   for insert to authenticated
   with check (created_by = (select auth.uid())
-              and exists (select 1 from public.ubicacion u
-                           where u.id = ubicacion_id
-                             and (u.created_by = (select auth.uid())
-                                  or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
+              and public.puedo_escribir_en_ubicacion(ubicacion_id));
 create policy house_status_por_ubicacion_update on public.house_status
   for update to authenticated
   using (created_by = (select auth.uid())
-         or exists (select 1 from public.ubicacion u
-                     where u.id = ubicacion_id
-                       and (u.created_by = (select auth.uid())
-                            or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))))
-  with check (exists (select 1 from public.ubicacion u
-                       where u.id = ubicacion_id
-                         and (u.created_by = (select auth.uid())
-                              or u.ciudad_id in (select public.mis_ciudades_de_trabajo()))));
+         or public.puedo_escribir_en_ubicacion(ubicacion_id))
+  with check (public.puedo_escribir_en_ubicacion(ubicacion_id));
 
 -- ----------------------------------------------------------------------------
 -- 5. Una ubicación que se mueve republica sus espacios y su house_status
@@ -1038,6 +1090,8 @@ comment on function sync.pull(text[], jsonb, integer, uuid, text) is
 -- dan EXECUTE sobre cada función nueva de public (ver 0008).
 revoke all on function
   public.mis_ciudades_de_trabajo(),
+  public.mis_ciudades_de_campania(),
+  public.puedo_escribir_en_ubicacion(uuid),
   public.ubicaciones_de_mi_zona(),
   public.tg_ubicacion_posicion_a_dependientes(),
   public.tg_house_status_posicion_de_su_ubicacion(),
@@ -1052,6 +1106,8 @@ revoke all on function
 -- autenticado.
 grant execute on function
   public.mis_ciudades_de_trabajo(),
+  public.mis_ciudades_de_campania(),
+  public.puedo_escribir_en_ubicacion(uuid),
   public.ubicaciones_de_mi_zona()
   to authenticated, service_role;
 
