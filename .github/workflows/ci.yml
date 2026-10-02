@@ -27,6 +27,10 @@ jobs:
       - name: SQL solo en supabase/
         run: bash scripts/check-sql-layout.sh
 
+      # El servidor exige al menos la contraseña mínima de la app (8). Tampoco necesita Docker.
+      - name: Contraseña mínima del servidor
+        run: bash scripts/check-config.sh
+
       # La imagen de la DB sale de ghcr.io (mismo tag y digest que en ECR Public). Con el login
       # el pull va autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
       - name: Login a ghcr.io
