@@ -110,13 +110,13 @@ insert into public.campania_colportor (campania_id, usuario_id, deleted_at) valu
 -- ---------------------------------------------------------------------------
 -- 1. Forma y privilegios
 -- ---------------------------------------------------------------------------
-select is((select prosecdef from pg_proc where oid = 'public.buscar_candidatos(uuid, text)'::regprocedure),
+select is((select prosecdef from pg_proc where oid = 'public.buscar_candidatos(uuid, text, uuid)'::regprocedure),
           true, 'buscar_candidatos() es SECURITY DEFINER');
-select is((select proconfig from pg_proc where oid = 'public.buscar_candidatos(uuid, text)'::regprocedure),
+select is((select proconfig from pg_proc where oid = 'public.buscar_candidatos(uuid, text, uuid)'::regprocedure),
           array['search_path=""'], 'buscar_candidatos() fija search_path vacío');
-select ok(has_function_privilege('authenticated', 'public.buscar_candidatos(uuid, text)', 'execute'),
+select ok(has_function_privilege('authenticated', 'public.buscar_candidatos(uuid, text, uuid)', 'execute'),
           'authenticated ejecuta buscar_candidatos()');
-select ok(not has_function_privilege('anon', 'public.buscar_candidatos(uuid, text)', 'execute'),
+select ok(not has_function_privilege('anon', 'public.buscar_candidatos(uuid, text, uuid)', 'execute'),
           'anon NO ejecuta buscar_candidatos()');
 select ok(not has_function_privilege('authenticated', 'public.normalizar_busqueda(text)', 'execute'),
           'normalizar_busqueda() es interna');
@@ -294,8 +294,14 @@ select results_eq(
   $$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), '@correo.uy') $$,
   $$ values (pg_temp.u('b0')), (pg_temp.u('b1')), (pg_temp.u('b2')), (pg_temp.u('bd')), (pg_temp.u('bc')),
             (pg_temp.u('b3')), (pg_temp.u('be')), (pg_temp.u('ba')), (pg_temp.u('bb')), (pg_temp.u('b5')) $$,
-  '12 coincidencias: devuelve las 10 primeras por nombre completo'
+  '12 coincidencias: la primera página trae las 10 primeras por nombre completo'
 );
+select results_eq(
+  $$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), '@correo.uy', pg_temp.u('b5')) $$,
+  $$ values (pg_temp.u('b4')), (pg_temp.u('bf')) $$,
+  'la página siguiente (después de b5) trae las 2 que faltan');
+select is_empty($$ select * from public.buscar_candidatos(pg_temp.u('e1'), '@correo.uy', pg_temp.u('bf')) $$,
+                'y después de la última, nada');
 
 -- El ADMIN busca con cualquier campaña; los candidatos dependen de ESA campaña.
 select pg_temp.actuar_como(pg_temp.u('ad'));
@@ -306,6 +312,97 @@ select results_eq(
 );
 select is_empty($$ select * from public.buscar_candidatos(pg_temp.u('e2'), 'rodrigo silva') $$,
                 'y quien ya está en Otoño Norte no es candidato de Otoño Norte');
+
+-- ---------------------------------------------------------------------------
+-- 5b. Orden y paginación (decisión del 02/10): primero las que empiezan con el texto (nombre,
+--     apellido o email), después el resto, alfabético; de a 10, con cursor.
+--     22 cuentas con «pag»: c0 (email pag…, Bruno Méndez), c1..cc (Paginada A01..A12), cd (Zoe
+--     Pagano, por el apellido) empiezan; d0..d7 (Eva Sinpag01..08) solo lo contienen. Nombres
+--     que no cruzan con las búsquedas de las secciones siguientes.
+-- ---------------------------------------------------------------------------
+select pg_temp.actuar_como_servidor();
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at,
+                        raw_user_meta_data, created_at, updated_at)
+select pg_temp.u(x.s), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       x.email, 'x', now(), jsonb_build_object('nombre', x.n, 'apellido', x.a), now(), now()
+  from (
+    select 'c0' as s, 'pag.bruno@buscar18.test' as email, 'Bruno' as n, 'Méndez' as a
+    union all
+    select 'c' || to_hex(i), 'p18-' || i || '@buscar18.test', 'Paginada', 'A' || lpad(i::text, 2, '0')
+      from generate_series(1, 12) i
+    union all
+    select 'cd', 'zoe18@buscar18.test', 'Zoe', 'Pagano'
+    union all
+    select 'd' || i, 's18-' || i || '@buscar18.test', 'Eva', 'Sinpag' || lpad((i + 1)::text, 2, '0')
+      from generate_series(0, 7) i
+  ) x;
+
+create temp table pag_esperado on commit drop as
+select row_number() over () as n, x.s
+  from unnest(array['c0','c1','c2','c3','c4','c5','c6','c7','c8','c9','ca','cb','cc','cd',
+                    'd0','d1','d2','d3','d4','d5','d6','d7']) x(s);
+grant select on pag_esperado to authenticated;
+
+select pg_temp.actuar_como(pg_temp.u('a1'));
+create temp table pag_1 on commit drop as
+select row_number() over () as n, c.usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'pag') c;
+create temp table pag_2 on commit drop as
+select row_number() over () as n, c.usuario_id
+  from public.buscar_candidatos(pg_temp.u('e1'), 'pag', (select usuario_id from pag_1 where n = 10)) c;
+create temp table pag_3 on commit drop as
+select row_number() over () as n, c.usuario_id
+  from public.buscar_candidatos(pg_temp.u('e1'), 'pag', (select usuario_id from pag_2 where n = 10)) c;
+
+select is((select count(*) from pag_1), 10::bigint, 'página 1: 10 cuentas');
+select is((select count(*) from pag_2), 10::bigint, 'página 2: 10 cuentas');
+select is((select count(*) from pag_3), 2::bigint, 'página 3: las 2 que quedan (menos de 10: es la última)');
+select is_empty($$ select * from public.buscar_candidatos(pg_temp.u('e1'), 'pag', (select usuario_id from pag_3 where n = 2)) $$,
+                'después de la última, nada');
+select results_eq(
+  $$ select usuario_id from (select n, usuario_id from pag_1
+                             union all select 10 + n, usuario_id from pag_2
+                             union all select 20 + n, usuario_id from pag_3) t order by n $$,
+  $$ select pg_temp.u(s) from pag_esperado order by n $$,
+  'las tres páginas seguidas: primero las que empiezan (email, nombre o apellido), después las que lo contienen; alfabético en cada grupo, sin duplicados ni huecos');
+select results_eq(
+  $$ select usuario_id from pag_1 order by n limit 2 $$,
+  $$ values (pg_temp.u('c0')), (pg_temp.u('c1')) $$,
+  'la que empieza por el email (Bruno Méndez) va primero: dentro del grupo es alfabético por nombre');
+select is((select usuario_id from pag_2 where n = 4), pg_temp.u('cd'),
+          'Zoe Pagano (empieza por el apellido) va antes que las que solo contienen el texto');
+
+-- Estable aunque la lista cambie entre páginas: si una cuenta de la página 1 deja de ser
+-- candidata, la página 2 pedida con el mismo cursor es la misma (con offset, una quedaría sin
+-- mostrarse). Se da de baja la cuenta para no tocar el equipo de Verano (sección 7).
+select pg_temp.actuar_como_servidor();
+update public.usuario set deleted_at = now() where id = pg_temp.u('c3');
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is((select count(*) from public.buscar_candidatos(pg_temp.u('e1'), 'pag') where usuario_id = pg_temp.u('c3')),
+          0::bigint, 'mientras tanto, c3 (de la página 1) deja de ser candidata');
+select results_eq(
+  $$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'pag', (select usuario_id from pag_1 where n = 10)) $$,
+  $$ select usuario_id from pag_2 order by n $$,
+  'la página 2 no cambia: ni duplicados ni huecos');
+-- Y si se da de alta una cuenta que va antes del cursor, no aparece en las páginas siguientes.
+select pg_temp.actuar_como_servidor();
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at,
+                        raw_user_meta_data, created_at, updated_at)
+values (pg_temp.u('d8'), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+        'pag.aaron@buscar18.test', 'x', now(), '{"nombre": "Aarón", "apellido": "Paz"}', now(), now());
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select results_eq(
+  $$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'pag', (select usuario_id from pag_2 where n = 10)) $$,
+  $$ select usuario_id from pag_3 order by n $$,
+  'una cuenta nueva que va antes del cursor no se mete en la página 3');
+select is((select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'pag') limit 1), pg_temp.u('d8'),
+          'y aparece al volver a buscar desde el principio');
+
+-- Sin texto, los sugeridos son una sola página.
+select is_empty($$ select * from public.buscar_candidatos(pg_temp.u('e1'), null, pg_temp.u('b1')) $$,
+                'sin texto, con cursor no devuelve nada (los sugeridos son una página)');
+select throws_ok($$ select * from public.buscar_candidatos(pg_temp.u('e1'), 'pag', '01920000-0000-7000-8000-0000000018fe') $$,
+  '22023', 'No se encontró la última cuenta de la página anterior. Volvé a buscar desde el principio.',
+  'un cursor que no es ninguna cuenta → 22023, con qué hacer');
 
 -- ---------------------------------------------------------------------------
 -- 6. motivo_bloqueo es lo que inscribir_colportor() hace
