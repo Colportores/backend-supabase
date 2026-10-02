@@ -67,7 +67,7 @@ La causa no es el índice sino la forma de la política: una cadena de `OR` sobr
 
 `venta_item`, `entrega` y `cobranza` tienen el mismo patrón por otra razón: su predicado es un `EXISTS` contra `venta`, que tampoco es indexable en la tabla hija. A 60.000 filas son 20 ms.
 
-## Alcance del pull (0011) — 2026-09-30, misma carga
+## Alcance del pull (0011) — 2026-09-30, misma carga (histórico: desde 0023 solo queda el camino «ciudad»)
 
 Desde `0011` el pull de `ubicacion`, `espacio` y `house_status` baja según el alcance (HU-SYNC-011). En la carga, cada colportor tiene 400 casas propias dentro de su zona, entre 60.000 de la misma ciudad.
 
@@ -79,3 +79,5 @@ Desde `0011` el pull de `ubicacion`, `espacio` y `house_status` baja según el a
 | «Incluye N ubicaciones» de una zona | 12 ms |
 
 La parte «zona» sale del índice GiST, una vez por consulta, con `ubicaciones_de_mi_zona()` (SECURITY DEFINER). Con el filtro escrito sobre la tabla con RLS, `ST_Covers` no es LEAKPROOF, el planificador no puede usar el índice y evalúa el polígono casa por casa: ~3 µs por casa, 630 ms para bajar el área completa de una zona.
+
+Desde `0023` (backend-supabase#58) el pull baja siempre toda la ciudad de la zona del colportor: la rama «zona» y `ubicaciones_de_mi_zona()` ya no existen y no hay alcance que elegir. Los números de arriba son de `0011` y no se volvieron a medir; el camino que queda es el de «ciudad» (82 ms la primera página), sin el aviso de salida por posición. `medir.sql` pasó a medir ese único camino.

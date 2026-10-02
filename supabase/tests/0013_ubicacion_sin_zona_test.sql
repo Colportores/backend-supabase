@@ -131,7 +131,7 @@ select ok((select bool_and(not ('zona_id' = any (columnas_servidor))) from sync.
 select results_eq(
   $$ select nombre, columna_ubicacion from sync.entidad where columna_ubicacion is not null order by nombre $$,
   $$ values ('espacio', 'ubicacion_id'), ('house_status', 'ubicacion_id'), ('ubicacion', 'id') $$,
-  'bajan según el alcance del pull: ubicacion, y espacio y house_status por su ubicación');
+  'bajan según la ciudad de trabajo del pull: ubicacion, y espacio y house_status por su ubicación');
 select has_index('public', 'ubicacion', 'ubicacion_geometria_idx', 'índice GiST de la posición (pull e Incluye N)');
 select ok((select indexdef !~* ' where ' from pg_indexes
             where schemaname = 'public' and indexname = 'ubicacion_geometria_idx'),
@@ -144,8 +144,7 @@ select ok(has_function_privilege('authenticated', 'public.mis_ciudades_de_campan
           'authenticated ejecuta mis_ciudades_de_campania y puedo_escribir_en_ubicacion (políticas de escritura)');
 select ok(not has_function_privilege('anon', 'public.puedo_escribir_en_ubicacion(uuid)', 'execute'),
           'anon no');
-select ok(has_function_privilege('authenticated', 'public.ubicaciones_de_mi_zona()', 'execute'),
-          'authenticated ejecuta ubicaciones_de_mi_zona (la usa el pull, que corre como él)');
+select hasnt_function('public', 'ubicaciones_de_mi_zona', 'el pull ya no tiene la rama «zona» (0023): la función se fue');
 select ok(not has_function_privilege('authenticated', 'public.zona_ubicaciones_incluidas(uuid,jsonb)', 'execute'),
           'authenticated NO ejecuta la interna zona_ubicaciones_incluidas');
 select ok(has_function_privilege('authenticated',
@@ -193,9 +192,9 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b1');
 select is(pg_temp.ids_visibles(),
           array['01920000-0000-7000-8000-000000001301', '01920000-0000-7000-8000-000000001302']::uuid[],
           'b1 ve las casas de la ciudad de su zona, dentro y fuera de ella; ni las de Canelones (otra ciudad de Verano, S55) ni las de otra campaña');
-select is((select array_agg(x order by x) from public.ubicaciones_de_mi_zona() x),
-          array['01920000-0000-7000-8000-000000001301']::uuid[],
-          'la parte «zona» del pull de b1: la casa de A (no la de afuera ni la de otra ciudad)');
+select is((select array_agg(x order by x) from sync.area_del_pull() a, unnest(a.ciudades) x),
+          array['01920000-0000-7000-8000-0000000013c1']::uuid[],
+          'el pull de b1 baja toda la ciudad de su zona (0023): una sola ciudad, la de A, no la de Canelones');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b2');
 select is(pg_temp.ids_visibles(),
           array['01920000-0000-7000-8000-000000001301', '01920000-0000-7000-8000-000000001302',

@@ -227,15 +227,14 @@ update public.campania_colportor set zona_id = '01920000-0000-7000-8000-00000000
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
 select results_eq($$ select * from public.mis_zonas() $$, $$ values ('01920000-0000-7000-8000-0000000016d3'::uuid) $$,
                   'con zona en la campaña por empezar, mis_zonas() la incluye');
-select ok((select array_agg(x) from public.ubicaciones_de_mi_zona() x) @> array['01920000-0000-7000-8000-000000001681'::uuid]
-          and not (select array_agg(x) from public.ubicaciones_de_mi_zona() x) @> array['01920000-0000-7000-8000-000000001682'::uuid],
-          'y la parte «zona» del pull trae la casa de su zona, no la de afuera');
-create temp table area_b3 on commit drop as select (sync.area_del_pull('zona')).huella as h;
+select is((select ciudades from sync.area_del_pull()), array['01920000-0000-7000-8000-0000000016c1']::uuid[],
+          'y el pull baja toda la ciudad de su zona (0023), también la casa de afuera de la zona');
+create temp table area_b3 on commit drop as select (sync.area_del_pull()).huella as h;
 
 select pg_temp.actuar_como_servidor();
 update public.campania set fecha_inicio = current_date where id = '01920000-0000-7000-8000-0000000016e3';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
-select is((sync.area_del_pull('zona')).huella, (select h from area_b3),
+select is((sync.area_del_pull()).huella, (select h from area_b3),
           'cuando la campaña empieza, la huella del área no cambia: sus casas ya habían bajado');
 
 select pg_temp.actuar_como_servidor();
@@ -243,7 +242,7 @@ update public.campania set fecha_inicio = current_date - 1, fecha_fin = current_
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
 select is(pg_temp.casas(), array[]::text[], 'terminada, b3 deja de ver sus casas');
 select is((select count(*) from public.mis_zonas()), 0::bigint, 'y su zona');
-select isnt((sync.area_del_pull('zona')).huella, (select h from area_b3), 'y cambia la huella del área');
+select isnt((sync.area_del_pull()).huella, (select h from area_b3), 'y cambia la huella del área');
 select pg_temp.actuar_como_servidor();
 update public.campania set fecha_inicio = current_date + 30, fecha_fin = current_date + 90 where id = '01920000-0000-7000-8000-0000000016e3';
 
