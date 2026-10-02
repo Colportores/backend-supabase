@@ -130,7 +130,8 @@ insert into public.espacio (id, ubicacion_id, created_by) values (pg_temp.u('15'
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.resultados(sync.push(jsonb_build_array(
             pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('15'), 'piso', '1'), 0)))),
-          array['accepted'], 'en una casa que registró él corrige su espacio sin campaña (como house_status)');
+          array['invalid 42501'],
+          'en una casa que registró él, sin campaña en la que escribir, ya no corrige su espacio (0021: el autor también necesita campaña vigente)');
 
 -- ---------------------------------------------------------------------------
 -- 2. La baja de una casa con ventas (UB001) o con visitas de otro colportor (UB002)

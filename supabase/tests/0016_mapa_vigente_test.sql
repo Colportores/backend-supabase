@@ -216,9 +216,10 @@ select results_eq($$ select * from public.mis_ciudades_de_trabajo() $$,
 select is(pg_temp.casas(), array['1', '2'], 'y ve sus casas antes del primer día (RLS de lectura)');
 select is((select count(*) from public.mis_ciudades_de_campania()), 0::bigint,
           'pero escribir sigue pidiendo una campaña vigente: no tiene ciudades de escritura');
-update public.ubicacion set numero = '2b' where id = '01920000-0000-7000-8000-000000001682';
+select throws_ok($$ update public.ubicacion set numero = '2b' where id = '01920000-0000-7000-8000-000000001682' $$,
+                 '42501', null, 'corregir una casa ajena antes del primer día: 42501 visible (0021; antes 0 filas, en silencio)');
 select is((select numero from public.ubicacion where id = '01920000-0000-7000-8000-000000001682'), '2',
-          'corregir una casa ajena antes del primer día no toca nada');
+          'y no toca nada');
 
 select pg_temp.actuar_como_servidor();
 update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000016d3'
