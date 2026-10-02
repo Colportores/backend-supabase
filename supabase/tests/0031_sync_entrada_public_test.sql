@@ -1,4 +1,4 @@
--- pgTAP · migración 0022 — las puertas del sync en public (backend-supabase#53, ADR-013):
+-- pgTAP · migración 0025 — las puertas del sync en public (backend-supabase#53, ADR-013):
 -- public.sync_push y public.sync_pull devuelven lo mismo que sync.*, con la RLS de quien llama;
 -- el sobre y los topes se rechazan con CS001 a CS003; sin sesión, 42501; y desde la Data API no
 -- hay otro camino a sync.*.
@@ -31,11 +31,11 @@ begin
 end $$;
 
 create or replace function pg_temp.u(p text) returns uuid language sql as $$
-  select ('01920000-0000-7000-8000-0000000027' || p)::uuid;
+  select ('01920000-0000-7000-8000-0000000031' || p)::uuid;
 $$;
 
 create or replace function pg_temp.sobre(p_schema_version jsonb default '1') returns jsonb language sql as $$
-  select jsonb_build_object('device_id', '01920000-0000-7000-8000-0000000027d0',
+  select jsonb_build_object('device_id', '01920000-0000-7000-8000-0000000031d0',
                             'app_version', '1.4.2', 'schema_version', p_schema_version);
 $$;
 
@@ -214,9 +214,6 @@ select is(pg_temp.ids(d, 'ubicacion'),
           array[pg_temp.u('01')::text, pg_temp.u('02')::text, pg_temp.u('04')::text],
           'toda la ciudad de su zona (contrato 0.9.8), también fuera de Z1; c2 no')
   from pull_puerta;
-select isnt(pg_temp.ids(sync.pull(array['ubicacion'], '{}'::jsonb, 1000, pg_temp.u('d0')), 'ubicacion'),
-            (select pg_temp.ids(d, 'ubicacion') from pull_puerta),
-            'el default de sync.pull() (zona) bajaría otra cosa: la puerta no lo usa');
 
 -- Paginado: has_more y el watermark de vuelta, como string.
 create temp table pagina_1 as
@@ -341,9 +338,9 @@ select is(
 select pg_temp.como_servidor();
 drop table lote, push_ref, push_puerta, pull_ref, pull_puerta, pagina_1, pagina_2;
 delete from sync.op_cache where client_op_id in (pg_temp.u('a1'), pg_temp.u('a2'), pg_temp.u('a3'));
-delete from public.espacio where ubicacion_id::text like '01920000-0000-7000-8000-00000000270%';
-delete from public.house_status where ubicacion_id::text like '01920000-0000-7000-8000-00000000270%';
-delete from public.ubicacion where id::text like '01920000-0000-7000-8000-00000000270%';
+delete from public.espacio where ubicacion_id::text like '01920000-0000-7000-8000-00000000310%';
+delete from public.house_status where ubicacion_id::text like '01920000-0000-7000-8000-00000000310%';
+delete from public.ubicacion where id::text like '01920000-0000-7000-8000-00000000310%';
 delete from public.campania_colportor where campania_id in (pg_temp.u('e1'), pg_temp.u('e2'));
 delete from public.zona where campania_ciudad_id in (pg_temp.u('f1'), pg_temp.u('f2'));
 delete from public.campania_ciudad where id in (pg_temp.u('f1'), pg_temp.u('f2'));

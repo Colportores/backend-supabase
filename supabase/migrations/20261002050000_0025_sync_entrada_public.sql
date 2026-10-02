@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0022 · Funciones de entrada del sync en public: sync_push y sync_pull (backend-supabase#53)
+-- 0025 · Funciones de entrada del sync en public: sync_push y sync_pull (backend-supabase#53)
 --
 -- ADR-013 (docs-organizacion#22, decisión de Cristian del 02/10): en la Fase 1 no hay BFF. El
 -- motor llama directo a `POST /rest/v1/rpc/sync_push` y `.../sync_pull` con la anon key y el JWT
@@ -56,7 +56,8 @@
 --
 -- public.sync_pull no expone el alcance: llama a sync.pull() con 'ciudad'
 -- (mis_ciudades_de_trabajo(): la ciudad de su zona y, sin zona, todas las de la campaña). El
--- default 'zona' de sync.pull() es de la 0.9.5. Sacar p_alcance de sync.pull() va en otro issue.
+-- default 'zona' de sync.pull() es de la 0.9.5; la rama «zona» la saca #58 (PR #61), que deja
+-- p_alcance en la firma y lo ignora, así que esta llamada vale antes y después.
 --
 -- ## 5. Privilegios: SECURITY INVOKER y sync.* sigue con su grant a authenticated
 --
@@ -127,7 +128,7 @@ $$;
 
 comment on function sync.validar_sobre(jsonb) is
   'Valida el sobre (device: device_id, app_version, schema_version) de un pedido de sync y '
-  'devuelve el device_id. CS001 sobre inválido, CS002 sin sobre o schema_version vieja (0022). '
+  'devuelve el device_id. CS001 sobre inválido, CS002 sin sobre o schema_version vieja (0025). '
   'Interna de public.sync_push() y public.sync_pull().';
 
 -- ----------------------------------------------------------------------------
@@ -178,7 +179,7 @@ $$;
 
 comment on function public.sync_push(jsonb) is
   'Entrada del push del motor (POST /rest/v1/rpc/sync_push, ADR-013): valida el sobre y los '
-  'topes del lote (500 jobs, 1 MB; CS003) y delega en sync.push() como quien llama (0022).';
+  'topes del lote (500 jobs, 1 MB; CS003) y delega en sync.push() como quien llama (0025).';
 
 -- ----------------------------------------------------------------------------
 -- 3. public.sync_pull
@@ -260,7 +261,7 @@ $$;
 comment on function public.sync_pull(jsonb) is
   'Entrada del pull del motor (POST /rest/v1/rpc/sync_pull, ADR-013): valida el sobre y delega en '
   'sync.pull() con alcance ciudad (contrato 0.9.8) como quien llama. El watermark viaja como '
-  'string opaco (0022).';
+  'string opaco (0025).';
 
 -- ----------------------------------------------------------------------------
 -- 4. sync.push(): el hint del tope de 500 ya no nombra al BFF
