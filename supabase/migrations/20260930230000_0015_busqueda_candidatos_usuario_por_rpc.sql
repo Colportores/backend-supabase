@@ -6,6 +6,10 @@
 --   · front-coordinadores-web#29, punto 1: «Búsqueda: en el servidor. Cada búsqueda consulta
 --     al backend y devuelve pocas cuentas.» Punto 3: «Sugeridos: más nuevos primero (las 5
 --     cuentas pendientes de asignación, por fecha de creación descendente).»
+--   · backend-supabase#41 y #47 (02/10, comentario 5951975295): «Orden: primero las cuentas cuyo
+--     nombre, apellido o email empiezan con lo escrito; después el resto, alfabético. Tope: 10
+--     por página, con paginación: si el coordinador scrollea, siguen apareciendo las siguientes
+--     10. La RPC necesita cursor u offset estable con ese orden.»
 --   · front-coordinadores-web#20, punto 5: «`usuario`: se acota a RPCs. El coordinador deja
 --     de leer la tabla directo. Ve a los colportores de sus campañas (nombre, email y estado)
 --     y busca candidatos solo con el RPC de búsqueda de la vista 23, que devuelve pocas
@@ -36,7 +40,7 @@
 -- sigue escrito una sola vez, en campanias_vigentes_de() (0005). estado_cuenta() no cambia de
 -- firma, de resultado ni de seguridad (sigue INVOKER).
 --
--- ## 3. buscar_candidatos(p_campania_id, p_texto)
+-- ## 3. buscar_candidatos(p_campania_id, p_texto, p_despues_de)
 --
 -- SECURITY DEFINER, como las lecturas de 0007. El permiso es lo primero, con el mismo tramo que
 -- inscribir_colportor() (motivo_campania_del_coordinador(): el coordinador de esa campaña o un
@@ -56,13 +60,24 @@
 --   · texto vacío (null, '' o solo espacios): los SUGERIDOS, hasta 5 cuentas con estado
 --     PENDIENTE_ASIGNACION, de la más nueva a la más vieja (created_at desc, id desc como
 --     desempate estable).
---   · con texto: hasta 10 cuentas cuyo nombre completo («nombre apellido») o email CONTIENE el
+--   · con texto: las cuentas cuyo nombre completo («nombre apellido») o email CONTIENE el
 --     texto, sin distinguir mayúsculas ni tildes («martinez» encuentra «Martínez», también con
---     la tilde combinada, NFD). El texto se
---     busca literal (strpos, no LIKE: un «%» o un «_» no son comodines). Orden: primero las que
---     EMPIEZAN con el texto (el nombre completo, el apellido o el email), después por nombre
---     completo normalizado con collate "C" (palabra por palabra: «ana martinez» antes que
---     «anabel»; la collation de la base ignora los espacios), y el id como desempate.
+--     la tilde combinada, NFD), de a 10 por página. El texto se
+--     busca literal (strpos, no LIKE: un «%» o un «_» no son comodines). Orden (decisión del
+--     02/10): primero las que EMPIEZAN con el texto (el nombre completo, que empieza por el
+--     nombre, el apellido o el email), después el resto; dentro de cada grupo, alfabético por
+--     nombre completo normalizado con collate "C" (palabra por palabra: «ana martinez» antes
+--     que «anabel»; la collation de la base ignora los espacios), las que no tienen nombre al
+--     final, y el id como desempate. El orden es total: no hay dos filas con la misma clave.
+--
+-- Paginación (decisión del 02/10): por cursor, no por offset. p_despues_de es el usuario_id de
+-- la última cuenta de la página anterior; la página siguiente son las 10 que van después de ella
+-- en ese orden. La clave de la cuenta del cursor se recalcula con el mismo texto, así que no hay
+-- duplicados ni huecos entre páginas aunque entre una y otra alguien entre al equipo o se dé de
+-- alta una cuenta (con offset, una cuenta que sale de la lista corre a las demás y una queda sin
+-- mostrarse). Una página con menos de 10 es la última. Sin texto, los sugeridos son una sola
+-- página: con cursor no devuelve nada. Un cursor que no es ninguna cuenta es 22023 (el panel
+-- vuelve a buscar desde el principio).
 --
 -- Columnas, las que usa la vista 23 (CandidatoColportor en front-coordinadores-web):
 --   usuario_id, nombre, apellido, email, estado (PENDIENTE_ASIGNACION | ACTIVA | SUSPENDIDA,
@@ -87,7 +102,6 @@
 --
 -- ## Pendientes (no se deciden acá; comentario en backend-supabase#41)
 --
---   · El orden de los resultados con texto y el tope de 10: la HU solo fija los sugeridos.
 --   · Cuentas de staff: un COORDINADOR o ADMIN sin inscripción es PENDIENTE_ASIGNACION y aparece
 --     como candidato, igual que inscribir_colportor() lo acepta (0005: no se exige rol COLPORTOR).
 --   · INSCRIPCION_BORRADA: aparece con ese motivo; el texto para el panel no está en el diseño.
@@ -235,7 +249,8 @@ comment on function public.normalizar_busqueda(text) is
   'Texto para comparar en buscar_candidatos(): minúsculas, sin tildes, espacios colapsados; '
   'null si queda vacío. Interna (0015).';
 
-create function public.buscar_candidatos(p_campania_id uuid, p_texto text default null)
+create function public.buscar_candidatos(p_campania_id uuid, p_texto text default null,
+                                         p_despues_de uuid default null)
 returns table (usuario_id uuid, nombre text, apellido text, email text, estado text,
                campania_actual text, creada_en timestamptz, motivo_bloqueo text)
 language plpgsql
@@ -246,6 +261,10 @@ as $$
 declare
   v_texto  text := public.normalizar_busqueda(p_texto);
   v_motivo text;
+  -- La clave de orden de la cuenta del cursor: (no empieza, sin nombre, nombre, id).
+  v_cursor_no_empieza  boolean;
+  v_cursor_sin_nombre  boolean;
+  v_cursor_nombre      text;
 begin
   if auth.uid() is null then
     raise exception 'buscar_candidatos requiere un usuario autenticado'
@@ -267,6 +286,26 @@ begin
       null;
   end case;
 
+  -- La página siguiente. Sin texto, los sugeridos son una sola página.
+  if p_despues_de is not null then
+    if v_texto is null then
+      return;
+    end if;
+    select not coalesce(strpos(x.n_completo, v_texto) = 1 or strpos(x.n_apellido, v_texto) = 1
+                        or strpos(x.n_email, v_texto) = 1, false),
+           x.n_completo is null, coalesce(x.n_completo, '')
+      into v_cursor_no_empieza, v_cursor_sin_nombre, v_cursor_nombre
+      from (select public.normalizar_busqueda(u.nombre || ' ' || u.apellido) as n_completo,
+                   public.normalizar_busqueda(u.apellido) as n_apellido,
+                   public.normalizar_busqueda(u.email) as n_email
+              from public.usuario u
+             where u.id = p_despues_de) x;
+    if not found then
+      raise exception 'No se encontró la última cuenta de la página anterior. Volvé a buscar desde el principio.'
+        using errcode = 'invalid_parameter_value';
+    end if;
+  end if;
+
   return query
     with candidata as (
       select u.id, u.nombre, u.apellido, u.email, u.created_at, u.suspendido_en,
@@ -281,25 +320,37 @@ begin
                           where cc.campania_id = p_campania_id and cc.usuario_id = u.id
                             and cc.deleted_at is null)
     ),
+    -- La clave de orden de la búsqueda: primero las que empiezan con el texto (false < true),
+    -- después alfabético, las sin nombre al final, y el id.
+    clave as (
+      select c.*,
+             not coalesce(strpos(c.n_completo, v_texto) = 1 or strpos(c.n_apellido, v_texto) = 1
+                          or strpos(c.n_email, v_texto) = 1, false) as no_empieza,
+             c.n_completo is null as sin_nombre,
+             coalesce(c.n_completo, '') as nombre_orden
+        from candidata c
+    ),
     elegida as (
       -- Sugeridos: sin texto, las 5 pendientes de asignación más nuevas.
       (select c.*, row_number() over (order by c.created_at desc, c.id desc) as orden
-         from candidata c
+         from clave c
         where v_texto is null
           and public.estado_de_cuenta(c.suspendido_en,
                 exists (select 1 from public.campanias_vigentes_de(c.id))) = 'PENDIENTE_ASIGNACION'
         order by c.created_at desc, c.id desc
         limit 5)
       union all
-      -- Búsqueda: hasta 10 que contienen el texto, primero las que empiezan con él.
+      -- Búsqueda: de a 10 que contienen el texto, primero las que empiezan con él; después
+      -- del cursor, si viene. El coalesce de no_empieza: sin nombre ni apellido, el «empieza»
+      -- sería null.
       (select c.*, row_number() over (
-                -- coalesce: sin nombre ni apellido, el «empieza» sería null, y null va primero en desc.
-                order by coalesce(strpos(c.n_completo, v_texto) = 1 or strpos(c.n_apellido, v_texto) = 1
-                                  or strpos(c.n_email, v_texto) = 1, false) desc,
-                         c.n_completo collate "C", c.id) as orden
-         from candidata c
+                order by c.no_empieza, c.sin_nombre, c.nombre_orden collate "C", c.id) as orden
+         from clave c
         where v_texto is not null
           and (strpos(c.n_completo, v_texto) > 0 or strpos(c.n_email, v_texto) > 0)
+          and (p_despues_de is null
+               or (c.no_empieza, c.sin_nombre, c.nombre_orden collate "C", c.id)
+                  > (v_cursor_no_empieza, v_cursor_sin_nombre, v_cursor_nombre collate "C", p_despues_de))
         order by orden
         limit 10)
     )
@@ -320,12 +371,14 @@ begin
 end;
 $$;
 
-comment on function public.buscar_candidatos(uuid, text) is
+comment on function public.buscar_candidatos(uuid, text, uuid) is
   'HU-CAM-004, vista 23: cuentas para añadir a p_campania_id. Sin texto, los sugeridos (hasta 5 '
-  'PENDIENTE_ASIGNACION, más nuevas primero); con texto, hasta 10 cuyo nombre completo o email '
-  'lo contiene (sin mayúsculas ni tildes), primero las que empiezan con él. Devuelve estado, '
-  'campaña vigente y motivo_bloqueo (el de inscribir_colportor(), null si se puede). Errores: '
-  '42501 sin permiso; CI001 campaña inexistente; CI002 no vigente (0015).';
+  'PENDIENTE_ASIGNACION, más nuevas primero, una sola página); con texto, las que contienen el '
+  'texto en el nombre completo o el email (sin mayúsculas ni tildes), primero las que empiezan '
+  'con él y después alfabético, de a 10 por página: p_despues_de es el usuario_id de la última '
+  'de la página anterior. Devuelve estado, campaña vigente y motivo_bloqueo (el de '
+  'inscribir_colportor(), null si se puede). Errores: 42501 sin permiso; CI001 campaña '
+  'inexistente; CI002 no vigente; 22023 cursor desconocido (0015).';
 
 -- ----------------------------------------------------------------------------
 -- 5. Privilegios
@@ -335,12 +388,12 @@ comment on function public.buscar_candidatos(uuid, text) is
 -- todo y se otorga explícito.
 revoke all on function public.estado_de_cuenta(timestamptz, boolean),
   public.colportores_de_campania(uuid), public.normalizar_busqueda(text),
-  public.buscar_candidatos(uuid, text)
+  public.buscar_candidatos(uuid, text, uuid)
   from public, anon, authenticated;
 
 -- estado_de_cuenta: pura; la necesita estado_cuenta(), que corre con los privilegios del usuario.
 grant execute on function public.estado_de_cuenta(timestamptz, boolean) to authenticated, service_role;
-grant execute on function public.colportores_de_campania(uuid), public.buscar_candidatos(uuid, text)
+grant execute on function public.colportores_de_campania(uuid), public.buscar_candidatos(uuid, text, uuid)
   to authenticated, service_role;
 -- normalizar_busqueda: interna, la llama buscar_candidatos() como su dueño.
 grant execute on function public.normalizar_busqueda(text) to service_role;
