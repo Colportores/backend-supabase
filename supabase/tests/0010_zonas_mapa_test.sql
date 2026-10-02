@@ -1,5 +1,5 @@
 -- pgTAP · zonas dentro del mapa de la campaña (migración 0008, backend-supabase#22)
--- Forma (RADIAL y ESQUINAS), no superposición con su tolerancia, el círculo, los RPC del
+-- Forma (RADIAL y ESQUINAS), zonas superpuestas (S56, 0013), el círculo, los RPC del
 -- mapa (guardar, vista previa, baja, agregar ciudad), permisos, y la RLS de lectura y
 -- escritura de campania_ciudad, zona y zona_vertice. El delta del sync está en
 -- 0011_zonas_mapa_sync_test (necesita filas commiteadas) y la migración con datos en
@@ -136,7 +136,7 @@ select ok(has_function_privilege('authenticated', f, 'execute'), 'authenticated 
     'public.agregar_ciudad_a_campania(uuid,uuid)']) f;
 select ok(not has_function_privilege('authenticated', f, 'execute'), 'authenticated NO ejecuta la interna ' || f)
   from unnest(array[
-    'public.zona_superposiciones(uuid,jsonb,uuid)', 'public.motivo_mapa_de_campania(uuid)',
+    'public.motivo_mapa_de_campania(uuid)',
     'public.lanzar_motivo_mapa(text)', 'public.bloquear_mapa(uuid)',
     'public.zona_ubicaciones_incluidas(uuid,jsonb)']) f;
 select is((select array_agg(p.proname::text order by p.proname) from pg_proc p
@@ -331,7 +331,7 @@ select throws_ok(
   '23505', null, 'un vértice con orden repetido en la misma zona se rechaza también por INSERT directo');
 
 -- ---------------------------------------------------------------------------
--- 5. No superposición
+-- 5. Zonas superpuestas (S56, 0013): se guardan, sin tolerancia ni aviso
 -- ---------------------------------------------------------------------------
 -- A y B comparten el borde lon = -56.16 (la calle). C se mete en las dos.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010a1');
@@ -342,57 +342,53 @@ update zonas_ab set b = pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010
 select is((select a ->> 'guardada' from zonas_ab), 'true', 'Zona A se guarda');
 select is((select b ->> 'guardada' from zonas_ab), 'true', 'Zona B comparte un borde (la calle) con A → se guarda');
 select is((select jsonb_array_length(a -> 'vertices') from zonas_ab), 4, 'Zona A queda con sus 4 esquinas');
+select ok(not ((select a from zonas_ab) ? 'superposiciones'), 'la respuesta ya no trae superposiciones');
 
-select throws_ok(
-  $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90) $$,
-  'CZ007', 'Esta zona se superpone con «Zona A». Ajustá el borde para que solo compartan la calle.',
-  'Zona C se superpone con A y B → CZ007, con el aviso de qué hacer');
-select is(
-  (select jsonb_path_query_array(pg_temp.detalle_error(
-     $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90) $$)::jsonb,
-     '$.superposiciones[*].nombre')),
-  '["Zona A", "Zona B"]'::jsonb,
-  'el DETAIL de CZ007 lista todas las zonas con las que choca');
-select is(
-  (select pg_temp.detalle_error(
-     $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90) $$)::jsonb
-     -> 'superposiciones' -> 0 -> 'interseccion' ->> 'type'),
-  'Polygon', 'el DETAIL trae la geometría de la parte superpuesta (para marcarla en rojo)');
-
--- La vista previa no guarda: devuelve las superposiciones y cuántas ubicaciones incluye.
+-- La vista previa no guarda: devuelve el polígono y cuántas ubicaciones incluye.
 create temp table previa on commit drop as
 select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90,
                             p_previa => true) as p;
 select is((select p ->> 'guardada' from previa), 'false', 'vista previa: no guarda');
-select is((select jsonb_array_length(p -> 'superposiciones') from previa), 2, 'vista previa: devuelve las 2 superposiciones');
+select ok(not ((select p from previa) ? 'superposiciones'), 'vista previa: sin superposiciones');
 select is((select p -> 'ubicaciones_incluidas' from previa), '0'::jsonb,
           'vista previa: ubicaciones_incluidas (0: no hay ubicaciones; el conteo lo prueba 0013)');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.zona where nombre = 'Zona C'), 0::bigint, 'vista previa: Zona C no existe');
 
--- Tolerancia: una franja común de 0,33 m (ruido del borde) pasa; una de 3,3 m no.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010a1');
+select is((pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90)
+           ->> 'guardada'),
+          'true', 'Zona C se mete en A y en B → se guarda (antes CZ007)');
+select is((pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona A bis', -56.17, -34.91, -56.16, -34.90)
+           ->> 'guardada'),
+          'true', 'la misma forma que A, con otro nombre → se guarda');
+
+-- Sin tolerancia: ni 0,33 m ni 3,3 m se miran.
 select lives_ok(
   $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona D', -56.17, -34.900003, -56.16, -34.89) $$,
-  'Zona D pisa a A en 0,33 m (menos de 1 m) → se toma como borde compartido');
-select throws_ok(
+  'Zona D pisa a A en 0,33 m → se guarda');
+select lives_ok(
   $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona E', -56.16, -34.90003, -56.15, -34.89) $$,
-  'CZ007', 'Esta zona se superpone con «Zona B». Ajustá el borde para que solo compartan la calle.',
-  'Zona E pisa a B en 3,3 m → CZ007');
+  'Zona E pisa a B en 3,3 m → se guarda (antes CZ007)');
 
--- En otra campania_ciudad (otra campaña, misma ciudad) sí se puede superponer.
+-- En otra campania_ciudad (otra campaña, misma ciudad), como siempre.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010a2');
 select lives_ok(
   $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f3', 'Zona A de Otra', -56.17, -34.91, -56.16, -34.90) $$,
-  'la misma forma de A en otra campaña → se guarda (la regla es por campania_ciudad)');
+  'la misma forma de A en otra campaña → se guarda');
 
--- Por INSERT directo también (trigger).
+-- Por INSERT directo también: el trigger ya no la rechaza.
 select pg_temp.actuar_como_servidor();
-select throws_ok(
+select lives_ok(
   $$ insert into public.zona (nombre, campania_ciudad_id, tipo_forma, poligono_geojson)
      values ('Zona C directa', '01920000-0000-7000-8000-0000000010f1', 'ESQUINAS',
              pg_temp.rect(-56.165, -34.91, -56.155, -34.90)) $$,
-  'CZ007', null, 'superposición por INSERT directo → CZ007 (trigger)');
+  'superposición por INSERT directo → se guarda (el trigger ya no la rechaza)');
+select throws_ok(
+  $$ insert into public.zona (nombre, campania_ciudad_id, tipo_forma, poligono_geojson)
+     values ('Zona C rota', '01920000-0000-7000-8000-0000000010f1', 'ESQUINAS',
+             '{"type":"Polygon","coordinates":[[[-56.165,-34.91],[-56.155,-34.90],[-56.165,-34.90],[-56.155,-34.91],[-56.165,-34.91]]]}') $$,
+  'CZ008', null, 'el trigger sigue rechazando una forma que no es un polígono simple (CZ008)');
 
 -- ---------------------------------------------------------------------------
 -- 6. Editar
@@ -490,7 +486,7 @@ select throws_ok(
   $$ select public.baja_zona((select (b -> 'zona' ->> 'id')::uuid from zonas_ab)) $$,
   'CZ004', null, 'dar de baja dos veces → CZ004');
 
--- Una zona dada de baja no cuenta para la superposición.
+-- Una zona nueva en el lugar de una dada de baja.
 select lives_ok(
   $$ select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona B nueva', -56.16, -34.91, -56.15, -34.90) $$,
   'una zona nueva en el lugar de B (dada de baja) → se guarda');
@@ -519,7 +515,7 @@ select throws_ok(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000010b1');
 select is(
   (select array_agg(nombre order by nombre) from public.zona where deleted_at is null),
-  array['Radial LP', 'Triángulo', 'Zona A', 'Zona B nueva', 'Zona D'],
+  array['Radial LP', 'Triángulo', 'Zona A', 'Zona A bis', 'Zona B nueva', 'Zona C', 'Zona C directa', 'Zona D', 'Zona E'],
   'el colportor lee todas las zonas vivas de su campaña (no solo la suya) y ninguna de otra');
 select ok((select count(*) > 0 from public.zona where deleted_at is not null),
           'el colportor también lee las bajas (tombstones para su réplica)');

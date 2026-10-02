@@ -127,9 +127,8 @@ values ('<nombre real>', '<id de campania_ciudad>', 'RADIAL', <lat>, <lon>, <met
   obligatorio) y tiene forma: `RADIAL` (centro y radio) o `ESQUINAS` (el
   `poligono_geojson` ya calculado, un `Polygon` cerrado, más sus esquinas en
   `zona_vertice`, al menos 3). No se cargan zonas sin forma.
-- Dos zonas vivas de la misma `campania_ciudad` no se pueden superponer
-  (pueden compartir la calle del borde); si se superponen, el `insert` falla
-  con `CZ007` y dice con cuál.
+- Las zonas se pueden superponer (S56, migración `0013`): el `insert` no
+  mira si una zona toca o cubre parte de otra.
 - El nombre no se repite entre las zonas vivas de la misma `campania_ciudad`.
 
 ### 5. `producto`
