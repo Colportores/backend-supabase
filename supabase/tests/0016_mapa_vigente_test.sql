@@ -1,5 +1,7 @@
--- pgTAP · migración 0013 (backend-supabase#39, S56): el colportor ve solo el mapa de sus
--- campañas vigentes; el coordinador, el de las que coordina (terminadas incluidas); y ya no
+-- pgTAP · migración 0013 (backend-supabase#39, S56): el colportor ve el mapa de sus campañas
+-- en curso o por empezar (decisión del 30/09), no el de las terminadas, y las casas con la misma
+-- regla (decisión del 02/10); el coordinador, el de las
+-- que coordina (terminadas incluidas); y ya no
 -- hay regla de superposición. Lo que baja en el delta (necesita filas commiteadas) lo prueba
 -- 0011_zonas_mapa_sync; las zonas superpuestas por los RPC, 0010.
 begin;
@@ -95,7 +97,7 @@ select ok(has_function_privilege('authenticated', 'sync.huella_del_mapa()', 'exe
 select ok(not has_function_privilege('anon', 'public.mis_campanias_del_mapa()', 'execute'), 'anon no');
 
 -- ---------------------------------------------------------------------------
--- 2. El colportor: solo el mapa de sus campañas vigentes
+-- 2. El colportor: el mapa de sus campañas en curso o por empezar, no el de las terminadas
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b1');
 select results_eq($$ select * from public.mis_campanias_del_mapa() $$,
@@ -111,13 +113,34 @@ select is(pg_temp.zonas(), array[]::text[], 'b2 (solo Terminada) no ve ninguna z
 select is(pg_temp.ciudades_de_campania(), array[]::uuid[], 'ni ciudades de campaña');
 select is(pg_temp.esquinas(), 0::bigint, 'ni esquinas');
 
+-- Decisión del 30/09: el mapa de una campaña por empezar se baja antes del primer día.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
-select is(pg_temp.zonas(), array[]::text[], 'b3 (solo Futura) tampoco: le llega cuando empieza');
+select results_eq($$ select * from public.mis_campanias_del_mapa() $$,
+                  $$ values ('01920000-0000-7000-8000-0000000016e3'::uuid) $$,
+                  'b3 (solo Futura): la campaña por empezar');
+select is(pg_temp.zonas(), array['M16 Futura'], 'b3 ve la zona de la campaña por empezar');
+select is(pg_temp.ciudades_de_campania(), array['01920000-0000-7000-8000-0000000016f3']::uuid[],
+          'y su ciudad');
+create temp table huella_b3 on commit drop as select sync.huella_del_mapa() as h;
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date where id = '01920000-0000-7000-8000-0000000016e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select is(sync.huella_del_mapa(), (select h from huella_b3),
+          'cuando la campaña empieza, su huella no cambia: el mapa ya había bajado');
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date - 1, fecha_fin = current_date - 1
+ where id = '01920000-0000-7000-8000-0000000016e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select is(pg_temp.zonas(), array[]::text[], 'terminada, b3 deja de ver su mapa');
+select isnt(sync.huella_del_mapa(), (select h from huella_b3), 'y cambia su huella');
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date + 30, fecha_fin = current_date + 90
+ where id = '01920000-0000-7000-8000-0000000016e3';
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b4');
 select is(pg_temp.zonas(), array[]::text[], 'b4 (inscripción dada de baja) no ve nada');
 
--- La huella cambia cuando cambian sus campañas vigentes.
+-- La huella cambia cuando termina una de sus campañas.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b1');
 create temp table huella_b1 on commit drop as select sync.huella_del_mapa() as h;
 select pg_temp.actuar_como_servidor();
@@ -160,6 +183,73 @@ select is((select extensions.st_intersects(public.zona_geometria(a.poligono_geoj
 select throws_ok(
   $$ update public.zona set radio_m = 3001 where nombre = 'M16 Encima' $$,
   'CZ008', null, 'los parámetros de 0008 siguen (radio de hasta 3000 m)');
+
+-- ---------------------------------------------------------------------------
+-- 5. Las casas, con la misma regla que el mapa (decisión del 02/10): toda campaña con
+--    inscripción viva que no terminó, con o sin zona. Escribir sigue pidiendo campaña vigente.
+-- ---------------------------------------------------------------------------
+select pg_temp.actuar_como_servidor();
+-- 81 cae en M16 Futura (radial de 300 m) y en M16 Vigente (borde); 82 es de la ciudad, lejos de
+-- toda zona.
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id) values
+  ('01920000-0000-7000-8000-000000001681', 'CASA', 'Mapa16', '1', -34.90, -56.16, '01920000-0000-7000-8000-0000000016c1'),
+  ('01920000-0000-7000-8000-000000001682', 'CASA', 'Mapa16', '2', -34.95, -56.30, '01920000-0000-7000-8000-0000000016c1');
+
+create or replace function pg_temp.casas() returns text[] language sql as $$
+  select coalesce(array_agg(u.numero order by u.numero), array[]::text[])
+    from public.ubicacion u where u.id in ('01920000-0000-7000-8000-000000001681', '01920000-0000-7000-8000-000000001682');
+$$;
+
+select ok(not has_function_privilege('authenticated', 'public.mis_inscripciones_no_terminadas()', 'execute'),
+          'mis_inscripciones_no_terminadas es interna (la llaman funciones SECURITY DEFINER)');
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+-- Es interna: se mira como su dueño, con el JWT de b3.
+select set_config('role', 'postgres', true);
+select results_eq($$ select * from public.mis_inscripciones_no_terminadas() $$,
+                  $$ values ('01920000-0000-7000-8000-0000000016e3'::uuid, null::uuid) $$,
+                  'b3 (solo Futura): su inscripción en la campaña por empezar, sin zona');
+select set_config('role', 'authenticated', true);
+select results_eq($$ select * from public.mis_ciudades_de_trabajo() $$,
+                  $$ values ('01920000-0000-7000-8000-0000000016c1'::uuid) $$,
+                  'sin zona, su ciudad de trabajo es la de la campaña por empezar');
+select is(pg_temp.casas(), array['1', '2'], 'y ve sus casas antes del primer día (RLS de lectura)');
+select is((select count(*) from public.mis_ciudades_de_campania()), 0::bigint,
+          'pero escribir sigue pidiendo una campaña vigente: no tiene ciudades de escritura');
+update public.ubicacion set numero = '2b' where id = '01920000-0000-7000-8000-000000001682';
+select is((select numero from public.ubicacion where id = '01920000-0000-7000-8000-000000001682'), '2',
+          'corregir una casa ajena antes del primer día no toca nada');
+
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000016d3'
+ where campania_id = '01920000-0000-7000-8000-0000000016e3' and usuario_id = '01920000-0000-7000-8000-0000000016b3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select results_eq($$ select * from public.mis_zonas() $$, $$ values ('01920000-0000-7000-8000-0000000016d3'::uuid) $$,
+                  'con zona en la campaña por empezar, mis_zonas() la incluye');
+select ok((select array_agg(x) from public.ubicaciones_de_mi_zona() x) @> array['01920000-0000-7000-8000-000000001681'::uuid]
+          and not (select array_agg(x) from public.ubicaciones_de_mi_zona() x) @> array['01920000-0000-7000-8000-000000001682'::uuid],
+          'y la parte «zona» del pull trae la casa de su zona, no la de afuera');
+create temp table area_b3 on commit drop as select (sync.area_del_pull('zona')).huella as h;
+
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date where id = '01920000-0000-7000-8000-0000000016e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select is((sync.area_del_pull('zona')).huella, (select h from area_b3),
+          'cuando la campaña empieza, la huella del área no cambia: sus casas ya habían bajado');
+
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date - 1, fecha_fin = current_date - 1 where id = '01920000-0000-7000-8000-0000000016e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
+select is(pg_temp.casas(), array[]::text[], 'terminada, b3 deja de ver sus casas');
+select is((select count(*) from public.mis_zonas()), 0::bigint, 'y su zona');
+select isnt((sync.area_del_pull('zona')).huella, (select h from area_b3), 'y cambia la huella del área');
+select pg_temp.actuar_como_servidor();
+update public.campania set fecha_inicio = current_date + 30, fecha_fin = current_date + 90 where id = '01920000-0000-7000-8000-0000000016e3';
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b2');
+select is(pg_temp.casas(), array[]::text[], 'b2 (solo Terminada) no ve las casas');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b4');
+select is(pg_temp.casas(), array[]::text[], 'b4 (inscripción dada de baja) tampoco');
 
 select * from finish();
 rollback;

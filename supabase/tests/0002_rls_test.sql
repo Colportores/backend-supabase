@@ -108,7 +108,7 @@ select lives_ok(
 );
 select is((select count(*) from public.jornada), 1::bigint, 'Beto ve su propia jornada');
 
--- Sin calle ni numero: el alta por marcador manual sobre el mapa no los conoce (HU-UBI, ADR-018).
+-- Sin calle ni numero: el alta por marcador manual sobre el mapa no los conoce (HU-UBI, ADR-004).
 select lives_ok(
   $$ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f6', 'CASA', -34.88, -56.15,
@@ -176,12 +176,12 @@ select throws_ok(
   $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad)
      values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA', 'RECHAZO', 1) $$,
   '23514', null,
-  'house_status con color y prioridad contradictorios se rechaza (ADR-010)'
+  'house_status con color y prioridad contradictorios se rechaza (ADR-003)'
 );
 select lives_ok(
   $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad)
      values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA', 'RECHAZO', 7) $$,
-  'house_status con el par color/prioridad de ADR-010 se acepta'
+  'house_status con el par color/prioridad de ADR-003 se acepta'
 );
 
 -- venta_item: la línea es aritmética pura. El descuento informal vive en venta.monto_total (S38).
@@ -237,16 +237,16 @@ select is((select count(*) from public.mis_zonas() z where z = '01920000-0000-70
           1::bigint,
           'una campaña vigente sí da acceso a su zona');
 
--- Baja administrativa (ADR-011): la revocación de sesión ocurre fuera de esta base, así que los
+-- Baja administrativa (ADR-005): la revocación de sesión ocurre fuera de esta base, así que los
 -- helpers de autorización tienen que caerse solos si la sesión sobrevive.
 select set_config('role', 'postgres', true);
 update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000000a2';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a2');
 
 select is((select count(*) from public.mis_zonas()), 0::bigint,
-          'un usuario con baja administrativa pierde todas sus zonas (ADR-011)');
+          'un usuario con baja administrativa pierde todas sus zonas (ADR-005)');
 select is(public.tiene_rol('COLPORTOR'), false,
-          'un usuario con baja administrativa pierde sus roles (ADR-011)');
+          'un usuario con baja administrativa pierde sus roles (ADR-005)');
 
 -- --- anon no ve nada ----------------------------------------------------------------
 select set_config('role', 'anon', true);
