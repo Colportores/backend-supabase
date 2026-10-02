@@ -42,7 +42,7 @@
 -- puedo_escribir_en_ubicacion() dejaba al autor seguir corrigiendo los espacios y estados de su
 -- casa para siempre. Pasa a exigir alguna campaña en la que se puede escribir
 -- (mis_campanias_para_escribir(), 0020: ya empezó, y no terminó o terminó hace 15 días o menos).
--- Decisión de Cristian del 02/10 (#55, comentario del 02/10): alcanza con ALGUNA campaña vigente
+-- Decisión de Cristian del 02/10 (#55, comentario 5954250933): alcanza con ALGUNA campaña vigente
 -- o dentro de la gracia, aunque sea en otra ciudad.
 --   · Vale también para la casa misma (revisión de #55): pasados la campaña y los 15 días, el
 --     autor no corrige, no muda ni da de baja su ubicación (WITH CHECK de ubicacion, 42501).
@@ -55,7 +55,7 @@
 --
 -- ## 4. En los 15 días de gracia no se corrige lo ajeno (decisión de Cristian del 02/10, #52)
 --
--- Decisión de Cristian (#52, comentario del 02/10): en los 15 días de gracia entran solo las
+-- Decisión de Cristian (#52, comentario 5954249444): en los 15 días de gracia entran solo las
 -- ventas y las altas, y las correcciones de filas propias. Las correcciones de filas ajenas
 -- (ubicacion, espacio o house_status que cargó otro) que suben después del fin de la campaña se
 -- rechazan con un código propio, CG001, que el teléfono distingue del 42501 y traduce a un aviso.
