@@ -57,7 +57,9 @@
 -- ## Dar de baja la inscripción: queda sin zona (decisión de Cristian del 02/10)
 --
 -- campania_colportor_zona_sale_con_la_baja (BEFORE UPDATE, WHEN deleted_at pasa de null a un valor
--- y la inscripción tenía zona): pone zona_id = null en la misma fila. El resto es lo de arriba: el
+-- y la fila quedaría con zona): pone zona_id = null en la misma fila. Mira la fila nueva y no la
+-- vieja: un UPDATE del servidor que da de baja y pone una zona en el mismo paso (con una inscripción
+-- que no tenía) también la deja sin zona y sin tramo. El resto es lo de arriba: el
 -- trigger del historial (que ahora también mira deleted_at, porque un UPDATE que solo toca esa
 -- columna no dispara un `UPDATE OF zona_id`) cierra el tramo con quién y cuándo. Cuando la
 -- inscripción se reactiva vuelve sin zona: aparece en «Sin zona» y se le asigna una con
@@ -74,8 +76,9 @@
 --   · No cambia lo que dice campania_colportor.zona_id ni lo que ve el colportor: mis_zonas(),
 --     el mapa y el área del pull siguen leyendo la zona actual.
 --   · No toca las inscripciones que YA estaban dadas de baja con zona (0012: la conservaban): siguen
---     con su zona y su tramo abierto, y al reactivarlas la conservan si sigue viva (0009). Si hay
---     que dejarlas sin zona como las nuevas es una limpieza aparte, pendiente de Cristian (en el PR).
+--     con su zona y su tramo abierto, y al reactivarlas la conservan si sigue viva (0009). Decisión
+--     de Cristian del 02/10: no se limpian (los datos de hoy son simulados y producción arranca en
+--     diciembre).
 --
 -- ## Quién lo lee
 --
@@ -306,7 +309,7 @@ comment on function public.tg_campania_colportor_baja_sin_zona() is
 
 create trigger campania_colportor_zona_sale_con_la_baja
   before update on public.campania_colportor
-  for each row when (old.deleted_at is null and new.deleted_at is not null and old.zona_id is not null)
+  for each row when (old.deleted_at is null and new.deleted_at is not null and new.zona_id is not null)
   execute function public.tg_campania_colportor_baja_sin_zona();
 
 -- `authenticated` también en el revoke: en una base creada desde cero los default privileges de la

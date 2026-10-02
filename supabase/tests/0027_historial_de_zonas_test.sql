@@ -341,6 +341,29 @@ select is(pg_temp.historial_de('b5'), 'Sur ->*', 'y la inscripción que ya estab
 select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b5'),
           '01920000-0000-7000-8000-0000000027d2'::uuid, 'ni su zona');
 
+-- El servidor da de baja y pone una zona en el MISMO UPDATE (revisión del PR #60: el WHEN mira la fila
+-- nueva): también queda sin zona. b6 no tiene zona.
+update public.campania_colportor set deleted_at = now(), zona_id = '01920000-0000-7000-8000-0000000027d5'
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b6'),
+          null, 'baja con zona en el mismo UPDATE, de una inscripción sin zona: queda sin zona');
+select ok((select cc.deleted_at is not null from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b6'),
+          'y de baja');
+select is(pg_temp.tramos_de('b6'), 0::bigint, 'y no abre ningún tramo (ni queda uno abierto en una inscripción de baja)');
+update public.campania_colportor set deleted_at = null
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+-- Y con una zona de antes: la baja que además la cambia por otra cierra el tramo y no abre el de la nueva.
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000027d5'
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is(pg_temp.historial_de('b6'), 'Este ->*', 'b6 con Este (la puso el servidor)');
+update public.campania_colportor set deleted_at = now(), zona_id = '01920000-0000-7000-8000-0000000027d1'
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b6'),
+          null, 'baja que además cambia la zona: queda sin zona');
+select is(pg_temp.historial_de('b6'), 'Este ->-', 'cierra el tramo de Este y no abre el de Norte');
+update public.campania_colportor set deleted_at = null
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+
 -- ---------------------------------------------------------------------------
 -- 6. Cualquier otro camino del servidor
 -- ---------------------------------------------------------------------------
