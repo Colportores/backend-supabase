@@ -221,7 +221,7 @@ select ok(pg_temp.ids_visibles() @> array['01920000-0000-7000-8000-000000001301'
           'el coordinador las ve todas (como antes)');
 
 -- Corregir: quien trabaja en la ciudad corrige cualquier casa de ella, pero no la manda a una
--- ciudad donde no trabaja. Las propias van a cualquier lado.
+-- ciudad donde no trabaja. Las propias van a cualquier lado, con alguna campaña en la que escribir (0021).
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b2');
 select lives_ok(
   $$ update public.ubicacion set lat = -34.951 where id = '01920000-0000-7000-8000-000000001302' $$,
@@ -240,10 +240,12 @@ update public.ubicacion set calle = 'Pirata' where id = '01920000-0000-7000-8000
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b3');
 update public.ubicacion set calle = 'Pirata' where id = '01920000-0000-7000-8000-000000001301';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000013b4');
-select lives_ok(
+-- b4 solo tiene una campaña terminada hace más de 15 días: desde 0021, el autor corrige y muda su
+-- casa solo con alguna campaña en la que escribir (decisión de Cristian del 02/10, #55).
+select throws_ok(
   $$ update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000013c2', lat = -34.8, lon = -56.0
       where id = '01920000-0000-7000-8000-000000001304' $$,
-  'b4 mueve su propia casa a otra ciudad');
+  '42501', null, 'b4 (sin campaña en la que escribir) ya no mueve su propia casa a otra ciudad');
 select pg_temp.actuar_como_servidor();
 select is((select calle from public.ubicacion where id = '01920000-0000-7000-8000-000000001301'), 'Rivera',
           'b3 no tocó una casa de otra ciudad (para él no existe)');

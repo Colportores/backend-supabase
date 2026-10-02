@@ -74,8 +74,8 @@ returns text language sql as $$
 $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
--- x1 registró A (Av. Italia 100, en P0 = -34.90, -56.20). y1 no está inscripto en nada: la RLS
--- solo le muestra lo suyo, así que A no la ve. c2 es otra ciudad.
+-- x1 registró A (Av. Italia 100, en P0 = -34.90, -56.20). y1 está inscripto solo en una campaña de
+-- c2 (otra ciudad): la RLS le muestra lo suyo y lo de c2, así que A no la ve. c2 es otra ciudad.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000020' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'd1-' || s || '@example.com', 'x', now(), now(), now()

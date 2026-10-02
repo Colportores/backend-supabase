@@ -60,8 +60,9 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'lovisto-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3']) s;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais lo visto', 'ZV');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values (pg_temp.u('c1'), 'Ciudad lo visto', pg_temp.u('c0'), -34.9, -56.2);
+insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad lo visto', pg_temp.u('c0'), -34.9, -56.2),
+  (pg_temp.u('c2'), 'Ciudad fuera de la campaña', pg_temp.u('c0'), -33.0, -55.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
 values (pg_temp.u('e1'), 'Verano lo visto', 'VERANO', current_date + 3, current_date + 60);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));
@@ -71,9 +72,10 @@ values (pg_temp.u('01'), 'CASA', 'Futura', '1', -34.9, -56.2, pg_temp.u('c1'), p
 insert into public.espacio (id, ubicacion_id, created_by) values (pg_temp.u('11'), pg_temp.u('01'), pg_temp.u('b2'));
 insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad, created_by)
 values (pg_temp.u('01'), -34.9, -56.2, 'CASA', 'RECHAZO', 7, pg_temp.u('b2'));
--- Una casa, un espacio y un estado que b1 registró él, para la parte 3.
+-- Una casa, un espacio y un estado que b1 registró él, para la parte 3. La casa está en c2, que NO
+-- es ciudad de la campaña: escribir en ella solo lo habilita la rama del autor (no la de ciudad).
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by)
-values (pg_temp.u('02'), 'CASA', 'Propia', '2', -34.91, -56.21, pg_temp.u('c1'), pg_temp.u('b1'));
+values (pg_temp.u('02'), 'CASA', 'Propia', '2', -33.01, -55.01, pg_temp.u('c2'), pg_temp.u('b1'));
 insert into public.espacio (id, ubicacion_id, created_by) values (pg_temp.u('12'), pg_temp.u('02'), pg_temp.u('b1'));
 insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad, created_by)
 values (pg_temp.u('02'), -34.91, -56.21, 'CASA', 'SIN_CONTESTAR', 6, pg_temp.u('b1'));
@@ -127,6 +129,8 @@ select is(pg_temp.corregir('house_status', pg_temp.u('01'), '{"color": "SIN_CONT
 -- ---------------------------------------------------------------------------
 -- 3. El autor: solo con la campaña vigente (y los 15 días de gracia)
 -- ---------------------------------------------------------------------------
+select ok(not exists (select 1 from public.mis_ciudades_de_campania() c where c = pg_temp.u('c2')),
+          'la casa está en una ciudad fuera de su campaña: solo la rama del autor la habilita');
 select ok(public.puedo_escribir_en_ubicacion(pg_temp.u('02')), 'con campaña vigente, escribe en la casa que registró');
 select is(pg_temp.corregir('espacio', pg_temp.u('12'), '{"piso": "1"}'), array['accepted'], 'vigente: el autor corrige su espacio');
 select is(pg_temp.corregir('house_status', pg_temp.u('02'), '{"color": "RECHAZO", "prioridad": 7}'), array['accepted'], 'vigente: y su estado');
