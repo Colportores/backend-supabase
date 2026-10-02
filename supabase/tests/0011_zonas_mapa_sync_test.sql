@@ -226,8 +226,8 @@ select is(pg_temp.col(sync.pull(array['zona'], d -> 'watermark', 1000), 'zona', 
 
 -- ---------------------------------------------------------------------------
 -- 4. Las casas, con la misma regla que el mapa (0013, decisión del 02/10): inscripta en una
---    campaña por empezar, con o sin zona, baja también las casas de su área antes del primer día.
---    En otra ciudad (c2), para no mezclarse con Verano.
+--    campaña por empezar, con o sin zona, baja también las casas de su ciudad antes del primer día
+--    (toda la ciudad de su zona, 0023). En otra ciudad (c2), para no mezclarse con Verano.
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
@@ -253,19 +253,15 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-0000000011e4', '01920000-0000-7000-8000-0000000011b5', '01920000-0000-7000-8000-0000000011d5');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b4');
-select is(pg_temp.col(sync.pull(array['ubicacion'], '{}'::jsonb, 1000, null, 'ciudad'), 'ubicacion', 'id'),
+select is(pg_temp.col(sync.pull(array['ubicacion'], '{}'::jsonb, 1000), 'ubicacion', 'id'),
           array['01920000-0000-7000-8000-000000001191', '01920000-0000-7000-8000-000000001192'],
-          'b4 (por empezar, sin zona) baja con «ciudad» las casas de la ciudad de esa campaña, y no las de otra');
-select is(pg_temp.col(sync.pull(array['ubicacion'], '{}'::jsonb, 1000), 'ubicacion', 'id'), array[]::text[],
-          'con «zona» y sin zona asignada, solo lo propio (S60): nada');
+          'b4 (por empezar, sin zona) baja las casas de la ciudad de esa campaña, y no las de otra');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b5');
 create temp table delta_b5 as
 select sync.pull(array['ubicacion'], '{}'::jsonb, 1000) as d;
-select is(pg_temp.col(d, 'ubicacion', 'id'), array['01920000-0000-7000-8000-000000001191'],
-          'b5 (por empezar, con zona) baja con «zona» la casa de su zona antes del primer día') from delta_b5;
-select is(pg_temp.col(sync.pull(array['ubicacion'], '{}'::jsonb, 1000, null, 'ciudad'), 'ubicacion', 'id'),
-          array['01920000-0000-7000-8000-000000001191', '01920000-0000-7000-8000-000000001192'], 'y con «ciudad», las de la ciudad de su zona');
+select is(pg_temp.col(d, 'ubicacion', 'id'), array['01920000-0000-7000-8000-000000001191', '01920000-0000-7000-8000-000000001192'],
+          'b5 (por empezar, con zona) baja antes del primer día toda la ciudad de su zona, no solo la zona') from delta_b5;
 
 select pg_temp.como_servidor();
 update public.campania set fecha_inicio = current_date - 1 where id = '01920000-0000-7000-8000-0000000011e4';
