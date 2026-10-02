@@ -1,12 +1,13 @@
 -- ============================================================================
--- 0013 · S56: zonas superpuestas permitidas y el mapa solo de las campañas que no terminaron
---        (backend-supabase#39)
+-- 0013 · S56: zonas superpuestas permitidas, y el mapa y las casas de las campañas que no
+--        terminaron (backend-supabase#39)
 --
 -- Decisión de Cristian del 30/09 sobre el supuesto S56 de HU-CAM-006 (docs-organizacion#19,
 -- ya en main con docs#20: S56 «Ajustado»). Se confirman los parámetros de 0008 (círculo de 128
 -- lados, radio de 1 a 3000 m, esquina a 1 m o menos del borde, campaña terminada sin cambios en
 -- el mapa, sin quitar ciudad ni reactivar zona, sin aviso de zona fuera de la ciudad) y cambian
--- tres cosas; la baja que deja sin zona es 0012 (#38). Las otras dos van acá:
+-- tres cosas; la baja que deja sin zona es 0012 (#38). Las otras dos van acá, más la decisión del
+-- 02/10 que extiende la segunda a las casas (sección 3):
 --
 -- ## 1. Las zonas se pueden superponer
 --
@@ -31,9 +32,9 @@
 -- colportora inscripta en una campaña que empieza el 1/12 baja el mapa el 28/11, con wifi en su
 -- casa, para trabajar sin señal desde el primer día. Las terminadas siguen sin mapa. Si el
 -- coordinador cambia zonas antes del inicio, el pull siguiente trae el mapa actualizado (el
--- delta de siempre). El mapa no es la zona asignada: mis_zonas() y el pull de ubicaciones siguen
--- con las inscripciones vigentes hoy (mis_campanias_vigentes()). El coordinador sigue viendo el
--- mapa de las campañas que coordina, terminadas incluidas (el panel las muestra), y el ADMIN todo.
+-- delta de siempre). Las casas siguen la misma regla desde la decisión del 02/10 (sección 3). El
+-- coordinador sigue viendo el mapa de las campañas que coordina, terminadas incluidas (el panel
+-- las muestra), y el ADMIN todo.
 --   · mis_campanias_del_mapa() (nueva): las campañas cuyo mapa ve. mis_campania_ciudades(), que
 --     usan las políticas del mapa, sale de ella.
 --   · El sync. Inscribirlo o reactivarlo vuelve visible un mapa que se cargó antes: sus filas
@@ -51,6 +52,31 @@
 --   · La primera vez que cada app sincronice después de esto, el mapa baja completo una vez (su
 --     watermark no tiene huella).
 --
+-- ## 3. Las casas también se bajan antes de que empiece la campaña
+--
+-- Decisión de Cristian del 02/10 (backend-supabase#39 y #45, comentario 5951976250): «Igual que el
+-- mapa: una colportora inscripta en una campaña que todavía no empezó (con o sin zona) baja
+-- también las casas de su área, no solo el mapa. Casas y mapa siguen la misma regla: toda campaña
+-- con inscripción viva que no terminó.» Caso: la del 1/12 baja el 28/11, con wifi en su casa, el
+-- mapa y las casas de su zona (o de las ciudades de la campaña, si no tiene zona) para trabajar
+-- sin señal desde el primer día.
+--   · mis_inscripciones_no_terminadas() (nueva): las inscripciones vivas del usuario autenticado
+--     en campañas vivas que no terminaron (fecha_fin null o >= hoy), con su zona. Es la regla
+--     única de «toda campaña con inscripción viva que no terminó»: la usan el mapa
+--     (mis_campanias_del_mapa()) y el área de las casas.
+--   · mis_zonas() y mis_ciudades_de_trabajo() (0009 y 0011) salen de ella en vez de
+--     mis_campanias_vigentes(). Con eso cambian juntos lo que ve (RLS de lectura de ubicacion, y
+--     de espacio y house_status, que la siguen), lo que baja con cada alcance
+--     (ubicaciones_de_mi_zona(), sync.area_del_pull()) y la huella del área: el día que la
+--     campaña empieza la huella no cambia y nada vuelve a bajar; cuando termina, cambia.
+--   · La escritura NO cambia: corregir una casa y cargarle espacios o estados sigue pidiendo una
+--     campaña vigente hoy (mis_ciudades_de_campania(), puedo_escribir_en_ubicacion() de 0011).
+--     Antes del primer día ve y baja, pero lo que cargue en una casa ajena sube recién cuando
+--     la campaña empezó. mis_campanias_vigentes() tampoco cambia: sigue decidiendo el estado de
+--     la cuenta y la inscripción.
+--   · Una inscripción por empezar se suma a la vigente: el área es la unión de las dos (por
+--     cada una, la ciudad de su zona o, sin zona, todas las de esa campaña).
+--
 -- ## Datos existentes
 --
 -- No se toca ninguna fila: solo cambian funciones, un trigger y una columna nueva con default en
@@ -63,10 +89,37 @@
 -- 1. El mapa que ve cada uno
 -- ----------------------------------------------------------------------------
 
+-- Las inscripciones vivas del usuario autenticado en campañas vivas que no terminaron (en curso
+-- o por empezar), con su zona (null = sin zona). Regla única del mapa y de las casas (sección 3,
+-- decisión del 02/10). Un usuario dado de baja no tiene ninguna (ADR-005). Interna: la llaman
+-- funciones SECURITY DEFINER.
+create function public.mis_inscripciones_no_terminadas()
+returns table (campania_id uuid, zona_id uuid)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select cc.campania_id, cc.zona_id
+    from public.campania_colportor cc
+    join public.usuario u on u.id = cc.usuario_id
+    join public.campania c on c.id = cc.campania_id
+   where cc.usuario_id = auth.uid()
+     and cc.deleted_at is null
+     and u.deleted_at is null
+     and c.deleted_at is null
+     and (c.fecha_fin is null or c.fecha_fin >= current_date);
+$$;
+
+comment on function public.mis_inscripciones_no_terminadas() is
+  'Inscripciones vivas del usuario autenticado en campañas que no terminaron (en curso o por '
+  'empezar), con su zona. Decide el mapa y las casas que ve y baja (0013; decisiones del 30/09 y '
+  'del 02/10). Interna.';
+
 -- Las campañas cuyo mapa ve el usuario autenticado: las que coordina (terminadas incluidas) y
 -- las que no terminaron (en curso o por empezar, decisión del 30/09) en las que está inscripto,
 -- con la inscripción viva. Sin el ADMIN, que las políticas suman aparte. Un usuario dado de baja
--- no ve nada (ADR-011).
+-- no ve nada (ADR-005).
 create function public.mis_campanias_del_mapa()
 returns setof uuid
 language sql
@@ -79,15 +132,7 @@ as $$
     join public.usuario u on u.id = c.coordinador_id
    where c.coordinador_id = auth.uid() and u.deleted_at is null
   union
-  select cc.campania_id
-    from public.campania_colportor cc
-    join public.usuario u on u.id = cc.usuario_id
-    join public.campania c on c.id = cc.campania_id
-   where cc.usuario_id = auth.uid()
-     and cc.deleted_at is null
-     and u.deleted_at is null
-     and c.deleted_at is null
-     and (c.fecha_fin is null or c.fecha_fin >= current_date);
+  select i.campania_id from public.mis_inscripciones_no_terminadas() i;
 $$;
 
 comment on function public.mis_campanias_del_mapa() is
@@ -112,6 +157,62 @@ comment on function public.mis_campania_ciudades() is
   'campania_ciudad visibles para el usuario autenticado: las de mis_campanias_del_mapa() (las '
   'campañas que coordina y las que no terminaron en las que está inscripto). La usan las políticas '
   'del mapa.';
+
+-- Las casas, con la misma regla (sección 3, decisión del 02/10). Misma firma y mismo cuerpo que
+-- en 0009, salvo de dónde salen las inscripciones.
+create or replace function public.mis_zonas()
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select i.zona_id
+    from public.mis_inscripciones_no_terminadas() i
+    join public.zona z on z.id = i.zona_id
+    join public.campania_ciudad cc on cc.id = z.campania_ciudad_id
+   where z.deleted_at is null
+     and cc.deleted_at is null;
+$$;
+
+comment on function public.mis_zonas() is
+  'Zonas vivas asignadas al usuario autenticado en sus inscripciones vivas de campañas que no '
+  'terminaron (en curso o por empezar; 0013, decisión del 02/10). Decide la parte «zona» de lo que '
+  've y baja. Desde 0009 es la única fuente: no hay zona directa en usuario.';
+
+-- Misma firma y mismo cuerpo que en 0011, salvo de dónde salen las inscripciones.
+create or replace function public.mis_ciudades_de_trabajo()
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with inscripcion as (
+    select i.campania_id, zc.ciudad_id as ciudad_de_su_zona
+      from public.mis_inscripciones_no_terminadas() i
+      left join public.zona z
+        on z.id = i.zona_id and z.deleted_at is null
+      left join public.campania_ciudad zc
+        on zc.id = z.campania_ciudad_id and zc.deleted_at is null
+  )
+  select i.ciudad_de_su_zona
+    from inscripcion i
+   where i.ciudad_de_su_zona is not null
+  union
+  select cc.ciudad_id
+    from inscripcion i
+    join public.campania_ciudad cc on cc.campania_id = i.campania_id
+   where i.ciudad_de_su_zona is null
+     and cc.deleted_at is null;
+$$;
+
+comment on function public.mis_ciudades_de_trabajo() is
+  'Ciudad de trabajo del usuario autenticado (S55 de HU-SYNC-011): por cada inscripción viva en '
+  'una campaña que no terminó (en curso o por empezar; 0013, decisión del 02/10), la de su zona '
+  'asignada; sin zona, todas las ciudades vivas de esa campaña. Decide qué ubicaciones ve un '
+  'colportor (RLS de lectura) y qué baja con el alcance «ciudad» del pull. Dónde escribe lo decide '
+  'mis_ciudades_de_campania().';
 
 -- ----------------------------------------------------------------------------
 -- 2. Sync: la huella de las campañas en el watermark del mapa
@@ -663,6 +764,10 @@ drop function public.zona_superposicion(extensions.geometry, extensions.geometry
 -- la imagen le dan EXECUTE sobre cada función nueva de public (ver 0008).
 revoke all on function public.mis_campanias_del_mapa() from public, anon, authenticated;
 revoke all on function sync.huella_del_mapa() from public, anon;
+-- Interna: solo la llaman mis_campanias_del_mapa(), mis_zonas() y mis_ciudades_de_trabajo(), que
+-- son SECURITY DEFINER. mis_zonas() y mis_ciudades_de_trabajo() conservan sus privilegios (create
+-- or replace no los toca).
+revoke all on function public.mis_inscripciones_no_terminadas() from public, anon, authenticated;
 
 -- La huella corre como quien llama al pull (SECURITY INVOKER, como sync.area_del_pull): necesita
 -- las dos. Solo miran al usuario autenticado.
