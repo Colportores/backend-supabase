@@ -181,9 +181,14 @@ enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = false
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
-minimum_password_length = 6
+# 8: el mismo mínimo que la app (HU-AUTH-001, S1), para que el servidor no acepte lo que la app
+# rechaza (backend-supabase#59). En el proyecto hosteado NO se aplica solo con el merge: va por
+# `supabase config push` o por el panel (Authentication, política de contraseñas).
+minimum_password_length = 8
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
+# Vacío a propósito: la mayúscula (cualquier letra mayúscula Unicode, también con tilde y Ñ) la
+# valida la app; las opciones de arriba no la cubren y rechazarían contraseñas que la app acepta.
 password_requirements = ""
 
 # Configure passkey sign-ins.

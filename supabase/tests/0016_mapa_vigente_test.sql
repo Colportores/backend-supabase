@@ -123,12 +123,12 @@ select is(pg_temp.ciudades_de_campania(), array['01920000-0000-7000-8000-0000000
           'y su ciudad');
 create temp table huella_b3 on commit drop as select sync.huella_del_mapa() as h;
 select pg_temp.actuar_como_servidor();
-update public.campania set fecha_inicio = current_date where id = '01920000-0000-7000-8000-0000000016e3';
+update public.campania set fecha_inicio = public.hoy_montevideo() where id = '01920000-0000-7000-8000-0000000016e3';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
 select is(sync.huella_del_mapa(), (select h from huella_b3),
           'cuando la campaña empieza, su huella no cambia: el mapa ya había bajado');
 select pg_temp.actuar_como_servidor();
-update public.campania set fecha_inicio = current_date - 1, fecha_fin = current_date - 1
+update public.campania set fecha_inicio = public.hoy_montevideo() - 1, fecha_fin = public.hoy_montevideo() - 1
  where id = '01920000-0000-7000-8000-0000000016e3';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
 select is(pg_temp.zonas(), array[]::text[], 'terminada, b3 deja de ver su mapa');
@@ -144,7 +144,7 @@ select is(pg_temp.zonas(), array[]::text[], 'b4 (inscripción dada de baja) no v
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b1');
 create temp table huella_b1 on commit drop as select sync.huella_del_mapa() as h;
 select pg_temp.actuar_como_servidor();
-update public.campania set fecha_fin = current_date - 1 where id = '01920000-0000-7000-8000-0000000016e1';
+update public.campania set fecha_fin = public.hoy_montevideo() - 1 where id = '01920000-0000-7000-8000-0000000016e1';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b1');
 select is(pg_temp.zonas(), array[]::text[], 'terminada Vigente, b1 deja de ver su mapa');
 select isnt(sync.huella_del_mapa(), (select h from huella_b1), 'y cambia su huella');
@@ -232,13 +232,13 @@ select is((select ciudades from sync.area_del_pull()), array['01920000-0000-7000
 create temp table area_b3 on commit drop as select (sync.area_del_pull()).huella as h;
 
 select pg_temp.actuar_como_servidor();
-update public.campania set fecha_inicio = current_date where id = '01920000-0000-7000-8000-0000000016e3';
+update public.campania set fecha_inicio = public.hoy_montevideo() where id = '01920000-0000-7000-8000-0000000016e3';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
 select is((sync.area_del_pull()).huella, (select h from area_b3),
           'cuando la campaña empieza, la huella del área no cambia: sus casas ya habían bajado');
 
 select pg_temp.actuar_como_servidor();
-update public.campania set fecha_inicio = current_date - 1, fecha_fin = current_date - 1 where id = '01920000-0000-7000-8000-0000000016e3';
+update public.campania set fecha_inicio = public.hoy_montevideo() - 1, fecha_fin = public.hoy_montevideo() - 1 where id = '01920000-0000-7000-8000-0000000016e3';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000016b3');
 select is(pg_temp.casas(), array[]::text[], 'terminada, b3 deja de ver sus casas');
 select is((select count(*) from public.mis_zonas()), 0::bigint, 'y su zona');

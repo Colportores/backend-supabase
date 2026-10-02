@@ -217,7 +217,7 @@ select ok(pg_temp.col(d, 'zona', 'nombre') @> array['Futura sync'],
 
 -- La campaña termina: su mapa deja de bajar.
 select pg_temp.como_servidor();
-update public.campania set fecha_inicio = current_date - 20, fecha_fin = current_date - 1
+update public.campania set fecha_inicio = public.hoy_montevideo() - 20, fecha_fin = public.hoy_montevideo() - 1
  where id = '01920000-0000-7000-8000-0000000011e3';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
 select is(pg_temp.col(sync.pull(array['zona'], d -> 'watermark', 1000), 'zona', 'nombre'),
@@ -274,7 +274,7 @@ select is((select d -> 'watermark' -> 'ubicacion' ->> 'area' from delta_b5_empie
 select is((select d -> 'rows' from delta_b5_empieza), '{}'::jsonb, 'y las casas no vuelven a bajar');
 
 select pg_temp.como_servidor();
-update public.campania set fecha_inicio = current_date - 20, fecha_fin = current_date - 1 where id = '01920000-0000-7000-8000-0000000011e4';
+update public.campania set fecha_inicio = public.hoy_montevideo() - 20, fecha_fin = public.hoy_montevideo() - 1 where id = '01920000-0000-7000-8000-0000000011e4';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b5');
 create temp table delta_b5_termina as
 select sync.pull(array['ubicacion'], (select d -> 'watermark' from delta_b5_empieza), 1000) as d;
