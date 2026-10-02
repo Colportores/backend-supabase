@@ -1,5 +1,6 @@
--- pgTAP · migraciones 0008 y 0013 — el mapa de la campaña en el delta (sync.pull): solo el de
--- las campañas vigentes (S56), y completo cuando cambian las campañas que ve (huella).
+-- pgTAP · migraciones 0008 y 0013 — el mapa de la campaña en el delta (sync.pull): el de las
+-- campañas en curso o por empezar (S56 y decisión del 30/09), no el de las terminadas, y completo
+-- cuando cambian las campañas que ve (huella).
 --
 -- Como 0004_sync_delta_test, NO va en una transacción: el delta solo sirve lo que quedó por
 -- debajo del horizonte del snapshot, así que las filas tienen que estar commiteadas. Limpia
@@ -109,9 +110,10 @@ select is(
   'el inscripto en otra campaña recibe solo las zonas de esa campaña');
 
 -- ---------------------------------------------------------------------------
--- 3. Una campaña futura cuyo mapa se preparó antes de su último pull (0013, S56): no la ve
---    hasta que empieza, y ese día el pull la trae completa aunque sus filas tengan un xmin_w
---    menor que su watermark (cambió la huella de sus campañas).
+-- 3. Una campaña por empezar cuyo mapa se preparó antes de su último pull (0013, decisión del
+--    30/09): al inscribirse, el pull siguiente la trae completa aunque sus filas tengan un xmin_w
+--    menor que su watermark (cambió la huella de sus campañas). El día que empieza no cambia
+--    nada: ya la tenía.
 -- ---------------------------------------------------------------------------
 create or replace function pg_temp.como_servidor() returns void language plpgsql as $$
 begin
@@ -147,29 +149,31 @@ insert into public.campania_colportor (campania_id, usuario_id) values
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
 create temp table delta_b1_inscripto as
 select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], (select d -> 'watermark' from delta_b1_antes), 1000) as d;
-select is((select d -> 'rows' from delta_b1_inscripto), '{}'::jsonb,
-          'inscripto en una campaña futura, todavía no recibe su mapa (solo el de las vigentes, S56)');
+select isnt((select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_inscripto),
+            (select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_antes),
+            'inscripto en una campaña por empezar, cambia la huella de sus campañas');
+select is(pg_temp.col(d, 'campania_ciudad', 'id'),
+          array['01920000-0000-7000-8000-0000000011f1', '01920000-0000-7000-8000-0000000011f3'],
+          'y el pull siguiente trae completo el mapa: la ciudad de la campaña por empezar (cargada antes) y la de Verano')
+  from delta_b1_inscripto;
+select is(pg_temp.col(d, 'zona', 'nombre'), array['Esquinas sync', 'Futura sync', 'Radial sync'],
+          'con las zonas de las dos campañas') from delta_b1_inscripto;
+select is(pg_temp.col(d, 'zona_vertice', 'id'),
+          array['01920000-0000-7000-8000-0000000011a1', '01920000-0000-7000-8000-0000000011a2', '01920000-0000-7000-8000-0000000011a3',
+                '01920000-0000-7000-8000-0000000011a4', '01920000-0000-7000-8000-0000000011a5', '01920000-0000-7000-8000-0000000011a6'],
+          'y sus esquinas') from delta_b1_inscripto;
 
--- La campaña empieza.
+-- La campaña empieza: ya tenía el mapa, no vuelve a bajar.
 select pg_temp.como_servidor();
 update public.campania set fecha_inicio = current_date - 1 where id = '01920000-0000-7000-8000-0000000011e3';
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000011b1');
 create temp table delta_b1_empieza as
 select sync.pull(array['campania_ciudad', 'zona', 'zona_vertice'], (select d -> 'watermark' from delta_b1_inscripto), 1000) as d;
-select isnt((select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_empieza),
-            (select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_inscripto),
-            'cuando la campaña empieza, cambia la huella de sus campañas');
-select is(pg_temp.col(d, 'campania_ciudad', 'id'),
-          array['01920000-0000-7000-8000-0000000011f1', '01920000-0000-7000-8000-0000000011f3'],
-          'y el pull siguiente trae completo el mapa: la ciudad de la campaña que empezó (cargada antes) y la de Verano')
-  from delta_b1_empieza;
-select is(pg_temp.col(d, 'zona', 'nombre'), array['Esquinas sync', 'Futura sync', 'Radial sync'],
-          'con las zonas de las dos campañas') from delta_b1_empieza;
-select is(pg_temp.col(d, 'zona_vertice', 'id'),
-          array['01920000-0000-7000-8000-0000000011a1', '01920000-0000-7000-8000-0000000011a2', '01920000-0000-7000-8000-0000000011a3',
-                '01920000-0000-7000-8000-0000000011a4', '01920000-0000-7000-8000-0000000011a5', '01920000-0000-7000-8000-0000000011a6'],
-          'y sus esquinas') from delta_b1_empieza;
+select is((select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_empieza),
+          (select d -> 'watermark' -> 'zona' ->> 'area' from delta_b1_inscripto),
+          'cuando la campaña empieza, la huella de sus campañas no cambia');
+select is((select d -> 'rows' from delta_b1_empieza), '{}'::jsonb, 'y el mapa no vuelve a bajar');
 
 -- Otro inscripto en Verano no vuelve a bajar nada: inscribir a b1 ya no republica el mapa.
 select pg_temp.como_servidor();
