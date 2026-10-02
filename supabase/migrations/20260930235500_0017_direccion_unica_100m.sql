@@ -62,24 +62,58 @@
 -- claves y el estado del job mientras tanto se acuerdan con el motor
 -- (front-colportores-mobile#178, contrato §2.2); este formato es la propuesta del backend.
 --
--- ## 4. Duplicados que ya están en la base
+-- ## 4. Duplicados que ya están en la base: la migración no da de baja nada
+--
+-- Decisión de Cristian del 02/10 (backend-supabase#49, comentario 5951900680): «La migración 0017
+-- aborta también con las casas repetidas vacías: lista todas las repetidas (misma dirección a
+-- menos de 100 m) y se resuelven a mano desde la vista 10. Una migración nunca manda una baja,
+-- porque el servidor no ve las personas y ventas que el teléfono todavía no subió.»
 --
 -- Antes de crear el trigger se revisan las ubicaciones vivas con la regla nueva (ya con tildes y
--- espacios). En cada dirección, en orden de alta (created_at, id), una ubicación que cae a menos
--- de 100 m de otra anterior que se queda es un duplicado (B) de la primera de esas (A): es
--- exactamente lo que la regla habría rechazado si hubiera existido. Una tercera a más de 100 m
--- de A pero cerca de B se queda, porque B sale. Lectura del issue («antes limpia los duplicados
--- vivos […] La limpieza preserva los datos: si una fila no se puede migrar, la migración se aborta
--- con un mensaje que diga cuál y por qué»), anotada en backend-supabase#34:
---   · B sin nada colgado (ninguna persona en sus espacios, ni viva ni de baja; sin estado en el
---     mapa; sin espacios con departamento, piso o descripción, ni más de uno; y que ninguna
---     cobranza ni agenda la use como dirección alternativa) se da de baja (deleted_at): no se
---     borra nada, la fila queda y se puede reactivar. El teléfono la recibe como baja en el
---     próximo pull, como cualquier baja.
---   · B con algo colgado NO se toca: pasar sus personas a A es «Marcar como duplicado» de la vista
---     10 (HU-UBI-006, decisión 2 de front-colportores-mobile#207), y lo hace la app, porque las
---     personas viven en el teléfono y espacio_persona no baja por el pull. La migración aborta sin
---     cambiar nada y lista cada B con su A y qué hacer.
+-- espacios): todo par de ubicaciones vivas de la misma ciudad, con la misma calle y número
+-- normalizados, a menos de 100 m. Si hay alguno, la migración aborta sin cambiar nada y lista
+-- TODOS los pares: la más nueva (B) con la más vieja (A, por created_at e id), la distancia, lo
+-- que el servidor ve colgado de B (personas en sus espacios, estado en el mapa, departamentos o
+-- espacios cargados, cobranzas o agendas que la usan como dirección alternativa) o que no ve
+-- nada, y qué hacer: si es la misma casa, «Marcar como duplicado» desde la vista 10 (HU-UBI-006,
+-- decisión 2 de front-colportores-mobile#207: pasa sus personas a la otra y la da de baja, y lo
+-- hace la app porque las personas viven en el teléfono); si es otra casa, corregir su dirección o
+-- su posición. Con la lista resuelta se vuelve a aplicar, y se revisa todo otra vez. Ni las que
+-- no tienen nada colgado se dan de baja: «nada colgado» es lo que ve el servidor, no lo que el
+-- teléfono tiene sin subir.
+--
+-- ## 5. Lo que cuelga de un alta en conflicto queda en espera (el push)
+--
+-- Decisión de Cristian del 02/10 (backend-supabase#49, comentario 5951937663): «Caso: un
+-- colportor registra sin señal una casa que otro ya cargó (misma dirección a menos de 100 m) y le
+-- agrega depto, persona y venta. El backend devuelve conflicto/espera (no invalid) para lo que
+-- cuelga de un alta que volvió en conflicto, para que el motor lo reintente cuando se resuelva y
+-- la venta no quede varada.»
+--
+-- Sin esto, el alta de la casa vuelve `conflict` (sección 3) y no se guarda, y lo que cuelga de
+-- ella en el mismo lote falla porque su fila padre no existe en el servidor: el espacio por la
+-- RLS (42501: no puede escribir en una casa que no existe), espacio_persona, la visita y la venta
+-- por la FK (23503), y una corrección de una fila que tampoco entró por FILA_INEXISTENTE. Los tres
+-- eran `invalid`: sin reintento automático (ADR-007), la venta quedaba varada en la cola de error.
+--
+-- sync.push() lleva, a lo largo del lote, las filas que quedaron en espera: el alta (op insert)
+-- que volvió `conflict` sin server_row (la de D1) y, en cascada, las que esperan por ella. Un job
+-- posterior del mismo lote que vuelve `invalid` con 23503, 42501 o FILA_INEXISTENTE y que tiene en
+-- su payload el id de una fila en espera (como referencia o como su propia PK) vuelve:
+--
+--   {"client_op_id": …, "outcome": "conflict", "code": "ESPERA_ALTA_EN_CONFLICTO",
+--    "depends_on": "<id de la fila en espera>", "message": "…"}
+--
+-- Sin server_row ni sync_version (no hay fila del servidor que aplicar), y sin escribir nada: ni la
+-- fila ni el cache de client_op_id, así que al reintentarlo se vuelve a revisar. El motor lo deja
+-- en espera hasta que la app resuelva el alta (vista 10) y lo reintenta después.
+--   · Solo dentro del mismo lote y hacia adelante: los jobs van en orden de creación (contrato
+--     §5.5), así que lo que cuelga de un alta llega después de ella. Lo que cuelga de un alta en
+--     conflicto que se sube en OTRO lote sin el alta (el servidor no la guardó) sigue volviendo
+--     `invalid`; si el motor reintenta el alta junto con lo que cuelga, vuelve a quedar en espera.
+--     Cómo se arma el lote es del motor (#178).
+--   · Los demás `invalid` no cambian: un 23503 o un 42501 que no cuelga de una fila en espera
+--     sigue siendo un error de payload.
 --
 -- ## Para otros repos
 --
@@ -90,7 +124,12 @@
 --     Chocar a menos de 100 m es ST_Distance sobre el elipsoide WGS84 (< 100, estricto).
 --   · Motor de sync (#178, Bruno): el outcome `conflict` con code 23505 y constraint
 --     'ubicacion_direccion_unica' no trae server_row: no se aplica LWW; la fila queda local y el job
---     espera a que la app lo resuelva (vista 10). Forma pendiente de acuerdo.
+--     espera a que la app lo resuelva (vista 10). Lo que cuelga de esa alta en el mismo lote vuelve
+--     `conflict` con code 'ESPERA_ALTA_EN_CONFLICTO' y depends_on (sección 5): se reintenta cuando
+--     se resuelva el alta. Forma pendiente de acuerdo; hay que sumarlo al contrato de sync
+--     (docs-organizacion, §2.2).
+--   · Migración: si la base tiene direcciones repetidas a menos de 100 m, aborta y las lista
+--     (sección 4); se resuelven desde la vista 10 antes de volver a aplicarla.
 --   · Panel y BFF: una escritura directa que choca recibe el 23505 con el mensaje y el hint.
 --
 -- ## Orden de despliegue
@@ -159,134 +198,89 @@ comment on index public.ubicacion_direccion_idx is
   'ubicacion_direccion_unica_* (0017). Este índice le acelera la búsqueda y al aviso de duplicados.';
 
 -- ----------------------------------------------------------------------------
--- 3. Duplicados vivos que ya están en la base: se revisa todo antes de cambiar nada
+-- 3. Duplicados vivos que ya están en la base: si hay, aborta y los lista todos
 -- ----------------------------------------------------------------------------
 
+-- No da de baja nada (decisión del 02/10, ver el header): el servidor no ve lo que los teléfonos
+-- todavía no subieron.
 do $$
 declare
-  v_f          record;
-  v_a          record;
-  v_problemas  text;
-  v_bajas      text;
-  v_cant_bajas integer;
+  v_lista text;
+  v_pares integer;
 begin
-  -- Las que chocan con alguna: las demás no cambian nada.
-  create temp table d1_candidata on commit drop as
-  select u.id, u.ciudad_id, u.calle, u.numero, u.created_at,
-         public.direccion_normalizada(u.calle)  as calle_n,
-         public.direccion_normalizada(u.numero) as numero_n,
-         public.ubicacion_geografia(u.lat, u.lon) as punto
-    from public.ubicacion u
-   where u.deleted_at is null
-     and public.direccion_normalizada(u.calle) is not null
-     and public.direccion_normalizada(u.numero) is not null
-     and exists (
-       select 1 from public.ubicacion o
-        where o.id <> u.id
-          and o.deleted_at is null
-          and o.ciudad_id = u.ciudad_id
-          and public.direccion_normalizada(o.calle) = public.direccion_normalizada(u.calle)
-          and public.direccion_normalizada(o.numero) = public.direccion_normalizada(u.numero)
-          and extensions.st_dwithin(public.ubicacion_geografia(o.lat, o.lon),
-                                    public.ubicacion_geografia(u.lat, u.lon), 100.0::double precision)
-          and extensions.st_distance(public.ubicacion_geografia(o.lat, o.lon),
-                                     public.ubicacion_geografia(u.lat, u.lon)) < 100.0);
+  -- Cada par que la regla rechazaría: B es la más nueva (created_at, id), A la más vieja.
+  create temp table d1_par on commit drop as
+  select b.id as b_id, a.id as a_id,
+         extensions.st_distance(public.ubicacion_geografia(a.lat, a.lon),
+                                public.ubicacion_geografia(b.lat, b.lon)) as distancia
+    from public.ubicacion b
+    join public.ubicacion a
+      on a.id <> b.id
+     and a.deleted_at is null
+     and a.ciudad_id = b.ciudad_id
+     and public.direccion_normalizada(a.calle) = public.direccion_normalizada(b.calle)
+     and public.direccion_normalizada(a.numero) = public.direccion_normalizada(b.numero)
+     and (a.created_at, a.id) < (b.created_at, b.id)
+     and extensions.st_dwithin(public.ubicacion_geografia(a.lat, a.lon),
+                               public.ubicacion_geografia(b.lat, b.lon), 100.0::double precision)
+     and extensions.st_distance(public.ubicacion_geografia(a.lat, a.lon),
+                                public.ubicacion_geografia(b.lat, b.lon)) < 100.0
+   where b.deleted_at is null
+     and public.direccion_normalizada(b.calle) is not null
+     and public.direccion_normalizada(b.numero) is not null;
 
-  create temp table d1_queda (like d1_candidata) on commit drop;
-  create temp table d1_duplicada (b_id uuid primary key, a_id uuid not null,
-                                  distancia double precision not null) on commit drop;
+  select count(*) into v_pares from d1_par;
+  if v_pares = 0 then
+    return;
+  end if;
 
-  -- En orden de alta: la que cae a menos de 100 m de una que ya se queda es duplicado de la
-  -- primera de esas; si no, se queda.
-  for v_f in select * from d1_candidata order by ciudad_id, calle_n, numero_n, created_at, id loop
-    select q.id, extensions.st_distance(q.punto, v_f.punto) as distancia
-      into v_a
-      from d1_queda q
-     where q.ciudad_id = v_f.ciudad_id
-       and q.calle_n = v_f.calle_n
-       and q.numero_n = v_f.numero_n
-       and extensions.st_distance(q.punto, v_f.punto) < 100.0
-     order by q.created_at, q.id
-     limit 1;
-    if found then
-      insert into d1_duplicada values (v_f.id, v_a.id, v_a.distancia);
-    else
-      insert into d1_queda (id, ciudad_id, calle, numero, created_at, calle_n, numero_n, punto)
-      values (v_f.id, v_f.ciudad_id, v_f.calle, v_f.numero, v_f.created_at, v_f.calle_n, v_f.numero_n, v_f.punto);
-    end if;
-  end loop;
-
-  -- Qué cuelga de cada B.
-  create temp table d1_revision on commit drop as
-  select d.b_id, d.a_id, d.distancia,
-         exists (select 1 from public.espacio_persona ep join public.espacio e on e.id = ep.espacio_id
-                  where e.ubicacion_id = d.b_id) as con_personas,
-         exists (select 1 from public.house_status h
-                  where h.ubicacion_id = d.b_id and h.deleted_at is null) as con_estado,
-         (select count(*) from public.espacio e
-           where e.ubicacion_id = d.b_id and e.deleted_at is null) > 1
-         or exists (select 1 from public.espacio e
-                     where e.ubicacion_id = d.b_id and e.deleted_at is null
-                       and (nullif(btrim(e.numero_depto), '') is not null
-                            or nullif(btrim(e.piso), '') is not null
-                            or nullif(btrim(e.descripcion), '') is not null)) as con_espacios,
-         exists (select 1 from public.espacio_persona ep where ep.ubicacion_cobranza_alt_id = d.b_id)
-         or exists (select 1 from public.agenda ag where ag.ubicacion_alt_id = d.b_id) as referenciada
-    from d1_duplicada d;
-
+  -- Lo que el servidor ve colgado de cada B (para decidir; no cambia lo que pasa).
   select string_agg(
-           format('  · %s %s (%s, registrada por %s el %s) está a %s m de %s %s (%s), con la misma '
-                  'dirección, y tiene %s. Si es la misma casa, marcala como duplicado de la otra desde '
-                  'la app (vista 10, «Posibles duplicados»: pasa sus personas a la otra y la da de '
-                  'baja); si es otra casa, corregí su dirección o su posición. Después volvé a '
-                  'aplicar la migración.',
+           format('  · %s %s (%s, registrada por %s el %s) está a %s m de %s %s (%s, registrada el %s), '
+                  'con la misma dirección, y %s. Si es la misma casa, marcá la más nueva como '
+                  'duplicado de la otra desde la app (vista 10, «Posibles duplicados»: pasa sus '
+                  'personas a la otra y la da de baja); si es otra casa, corregí su dirección o su '
+                  'posición.',
                   b.calle, b.numero, b.id, coalesce(b.created_by::text, 'nadie'),
-                  to_char(b.created_at, 'DD/MM/YYYY'), round(r.distancia::numeric, 1),
-                  a.calle, a.numero, a.id,
-                  array_to_string(array_remove(array[
-                    case when r.con_personas then 'personas en sus espacios' end,
-                    case when r.con_estado then 'estado en el mapa' end,
-                    case when r.con_espacios then 'departamentos o espacios cargados' end,
-                    case when r.referenciada then 'cobranzas o agendas que la usan como dirección alternativa' end
-                  ], null), ', ')),
-           E'\n' order by b.ciudad_id, b.id)
-    into v_problemas
-    from d1_revision r
-    join public.ubicacion b on b.id = r.b_id
-    join public.ubicacion a on a.id = r.a_id
-   where r.con_personas or r.con_estado or r.con_espacios or r.referenciada;
+                  to_char(b.created_at, 'DD/MM/YYYY'), round(p.distancia::numeric, 1),
+                  a.calle, a.numero, a.id, to_char(a.created_at, 'DD/MM/YYYY'),
+                  coalesce('tiene ' || nullif(array_to_string(array_remove(array[
+                    case when exists (select 1 from public.espacio_persona ep
+                                        join public.espacio e on e.id = ep.espacio_id
+                                       where e.ubicacion_id = b.id)
+                         then 'personas en sus espacios' end,
+                    case when exists (select 1 from public.house_status h
+                                       where h.ubicacion_id = b.id and h.deleted_at is null)
+                         then 'estado en el mapa' end,
+                    case when (select count(*) from public.espacio e
+                                where e.ubicacion_id = b.id and e.deleted_at is null) > 1
+                           or exists (select 1 from public.espacio e
+                                       where e.ubicacion_id = b.id and e.deleted_at is null
+                                         and (nullif(btrim(e.numero_depto), '') is not null
+                                              or nullif(btrim(e.piso), '') is not null
+                                              or nullif(btrim(e.descripcion), '') is not null))
+                         then 'departamentos o espacios cargados' end,
+                    case when exists (select 1 from public.espacio_persona ep
+                                       where ep.ubicacion_cobranza_alt_id = b.id)
+                           or exists (select 1 from public.agenda ag where ag.ubicacion_alt_id = b.id)
+                         then 'cobranzas o agendas que la usan como dirección alternativa' end
+                  ], null), ', '), ''),
+                  'el servidor no ve nada colgado de ella (el teléfono puede tener personas o ventas '
+                  'sin subir)')),
+           E'\n' order by b.ciudad_id, b.created_at, b.id, a.created_at, a.id)
+    into v_lista
+    from d1_par p
+    join public.ubicacion b on b.id = p.b_id
+    join public.ubicacion a on a.id = p.a_id;
 
-  select count(*) into v_cant_bajas
-    from d1_revision r
-   where not (r.con_personas or r.con_estado or r.con_espacios or r.referenciada);
-
-  if v_problemas is not null then
-    raise exception using
-      message = 'La migración 0017 (dirección única a menos de 100 m) no se aplicó: hay ubicaciones '
-                'vivas con la misma dirección a menos de 100 m que tienen datos colgados. No se '
-                'cambió nada.',
-      detail  = v_problemas || case when v_cant_bajas > 0
-                                    then format(E'\n  Además, %s duplicada(s) sin nada colgado se van a dar '
-                                                'de baja solas al volver a aplicar.', v_cant_bajas)
-                                    else '' end,
-      hint    = 'Resolvé cada ubicación de la lista y volvé a aplicar la migración.';
-  end if;
-
-  -- Las que no tienen nada: de baja. No se borra nada; se pueden reactivar.
-  select string_agg(format('  · %s %s (%s): duplicada de %s, a %s m', b.calle, b.numero, b.id,
-                           r.a_id, round(r.distancia::numeric, 1)), E'\n' order by b.id)
-    into v_bajas
-    from d1_revision r join public.ubicacion b on b.id = r.b_id;
-
-  update public.ubicacion u
-     set deleted_at = now()
-    from d1_revision r
-   where u.id = r.b_id;
-
-  if v_bajas is not null then
-    raise notice E'0017: % ubicación(es) duplicada(s) sin nada colgado quedaron de baja:\n%',
-      v_cant_bajas, v_bajas;
-  end if;
+  raise exception using
+    message = format('La migración 0017 (dirección única a menos de 100 m) no se aplicó: hay %s '
+                     'par(es) de ubicaciones vivas con la misma dirección a menos de 100 m. No se '
+                     'cambió nada.', v_pares),
+    detail  = v_lista,
+    hint    = 'Resolvé cada par desde la vista 10 de la app y volvé a aplicar la migración. La '
+              'migración no da de baja ninguna, ni las que no tienen nada colgado: el servidor no ve '
+              'lo que los teléfonos todavía no subieron.';
 end
 $$;
 
@@ -414,9 +408,165 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 6. Privilegios
+-- 6. El push: lo que cuelga de un alta en conflicto queda en espera
+-- ----------------------------------------------------------------------------
+
+-- El id de una fila en espera que el job nombra en su payload (su propia PK primero, después
+-- cualquier columna), o null. Solo mira valores con forma de uuid. Interna de sync.push().
+create function sync.fila_en_espera(p_job jsonb, p_en_espera uuid[])
+returns uuid
+language sql
+stable
+set search_path = ''
+as $$
+  select v.id
+    from (select x.key,
+                 case when x.value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                      then x.value::uuid end as id
+            from jsonb_each_text(case when jsonb_typeof(p_job -> 'payload') = 'object'
+                                      then p_job -> 'payload' else '{}'::jsonb end) x) v
+   where v.id = any (p_en_espera)
+   order by v.key = (select e.columna_pk from sync.entidad e where e.nombre = p_job ->> 'entity') desc,
+            v.key
+   limit 1;
+$$;
+
+comment on function sync.fila_en_espera(jsonb, uuid[]) is
+  'El id de una fila en espera (un alta en conflicto del mismo lote, o algo que cuelga de ella) '
+  'que el job nombra en su payload, o null. Interna de sync.push() (0017).';
+
+-- Igual que en 0002, más la espera (sección 5 del header).
+create or replace function sync.push(p_jobs jsonb, p_device uuid default null)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_job       jsonb;
+  v_res       jsonb;
+  v_results   jsonb := '[]'::jsonb;
+  v_arranque  timestamptz := clock_timestamp();
+  v_ok        integer := 0;
+  v_dup       integer := 0;
+  v_conf      integer := 0;
+  v_inv       integer := 0;
+  v_ops       uuid[] := '{}'::uuid[];
+  v_salida    jsonb;
+  -- Las filas del lote que no entraron por un alta en conflicto, y las que esperan por ellas.
+  v_en_espera uuid[] := '{}'::uuid[];
+  v_espera    uuid;
+  v_pk        uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'sync.push requiere un usuario autenticado'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if jsonb_typeof(p_jobs) is distinct from 'array' then
+    raise exception 'p_jobs tiene que ser un array de jobs'
+      using errcode = 'invalid_parameter_value';
+  end if;
+
+  -- Los topes de lote de 0002 (500 jobs, 8 MB): ver ahí el porqué.
+  if jsonb_array_length(p_jobs) > 500 then
+    raise exception 'lote de % jobs: el máximo es 500', jsonb_array_length(p_jobs)
+      using errcode = 'program_limit_exceeded',
+            hint = 'partí el lote; el BFF ya lo hace a los 500 (RR-02)';
+  end if;
+
+  if octet_length(p_jobs::text) > 8 * 1024 * 1024 then
+    raise exception 'lote de % bytes: el máximo es 8 MB', octet_length(p_jobs::text)
+      using errcode = 'program_limit_exceeded',
+            hint = 'partí el lote; RR-02 dimensiona los lotes en ~1 MB';
+  end if;
+
+  -- En orden: los jobs de una misma entidad se aplican en orden de creación
+  -- (contrato §5.5), y un item nunca antes que su venta.
+  for v_job in select * from jsonb_array_elements(p_jobs) loop
+    v_res := sync.aplicar_job(v_job);
+
+    -- Cuelga de una fila en espera: no es un error de payload, espera (0017).
+    if v_res ->> 'outcome' = 'invalid'
+       and v_res ->> 'code' in ('23503', '42501', 'FILA_INEXISTENTE')
+       and cardinality(v_en_espera) > 0 then
+      v_espera := sync.fila_en_espera(v_job, v_en_espera);
+      if v_espera is not null then
+        v_res := jsonb_build_object(
+          'client_op_id', v_res -> 'client_op_id',
+          'outcome', 'conflict',
+          'code', 'ESPERA_ALTA_EN_CONFLICTO',
+          'depends_on', v_espera,
+          'message', format('Queda en espera: depende de %s, que no se guardó porque su alta está en '
+                            'conflicto (misma dirección que otra ubicación). Se sube cuando se '
+                            'resuelva en la vista 10.', v_espera));
+      end if;
+    end if;
+
+    -- Un alta que no entró por un conflicto sin fila del servidor (D1, o en espera): lo que
+    -- cuelgue de ella más adelante en el lote también espera.
+    if v_res ->> 'outcome' = 'conflict' and not (v_res ? 'server_row')
+       and v_job ->> 'op' = 'insert' then
+      v_pk := null;
+      begin
+        v_pk := (v_job -> 'payload' ->> (select e.columna_pk from sync.entidad e
+                                          where e.nombre = v_job ->> 'entity'))::uuid;
+      exception when data_exception then
+        v_pk := null;
+      end;
+      if v_pk is not null then
+        v_en_espera := v_en_espera || v_pk;
+      end if;
+    end if;
+
+    v_results := v_results || jsonb_build_array(v_res);
+
+    case v_res ->> 'outcome'
+      when 'accepted'  then v_ok   := v_ok   + 1;
+      when 'duplicate' then v_dup  := v_dup  + 1;
+      when 'conflict'  then v_conf := v_conf + 1;
+      else                  v_inv  := v_inv  + 1;
+    end case;
+
+    -- El op_id sale del RESULTADO, no del job crudo (ver 0002).
+    if v_res ->> 'client_op_id' is not null then
+      v_ops := v_ops || ((v_res ->> 'client_op_id')::uuid);
+    end if;
+  end loop;
+
+  -- device_id is null protege el reintento (ver 0002).
+  if p_device is not null and array_length(v_ops, 1) is not null then
+    update sync.op_cache set device_id = p_device
+     where client_op_id = any (v_ops) and device_id is null;
+  end if;
+
+  v_salida := jsonb_build_object(
+    'server_time', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'results', v_results
+  );
+
+  -- El log va al final y en la misma transacción que el lote (ver 0002).
+  insert into sync.log (device_id, operacion, duracion_ms, jobs,
+                        aceptados, duplicados, conflictos, invalidos,
+                        bytes_entrada, bytes_salida)
+  values (p_device, 'push',
+          extract(epoch from clock_timestamp() - v_arranque) * 1000,
+          jsonb_array_length(p_jobs), v_ok, v_dup, v_conf, v_inv,
+          octet_length(p_jobs::text), octet_length(v_salida::text));
+
+  return v_salida;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 7. Privilegios
 -- ----------------------------------------------------------------------------
 
 -- `authenticated` también: en una base creada desde cero los default privileges de la imagen le
 -- dan EXECUTE sobre cada función nueva de public (ver 0008). El trigger corre igual sin EXECUTE.
 revoke all on function public.tg_ubicacion_direccion_unica() from public, anon, authenticated;
+
+-- sync.fila_en_espera: la llama sync.push(), que corre como quien sube (SECURITY INVOKER), así
+-- que authenticated la necesita; anon no (0003_sync_infra_test). sync.push() conserva los suyos
+-- (create or replace no los toca).
+revoke all on function sync.fila_en_espera(jsonb, uuid[]) from public, anon;
+grant execute on function sync.fila_en_espera(jsonb, uuid[]) to authenticated, service_role;

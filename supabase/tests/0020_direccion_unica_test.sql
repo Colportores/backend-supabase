@@ -289,6 +289,90 @@ select is((sync.push(jsonb_build_array(jsonb_build_object(
           'otro 23505 (la misma persona dos veces en el espacio) sigue siendo invalid');
 
 -- ---------------------------------------------------------------------------
+-- 6b. Lo que cuelga de un alta en conflicto queda en espera (decisión del 02/10, #49): y1 registra
+--     sin señal la misma casa que A (a ~30 m), le carga un depto, una persona, una visita, una
+--     venta y su estado, y corrige el depto; todo en el mismo lote.
+-- ---------------------------------------------------------------------------
+create or replace function pg_temp.job(p_op text, p_entidad text, p_accion text, p_payload jsonb,
+                                       p_version bigint default null)
+returns jsonb language sql as $$
+  select jsonb_build_object('client_op_id', ('01920000-0000-7000-8000-0000000020' || p_op)::uuid, 'entity', p_entidad,
+                            'op', p_accion, 'payload', p_payload)
+         || case when p_version is null then '{}'::jsonb else jsonb_build_object('sync_version', p_version) end;
+$$;
+create or replace function pg_temp.id(p text) returns uuid language sql as $$ select ('01920000-0000-7000-8000-0000000020' || p)::uuid $$;
+
+-- El lote: U9 choca con A; E9, EP9, V9, VE9, el estado de U9 y la corrección de E9 cuelgan de él.
+-- E8 apunta a una casa que no existe y no está en espera; U8 es otra casa, sin conflicto.
+create or replace function pg_temp.lote(p_numero text) returns jsonb language sql as $$
+  select jsonb_build_array(
+    pg_temp.job('91', 'ubicacion', 'insert', jsonb_build_object('id', pg_temp.id('d9'), 'tipo', 'CASA',
+      'calle', 'Av. Italia', 'numero', p_numero, 'lat', (pg_temp.a(30, 0)).lat, 'lon', (pg_temp.a(30, 0)).lon,
+      'ciudad_id', '01920000-0000-7000-8000-0000000020c1')),
+    pg_temp.job('92', 'espacio', 'insert', jsonb_build_object('id', pg_temp.id('d8'), 'ubicacion_id', pg_temp.id('d9'),
+      'numero_depto', '3B')),
+    pg_temp.job('93', 'espacio_persona', 'insert', jsonb_build_object('id', pg_temp.id('d7'),
+      'espacio_id', pg_temp.id('d8'), 'persona_id', pg_temp.id('d0'))),
+    pg_temp.job('94', 'visita', 'insert', jsonb_build_object('id', pg_temp.id('d6'),
+      'espacio_persona_id', pg_temp.id('d7'), 'fecha', '2026-10-01T15:00:00Z', 'tipo_resultado', 'VENTA')),
+    pg_temp.job('95', 'venta', 'insert', jsonb_build_object('id', pg_temp.id('d5'),
+      'espacio_persona_id', pg_temp.id('d7'), 'visita_id', pg_temp.id('d6'), 'numero_talonario', 'T-1',
+      'monto_total', 150000, 'fecha', '2026-10-01T15:05:00Z')),
+    pg_temp.job('96', 'house_status', 'insert', jsonb_build_object('ubicacion_id', pg_temp.id('d9'),
+      'lat', (pg_temp.a(30, 0)).lat, 'lon', (pg_temp.a(30, 0)).lon, 'tipo_ubicacion', 'CASA', 'color', 'VENTA_COMPLETA',
+      'prioridad', 4)),
+    pg_temp.job('97', 'espacio', 'update', jsonb_build_object('id', pg_temp.id('d8'), 'descripcion', 'fondo'), 0),
+    pg_temp.job('98', 'espacio', 'insert', jsonb_build_object('id', pg_temp.id('d4'), 'ubicacion_id', pg_temp.id('d3'))),
+    pg_temp.job('99', 'ubicacion', 'insert', jsonb_build_object('id', pg_temp.id('d2'), 'tipo', 'CASA',
+      'calle', 'Colonia', 'numero', '1', 'lat', -34.95, 'lon', -56.25, 'ciudad_id', '01920000-0000-7000-8000-0000000020c1')));
+$$;
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000020b2');
+create temp table lote_espera on commit drop as select sync.push(pg_temp.lote('100')) -> 'results' as r;
+
+select is((select r -> 0 ->> 'outcome' from lote_espera) || ' ' || (select r -> 0 ->> 'code' from lote_espera),
+          'conflict 23505', 'el alta de U9 choca con A: conflicto D1');
+select results_eq(
+  $$ select e ->> 'outcome', e ->> 'code', e ->> 'depends_on'
+       from lote_espera, jsonb_array_elements(r) with ordinality x(e, n) where n between 2 and 7 order by n $$,
+  $$ values ('conflict', 'ESPERA_ALTA_EN_CONFLICTO', '01920000-0000-7000-8000-0000000020d9'),
+            ('conflict', 'ESPERA_ALTA_EN_CONFLICTO', '01920000-0000-7000-8000-0000000020d8'),
+            ('conflict', 'ESPERA_ALTA_EN_CONFLICTO', '01920000-0000-7000-8000-0000000020d7'),
+            ('conflict', 'ESPERA_ALTA_EN_CONFLICTO', '01920000-0000-7000-8000-0000000020d7'),
+            ('conflict', 'ESPERA_ALTA_EN_CONFLICTO', '01920000-0000-7000-8000-0000000020d9'),
+            ('conflict', 'ESPERA_ALTA_EN_CONFLICTO', '01920000-0000-7000-8000-0000000020d8') $$,
+  'lo que cuelga de U9 (depto, persona, visita, venta, estado y la corrección del depto) queda en espera, en cascada, con de quién depende');
+select ok((select bool_and(not (e ? 'server_row') and not (e ? 'sync_version') and e ->> 'message' like 'Queda en espera%')
+             from lote_espera, jsonb_array_elements(r) with ordinality x(e, n) where n between 2 and 7),
+          'sin server_row ni sync_version, y con un mensaje que dice qué pasa');
+select is((select r -> 7 ->> 'outcome' from lote_espera) || ' ' || (select r -> 7 ->> 'code' from lote_espera),
+          'invalid 42501', 'un espacio en una casa que no existe y no está en espera sigue siendo invalid');
+select is((select r -> 8 ->> 'outcome' from lote_espera), 'accepted', 'otra casa del mismo lote entra igual');
+
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.espacio where id in (pg_temp.id('d8'), pg_temp.id('d4')))
+          + (select count(*) from public.espacio_persona where id = pg_temp.id('d7'))
+          + (select count(*) from public.visita where id = pg_temp.id('d6'))
+          + (select count(*) from public.venta where id = pg_temp.id('d5'))
+          + (select count(*) from public.house_status where ubicacion_id = pg_temp.id('d9')),
+          0::bigint, 'nada de lo que espera se escribió');
+select is((select count(*) from sync.op_cache
+            where client_op_id in (select pg_temp.id(x) from unnest(array['91','92','93','94','95','96','97','98']) x)),
+          0::bigint, 'ni entró al cache de client_op_id: al reintentarlo se revisa otra vez');
+select results_eq(
+  $$ select aceptados, conflictos, invalidos from sync.log where operacion = 'push' order by id desc limit 1 $$,
+  $$ values (1, 7, 1) $$, 'el log del push cuenta las esperas como conflictos');
+
+-- y1 lo resuelve en la vista 10: era otra casa (Av. Italia 102). El motor reintenta el lote y entra todo.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000020b2');
+create temp table lote_resuelto on commit drop as
+select sync.push(pg_temp.lote('102') - 8 - 7) -> 'results' as r;
+select results_eq(
+  $$ select e ->> 'outcome' from lote_resuelto, jsonb_array_elements(r) with ordinality x(e, n) order by n $$,
+  $$ values ('accepted'), ('accepted'), ('accepted'), ('accepted'), ('accepted'), ('accepted'), ('accepted') $$,
+  'resuelta el alta, el reintento con los mismos client_op_id entra entero: la venta no quedó varada');
+
+-- ---------------------------------------------------------------------------
 -- 7. El aviso de posible duplicado (0010) usa la normalización nueva
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como_servidor();

@@ -3,7 +3,7 @@
 --   a2 (Av. Itália 100, a ~30 m de a1) tiene una persona en su espacio.
 --   a4 (rivera 9, a ~20 m de a3) tiene estado en el mapa.
 --   a6 (Colonia 1, a ~15 m de a5, edificio) tiene un departamento cargado.
---   a8 (Colonia 2, a ~10 m de a7) no tiene nada: se contaría para dar de baja.
+--   a8 (Colonia 2, a ~10 m de a7) no tiene nada colgado: se lista igual (decisión del 02/10).
 --   aa (Colonia 3, a ~10 m de a9) es la dirección de cobranza de una persona de a9.
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000097c0', 'Pais migración 17b', 'ZV');
