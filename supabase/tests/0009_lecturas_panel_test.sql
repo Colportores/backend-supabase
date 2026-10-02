@@ -105,10 +105,12 @@ select ok(not has_function_privilege('anon', 'public.zonas_asignables(uuid)', 'e
           'anon NO ejecuta zonas_asignables()');
 select ok(not has_function_privilege('anon', 'public.colportores_de_campania(uuid)', 'execute'),
           'anon NO ejecuta colportores_de_campania()');
--- Sin datos personales de más: ninguna columna de retorno se llama email.
+-- Sin datos personales de más: zonas_asignables() no devuelve email. colportores_de_campania()
+-- sí desde 0015 (decisión de Cristian del 30/09, front-coordinadores-web#20 punto 5: el
+-- coordinador ve nombre, email y estado de los colportores de sus campañas); lo prueba 0018.
 select is((select count(*)::int from pg_proc p
-            where p.oid in ('public.zonas_asignables(uuid)'::regprocedure, 'public.colportores_de_campania(uuid)'::regprocedure)
-              and (p.proargnames::text ilike '%email%')), 0, 'ninguna de las dos devuelve email');
+            where p.oid = 'public.zonas_asignables(uuid)'::regprocedure
+              and (p.proargnames::text ilike '%email%')), 0, 'zonas_asignables() no devuelve email');
 
 -- ---------------------------------------------------------------------------
 -- 2. Acceso: permiso primero

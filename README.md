@@ -151,6 +151,22 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
   - Cambiar la campaña o el usuario de una inscripción. Reasignar es cerrar una y abrir otra (HU-CAM-005).
   - Reactivar una inscripción borrada. Si se reactiva o no está pendiente de decisión.
 
+### Cuentas: qué ve el coordinador y búsqueda de candidatos
+
+Desde la migración `0015` (backend-supabase#41) el coordinador **no lee `public.usuario` directo**: la política `usuario_select_propio_o_admin` le deja leer solo su fila (la del `GET /v1/me`); el ADMIN lee todas. A las cuentas ajenas llega por dos RPC, que acotan filas y columnas (decisiones de Cristian del 30/09, front-coordinadores-web#20 y #29):
+
+```sql
+select * from public.colportores_de_campania(campania_id);        -- «Ya en tu equipo»: nombre, email y estado
+select * from public.buscar_candidatos(campania_id, texto, despues_de); -- vista 23: sugeridos o búsqueda
+```
+
+- **Quién.** El coordinador de esa campaña o un ADMIN, con la campaña vigente. Si no, `42501`; `buscar_candidatos()` responde `CI001`/`CI002` como `inscribir_colportor()`.
+- **Candidatas.** Cuentas vivas, con el email verificado y que no estén ya en el equipo. Aparecen también las suspendidas, las que están en otra campaña vigente y las que tienen una inscripción dada de baja en esta campaña, con su `motivo_bloqueo`: el motivo con que `inscribir_colportor()` las rechazaría (`null` si se pueden añadir).
+- **Sin texto: sugeridos.** Hasta 5 cuentas `PENDIENTE_ASIGNACION`, de la más nueva a la más vieja.
+- **Con texto: búsqueda.** Las cuentas cuyo nombre completo o email contiene el texto, sin distinguir mayúsculas ni tildes. Primero las que empiezan con él (nombre, apellido o email); después el resto, alfabético (decisión del 02/10). De a 10 por página: para la siguiente, `despues_de` es el `usuario_id` de la última cuenta mostrada (cursor, sin duplicados ni huecos aunque la lista cambie entre páginas). Una página con menos de 10 es la última.
+- **Columnas.** `usuario_id`, `nombre`, `apellido`, `email`, `estado` (como `estado_cuenta()`), `campania_actual` (la campaña vigente en la que está, para «Está en campaña X»), `creada_en` y `motivo_bloqueo`.
+- **Estado de la cuenta.** La precedencia (suspendida, activa, pendiente) vive en `estado_de_cuenta()`, que usan `estado_cuenta()` y los dos RPC.
+
 ### Zona del colportor
 
 `select public.asignar_zona(campania_id, usuario_id, zona_id);` asigna o cambia la zona de un colportor inscripto (`campania_colportor.zona_id`, HU-CAM-006) y devuelve la fila. `mis_zonas()` le abre la zona nueva y deja de abrirle la anterior.
