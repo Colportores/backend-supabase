@@ -25,23 +25,49 @@
 --   · public.ubicaciones_de_mi_zona() se va: solo la usaba la rama «zona» del pull.
 --   · public.ubicaciones_que_salieron() pierde el alcance y la rama de zonas: una casa sale del área
 --     cuando cambia de ciudad (ya no cuando se corrige dentro de la misma ciudad: sigue bajando como
---     fila, porque sigue en el área). Se va con ella lo que sobraba de #48:
---   · sync.ubicacion_movida solo registra los cambios de ciudad (antes, también los de posición) y
---     pierde las columnas lat y lon, que solo servían para calcular si la casa salía de un polígono.
---     Esa tabla es un registro técnico interno (ids y la ciudad de antes): no guarda ventas ni
---     personas, y los movimientos de posición dentro de la misma ciudad nunca produjeron un aviso
---     con esta regla. Las filas de movimientos anteriores quedan como estaban (con su ciudad de antes,
---     que es lo único que se mira).
+--     fila, porque sigue en el área). Cambia solo cómo se lee el registro de movimientos:
+--   · sync.ubicacion_movida NO cambia (decisión del 02/10, comentario 5957800802): el trigger sigue
+--     anotando cada cambio de posición o de ciudad, con la posición y la ciudad de antes, y no se
+--     quitan columnas. Es un registro técnico interno (ids, posición y ciudad; sin ventas ni
+--     personas). Lo que cambia es la lectura: el aviso out_of_area mira solo la ciudad. Una
+--     corrección de posición dentro de la misma ciudad queda anotada y no avisa nada.
+--   · El watermark de las entidades por ciudad guarda también la lista de ciudades (siguiente
+--     sección), para no volver a bajar lo que ya está cuando el área se achica.
 --
--- ## Zonas, huella y qué pasa cuando cambia la zona
+-- ## El watermark guarda la lista de ciudades (decisión del 02/10, comentario 5958061741)
 --
---   · Le asignan o le cambian la zona dentro de la MISMA ciudad: la huella no cambia, no baja nada
---     nuevo (HU-SYNC-011: «el cambio de zona dentro de la misma ciudad no descarga nada»).
---   · Le asignan una zona de OTRA ciudad: la huella cambia, esa ciudad baja completa (area_reset
---     trae las entidades que arrancaron de cero) y la ciudad vieja deja de actualizarse: sus filas
---     se quedan en el teléfono, no se manda ningún borrado. Una casa de la ciudad vieja que se mueve
---     o se edita ya no le llega; lo que cargó sin señal ahí sube igual por el push (las escrituras
---     siguen acotadas por mis_ciudades_de_campania(), 0020/0021, no por esta migración).
+-- La huella sola no sabe si el área creció o se achicó. Un colportor sin zona que ya bajó c1 y c2 y
+-- recibe una zona de c1 (o al que le termina una de sus dos campañas) volvía a bajar c1 entera: en
+-- una ciudad real son unas 100.000 casas, 27 MB y unos 5 minutos en 3G, muchas veces con datos
+-- móviles. Eso contradice lo escrito en HU-SYNC-011 y el contrato §2.1. Ahora el watermark de cada
+-- entidad con columna_ubicacion (ubicacion, espacio y house_status) lleva, junto a la huella
+-- (`area`), la lista ACTUAL de ciudades (`ciudades`: ids). El servidor ya armaba ese watermark y
+-- el motor lo devuelve tal cual, así que no cambia el contrato con el motor.
+--
+--   · area_reset (la entidad arranca de cero) solo si la lista nueva tiene una ciudad que la del
+--     watermark no tenía: sus casas pueden ser más viejas que el cursor.
+--   · Lista igual o más chica: sigue el delta, sin area_reset, y se guarda la lista nueva. Lo que
+--     quedó afuera deja de actualizarse y no se borra nada.
+--   · Si después vuelve a crecer (c1 → c1 y c2), c2 no está en la lista guardada: hay reset, porque
+--     sus casas pueden estar viejas y por debajo del cursor.
+--   · Un watermark sin lista (un teléfono que bajó antes de esta migración, o con el alcance
+--     «zona») se compara por la huella, como hasta hoy: una sola vez, y el watermark que sale ya
+--     lleva la lista. Una lista que no es una lista se trata como ausente.
+--   · Límite conocido: el reinicio vuelve a bajar toda la lista de ciudades, no solo la nueva (que
+--     llegue una ciudad es el caso raro; así no hace falta un cursor por ciudad).
+--
+-- ## Zonas, ciudades y qué pasa cuando cambian
+--
+--   · Le asignan o le cambian la zona dentro de la MISMA ciudad: la lista de ciudades no cambia, no
+--     baja nada nuevo (HU-SYNC-011: «el cambio de zona dentro de la misma ciudad no descarga nada»).
+--   · Le asignan una zona de OTRA ciudad, o lo inscriben en otra campaña: si esa ciudad no estaba
+--     en la lista del watermark, la entidad baja completa (area_reset trae las que arrancaron de
+--     cero). La ciudad vieja, si ya no es suya, deja de actualizarse: sus filas se quedan en el
+--     teléfono, no se manda ningún borrado. Una casa de la ciudad vieja que se mueve o se edita ya
+--     no le llega; lo que cargó sin señal ahí sube igual por el push (las escrituras siguen
+--     acotadas por mis_ciudades_de_campania(), 0020/0021, no por esta migración).
+--   · Le dan una zona de una de las ciudades que ya tenía (sin zona, c1 y c2 → zona de c1), o termina
+--     una de sus campañas: la lista se achica, el delta sigue y no baja nada de nuevo.
 --   · Sin zona: todas las ciudades de su campaña. Una campaña por empezar también baja (0013).
 --   · El colportor que registró una casa la sigue recibiendo siempre, esté o no en su ciudad.
 --   · Una casa que sale de su ciudad (otro la corrige a otra ciudad) se avisa en out_of_area, y la
@@ -49,69 +75,41 @@
 --
 -- ## Datos existentes
 --
--- No se toca ninguna fila de negocio. Un teléfono que había bajado con 'zona' tiene en su watermark
--- la huella vieja ('zona|...'): en su primer pull después de esta migración la huella no coincide, las
--- tres entidades (ubicacion, espacio, house_status) bajan completas y el pull trae area_reset. Es una
--- vez, y lo que baja es un superconjunto de lo que tenía (toda su ciudad). Quien ya usaba 'ciudad' no
--- nota nada. Los movimientos de ubicacion_movida de antes se conservan (sin lat ni lon).
+-- No se toca ninguna fila de negocio ni de ubicacion_movida. Todos los watermarks de antes de esta
+-- migración son sin lista. Uno que había bajado con 'zona' tiene en su watermark la huella vieja
+-- ('zona|...'): en su primer pull después de esta migración la huella no coincide, las tres
+-- entidades (ubicacion, espacio, house_status) bajan completas y el pull trae area_reset. Es una
+-- vez, y lo que baja es un superconjunto de lo que tenía (toda su ciudad); el watermark que recibe
+-- ya lleva la lista. Quien ya usaba 'ciudad' no nota nada: su huella coincide, y el watermark pasa a
+-- llevar la lista.
 --
 -- ## Para otros repos
 --
 --   · front-colportores-mobile (motor, #178; app, #244): dejar de mandar el alcance (el servidor lo
 --     ignora desde esta migración, así que no hay apuro ni orden de despliegue); sacar la elección
 --     «mi zona» / «toda la ciudad» de Ajustes; ante area_reset, no borrar nada: solo volver a bajar;
---     ante out_of_area, marcar «fuera del área».
+--     ante out_of_area, marcar «fuera del área». El watermark trae una clave nueva (`ciudades`) dentro
+--     de cada entidad: el motor ya lo guarda y lo devuelve entero, no cambia nada de su lado.
 --   · docs-organizacion: README/contrato ya dicen «toda la ciudad» (0.9.8); el contrato aún dice que
---     el aviso de salida es una propuesta pendiente de #178.
+--     el aviso de salida es una propuesta pendiente de #178. El watermark de esas entidades lleva
+--     `area` y `ciudades`, opacos para el motor (§2.1).
 --   · bff-colportores: en pausa (ADR-013); si algún día reenvía el pull, no hay parámetro que pasar.
 --
 -- Forward-only: esta migración no se edita una vez aplicada.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Registro de movimientos: solo los cambios de ciudad
+-- 1. Registro de movimientos: igual que en 0016, solo el comentario
 -- ----------------------------------------------------------------------------
 
--- El trigger primero (su función todavía escribe lat y lon), la función con la forma nueva, y
--- recién entonces se sacan las columnas.
-drop trigger ubicacion_registrar_movida on public.ubicacion;
-
-create or replace function public.tg_ubicacion_registrar_movida()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  -- La primera de la transacción gana: es la ciudad que un teléfono pudo haber visto.
-  insert into sync.ubicacion_movida (ubicacion_id, ciudad_id)
-  values (new.id, old.ciudad_id)
-  on conflict (xmin_w, ubicacion_id) do nothing;
-  return null;
-end;
-$$;
-
-comment on function public.tg_ubicacion_registrar_movida() is
-  'AFTER UPDATE de ubicacion que le cambia la ciudad: anota la ciudad de antes en '
-  'sync.ubicacion_movida, de donde sale el aviso out_of_area del pull (0016, 0023).';
-
-create trigger ubicacion_registrar_movida
-  after update on public.ubicacion
-  for each row
-  when (old.ciudad_id is distinct from new.ciudad_id)
-  execute function public.tg_ubicacion_registrar_movida();
-
-alter table sync.ubicacion_movida
-  drop column lat,
-  drop column lon;
-
+-- El trigger y las columnas no se tocan: se sigue anotando cada cambio de posición o de ciudad.
 comment on table sync.ubicacion_movida is
-  'Cada cambio de ciudad de una ubicación, con la ciudad de ANTES y el xid de la transacción (el '
-  'xmin_w de la fila). De acá sale el aviso out_of_area del pull (0016, 0023). Interna: sin '
-  'privilegios para anon ni authenticated.';
+  'Cada cambio de posición o ciudad de una ubicación, con la posición y la ciudad de ANTES y el xid '
+  'de la transacción (el xmin_w de la fila). De acá sale el aviso out_of_area del pull (0016), que '
+  'desde 0023 mira solo la ciudad. Interna: sin privilegios para anon ni authenticated.';
 
 -- ----------------------------------------------------------------------------
--- 2. Qué salió del área en un tramo del cursor: salió de sus ciudades
+-- 2. Qué salió del área en un tramo del cursor: cambió a una ciudad que no es suya
 -- ----------------------------------------------------------------------------
 
 drop function public.ubicaciones_que_salieron(text, xid8, uuid, xid8, uuid);
@@ -129,7 +127,8 @@ security definer
 set search_path = ''
 as $$
   with primera as (
-    -- La ciudad al último pull: la de antes del primer cambio del tramo.
+    -- La ciudad al último pull: la de antes del primer movimiento del tramo (si ese movimiento fue
+    -- solo de posición, es la misma ciudad que tiene ahora y no hay nada que avisar).
     select distinct on (m.ubicacion_id) m.ubicacion_id, m.ciudad_id
       from sync.ubicacion_movida m
      where (m.xmin_w, m.ubicacion_id) > (p_desde_xid, p_desde_id)
@@ -144,7 +143,8 @@ as $$
   select p.ubicacion_id
     from primera p
     join public.ubicacion u on u.id = p.ubicacion_id
-    -- La ciudad al final del tramo: la de antes del primer cambio posterior; si no hay, la de la fila.
+    -- La ciudad al final del tramo: la de antes del primer movimiento posterior; si no hay, la de la
+    -- fila.
     left join lateral (
       select m.ciudad_id
         from sync.ubicacion_movida m
@@ -194,8 +194,9 @@ $$;
 
 comment on function sync.area_del_pull() is
   'Las ciudades de trabajo del usuario autenticado (mis_ciudades_de_trabajo(): la de su zona; sin '
-  'zona, las de sus campañas que no terminaron) y la huella de esa lista, que va en el watermark de '
-  'las entidades con columna_ubicacion (0011, 0023). Interna del pull.';
+  'zona, las de sus campañas que no terminaron) y la huella de esa lista. Van en el watermark de las '
+  'entidades con columna_ubicacion (la lista, para saber si el área creció; la huella, para un '
+  'watermark sin lista; 0011, 0023). Interna del pull.';
 
 revoke all on function sync.area_del_pull() from public, anon;
 grant execute on function sync.area_del_pull() to authenticated, service_role;
@@ -245,6 +246,8 @@ declare
   v_fuera     jsonb := '{}'::jsonb;
   v_reinicio  text[] := array[]::text[];
   v_ids       jsonb;
+  v_previas   text[];
+  v_reiniciar boolean;
 begin
   if v_usuario is null then
     raise exception 'sync.pull requiere un usuario autenticado'
@@ -278,16 +281,36 @@ begin
           from sync.area_del_pull() a;
       end if;
 
-      -- Otra área que la del watermark (o un watermark sin huella): esta entidad baja completa.
-      -- Si había un watermark de antes, se avisa en area_reset (0016): la ciudad cambió, y la vieja
-      -- ya no se actualiza (el motor no borra nada de lo que ya tiene).
-      if (v_desde ->> 'area') is distinct from v_huella then
+      -- La lista de ciudades que guardó el watermark (0023); el motor lo devuelve tal cual. Algo que
+      -- no es una lista cuenta como ausente. Se compara como texto: un elemento raro es una ciudad
+      -- que la lista no tenía, y eso solo puede bajar de más, nunca de menos.
+      v_previas := null;
+      if jsonb_typeof(v_desde -> 'ciudades') = 'array' then
+        v_previas := array(select jsonb_array_elements_text(v_desde -> 'ciudades'));
+      end if;
+
+      -- Con lista: la entidad baja completa solo si apareció una ciudad que el watermark no tenía
+      -- (sus filas pueden ser más viejas que el cursor). Lista igual o más chica: el delta sigue, y lo
+      -- que quedó afuera deja de actualizarse sin borrarse. Sin lista (un teléfono de antes de 0023,
+      -- o con otro alcance): la huella, como antes; ahí hay un solo reinicio y el watermark nuevo
+      -- ya lleva la lista.
+      if v_previas is not null then
+        v_reiniciar := not (v_ciudades::text[] <@ v_previas);
+      else
+        v_reiniciar := (v_desde ->> 'area') is distinct from v_huella;
+      end if;
+
+      -- Si había un watermark de antes, se avisa en area_reset (0016): el área creció y esta
+      -- entidad vuelve a bajar desde cero; la ciudad que ya no es suya no se actualiza (el motor no
+      -- borra nada de lo que ya tiene).
+      if v_reiniciar then
         if v_desde ? 'xid' then
           v_reinicio := v_reinicio || v_entidad;
         end if;
         v_desde := '{}'::jsonb;
       end if;
-      v_marca := jsonb_build_object('area', v_huella);
+      -- La lista de ahora, siempre: es la que cuenta en el pull siguiente.
+      v_marca := jsonb_build_object('area', v_huella, 'ciudades', to_jsonb(v_ciudades));
 
       -- Por fila, contra la ubicación (su PK).
       v_filtro := format(
@@ -339,8 +362,9 @@ begin
     if jsonb_array_length(v_lote) = 0 then
       -- Con huella (área o mapa), nada debajo del horizonte: todo lo de abajo ya se revisó,
       -- así que el cursor pasa al horizonte (lo que venga tiene un xmin_w mayor o igual) y la
-      -- huella queda guardada. Sin esto, un área vacía se recorre entera en cada pull, y el
-      -- watermark sin la huella nueva haría bajar completa la entidad otra vez.
+      -- huella, con la lista de ciudades, queda guardada. Sin esto, un área vacía se recorre
+      -- entera en cada pull, y el watermark sin la huella nueva haría bajar completa la entidad
+      -- otra vez.
       if v_marca <> '{}'::jsonb then
         v_nuevo := v_nuevo || jsonb_build_object(v_entidad,
           jsonb_build_object('xid', v_horizonte::text, 'id', '00000000-0000-0000-0000-000000000000')
@@ -412,11 +436,36 @@ $$;
 comment on function sync.pull(text[], jsonb, integer, uuid, text) is
   'Delta por (xmin_w, id) con la RLS del que llama (0002). ubicacion, espacio y house_status bajan '
   'siempre por toda la ciudad de su zona (sin zona, todas las ciudades de su campaña) más lo que '
-  'registró él, sin elección (0023, HU-SYNC-011); bajan completas si cambió la ciudad (huella en el '
-  'watermark). p_alcance se acepta por compatibilidad y se ignora. El mapa (campania_ciudad, zona, '
+  'registró él, sin elección (0023, HU-SYNC-011). Su watermark lleva la huella y la lista de '
+  'ciudades: bajan completas solo si apareció una ciudad que la lista no tenía; si la lista se '
+  'achica, el delta sigue. p_alcance se acepta por compatibilidad y se ignora. El mapa (campania_ciudad, zona, '
   'zona_vertice) baja completo si cambiaron las campañas que ve (0013). Las entidades con '
   'columna_duenio bajan solo las filas del usuario autenticado (0014). out_of_area: las ubicaciones '
   'que cambiaron de ciudad en el tramo; area_reset: las entidades que arrancaron de cero porque '
   'cambió el área (0016).';
 
 -- Los privilegios de sync.pull (0011) siguen: create or replace los conserva.
+
+-- ----------------------------------------------------------------------------
+-- 5. Comentarios que todavía hablaban de «su zona o toda la ciudad»
+-- ----------------------------------------------------------------------------
+
+-- Ya no hay alcance que elegir: solo cambia el texto (0011 y 0013 siguen como estaban).
+comment on table public.ubicacion is
+  'Casa del territorio, con su dirección. Sin datos de persona (ADR-004). No guarda zona ni '
+  'campaña (0011): la ve quien trabaja en su ciudad, y al teléfono bajan todas las de su ciudad de '
+  'trabajo (la de su zona; sin zona, las de su campaña) más las que registró él, sin elección '
+  '(0023, HU-SYNC-011).';
+
+comment on column sync.entidad.columna_ubicacion is
+  'La columna de la fila que es el id de su ubicación. Si no es null, el pull baja la fila solo '
+  'si su ubicación la registró el colportor o está en una de sus ciudades de trabajo (toda la '
+  'ciudad de su zona; sin zona, todas las de su campaña, HU-SYNC-011), y su watermark lleva la '
+  'huella del área y la lista de esas ciudades (0011, 0023).';
+
+comment on function public.mis_ciudades_de_trabajo() is
+  'Ciudad de trabajo del usuario autenticado (S55 de HU-SYNC-011): por cada inscripción viva en '
+  'una campaña que no terminó (en curso o por empezar; 0013, decisión del 02/10), la de su zona '
+  'asignada; sin zona, todas las ciudades vivas de esa campaña. Decide qué ubicaciones ve un '
+  'colportor (RLS de lectura) y qué baja el pull, siempre toda la ciudad (0023). Dónde escribe lo '
+  'decide mis_ciudades_de_campania().';

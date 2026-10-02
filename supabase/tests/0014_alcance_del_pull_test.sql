@@ -1,7 +1,9 @@
 -- pgTAP · migraciones 0011 y 0023 — qué ubicaciones baja cada colportor (HU-SYNC-011,
 -- backend-supabase#32 y #58): toda la ciudad de su zona (sin zona, todas las de su campaña), más
 -- las propias, sin elección; la ciudad completa cuando cambia de ciudad, y nada cuando cambia de
--- zona dentro de la misma; y los espacios y el estado de una casa que llega a su ciudad.
+-- zona dentro de la misma; los espacios y el estado de una casa que llega a su ciudad; y la lista de
+-- ciudades en el watermark: si se achica (le dan una zona de una de sus ciudades, termina una de sus
+-- campañas) no se vuelve a bajar lo que ya está, y solo una ciudad que la lista no tenía reinicia.
 --
 -- Como 0004 y 0011, NO va en una transacción: el delta solo sirve filas commiteadas. Limpia al
 -- final.
@@ -64,20 +66,20 @@ $$;
 -- Fixtures (como postgres). Verano (e1, coordina a1) en c1 (Z1 y Z2) y en c3 (Canelones, con Z3);
 -- Otra (e2) en c2.
 -- b1: Verano, Z1. b2: Verano, sin zona. b3: Otra, sin zona. b4: Verano, sin zona.
--- b5: sin inscripción.
+-- b5: sin inscripción. b6: Verano, sin zona, y Corta (e3, en c4), sin zona.
 --   1401 en Z2, con estado y un espacio          1402 en c1, al oeste de Z2
 --   1403 en c2                                   1404 en Z1          1405 en Z1, dada de baja
 --   1406 de b2, en c1 fuera de toda zona, con estado y un espacio
 --   1407 en c1 fuera de toda zona, con estado y un espacio
 --   1409 en c3 (la otra ciudad de Verano), con estado y un espacio (después se muda a c1)
 --   140a de b1, en c1                            140b en c3, con estado
---   140c de b5, en c1 (b5 no tiene inscripción)
+--   140c de b5, en c1 (b5 no tiene inscripción)       140d en c4 (la ciudad de Corta)
 -- Todas se cargan antes del primer pull de cada colportor.
 -- ---------------------------------------------------------------------------
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000014' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'alcance-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a1','b1','b2','b3','b4','b5']) s;
+  from unnest(array['a1','b1','b2','b3','b4','b5','b6']) s;
 insert into public.usuario_rol (usuario_id, rol_id)
 select '01920000-0000-7000-8000-0000000014a1', r.id from public.rol r where r.codigo = 'COORDINADOR';
 
@@ -85,14 +87,17 @@ insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000014c1', 'Ciudad alcance', '01920000-0000-7000-8000-0000000014c0', -34.9, -56.2),
   ('01920000-0000-7000-8000-0000000014c2', 'Otra alcance',   '01920000-0000-7000-8000-0000000014c0', -34.8, -56.0),
-  ('01920000-0000-7000-8000-0000000014c3', 'Canelones alcance', '01920000-0000-7000-8000-0000000014c0', -34.7, -56.1);
+  ('01920000-0000-7000-8000-0000000014c3', 'Canelones alcance', '01920000-0000-7000-8000-0000000014c0', -34.7, -56.1),
+  ('01920000-0000-7000-8000-0000000014c4', 'Cuatro alcance', '01920000-0000-7000-8000-0000000014c0', -34.6, -56.4);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000014e1', 'Verano', 'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000014a1'),
-  ('01920000-0000-7000-8000-0000000014e2', 'Otra',   'PERMANENTE', current_date - 10, null,              null);
+  ('01920000-0000-7000-8000-0000000014e2', 'Otra',   'PERMANENTE', current_date - 10, null,              null),
+  ('01920000-0000-7000-8000-0000000014e3', 'Corta',  'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000014a1');
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   ('01920000-0000-7000-8000-0000000014f1', '01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014c1'),
   ('01920000-0000-7000-8000-0000000014f2', '01920000-0000-7000-8000-0000000014e2', '01920000-0000-7000-8000-0000000014c2'),
-  ('01920000-0000-7000-8000-0000000014f3', '01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014c3');
+  ('01920000-0000-7000-8000-0000000014f3', '01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014c3'),
+  ('01920000-0000-7000-8000-0000000014f4', '01920000-0000-7000-8000-0000000014e3', '01920000-0000-7000-8000-0000000014c4');
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, poligono_geojson) values
   ('01920000-0000-7000-8000-0000000014d1', 'Z1', '01920000-0000-7000-8000-0000000014f1', 'ESQUINAS', pg_temp.rect(-56.19, -34.92, -56.18, -34.91)),
   ('01920000-0000-7000-8000-0000000014d2', 'Z2', '01920000-0000-7000-8000-0000000014f1', 'ESQUINAS', pg_temp.rect(-56.21, -34.92, -56.20, -34.91)),
@@ -104,7 +109,9 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014b1', '01920000-0000-7000-8000-0000000014d1'),
   ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014b2', null),
   ('01920000-0000-7000-8000-0000000014e2', '01920000-0000-7000-8000-0000000014b3', null),
-  ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014b4', null);
+  ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014b4', null),
+  ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014b6', null),
+  ('01920000-0000-7000-8000-0000000014e3', '01920000-0000-7000-8000-0000000014b6', null);
 
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by, deleted_at) values
   ('01920000-0000-7000-8000-000000001401', 'CASA', 'Rivera', '1', -34.915, -56.205, '01920000-0000-7000-8000-0000000014c1', null, null),
@@ -120,7 +127,8 @@ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, crea
    '01920000-0000-7000-8000-0000000014b1', null),
   ('01920000-0000-7000-8000-00000000140b', 'CASA', 'Canelones', '11', -34.71, -56.11, '01920000-0000-7000-8000-0000000014c3', null, null),
   ('01920000-0000-7000-8000-00000000140c', 'CASA', 'Propia b5', '12', -34.97, -56.30, '01920000-0000-7000-8000-0000000014c1',
-   '01920000-0000-7000-8000-0000000014b5', null);
+   '01920000-0000-7000-8000-0000000014b5', null),
+  ('01920000-0000-7000-8000-00000000140d', 'CASA', 'Cuatro', '13', -34.6, -56.4, '01920000-0000-7000-8000-0000000014c4', null, null);
 insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad, created_by) values
   ('01920000-0000-7000-8000-000000001401', -34.915, -56.205, 'CASA', 'COBRANZA_PENDIENTE', 2, null),
   ('01920000-0000-7000-8000-000000001406', -34.95,  -56.25,  'CASA', 'RECHAZO', 7, '01920000-0000-7000-8000-0000000014b2'),
@@ -248,7 +256,8 @@ select is((select d -> 'rows' from pull_b1_redibujo), '{}'::jsonb, 'cambiar el n
 select ok((select not (d ? 'area_reset') from pull_b1_redibujo), 'ni area_reset');
 
 -- ---------------------------------------------------------------------------
--- 6. Sin zona → una zona de c1: baja c1 completa; Canelones deja de actualizarse, sin borrar nada
+-- 6. Sin zona → una zona de c1: la lista se achica (c1 y Canelones → c1) y no vuelve a bajar nada;
+--    Canelones deja de actualizarse, sin borrar nada
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014a1');
 select lives_ok(
@@ -258,17 +267,13 @@ select lives_ok(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b2');
 create temp table pull_b2_z2 as
 select sync.pull(array['ubicacion', 'house_status', 'espacio'], (select d -> 'watermark' from pull_b2_mueve), 1000) as d;
-select is(d -> 'area_reset', '["ubicacion", "house_status", "espacio"]'::jsonb,
-          'cambió la ciudad de trabajo (c1 y Canelones → c1): las tres entidades arrancan de cero') from pull_b2_z2;
-select is(pg_temp.ids(d, 'ubicacion'),
-          array[pg_temp.u('01'), pg_temp.u('02'), pg_temp.u('04'), pg_temp.u('05'), pg_temp.u('06'), pg_temp.u('07'),
-                pg_temp.u('09'), pg_temp.u('0a'), pg_temp.u('0c')],
-          'baja c1 completa, con su watermark de antes: las casas cargadas antes de su último pull también')
-  from pull_b2_z2;
-select is(pg_temp.ids(d, 'house_status', 'ubicacion_id'),
-          array[pg_temp.u('01'), pg_temp.u('06'), pg_temp.u('07'), pg_temp.u('09')], 'con su estado') from pull_b2_z2;
-select is(pg_temp.ids(d, 'espacio'), array[pg_temp.u('11'), pg_temp.u('16'), pg_temp.u('17'), pg_temp.u('19')],
-          'y sus espacios') from pull_b2_z2;
+select is((select d -> 'rows' from pull_b2_z2), '{}'::jsonb,
+          'c1 ya estaba bajada: de c1 y Canelones a solo c1 no baja nada, ni vuelve a bajar c1');
+select ok((select not (d ? 'area_reset') and not (d ? 'out_of_area') from pull_b2_z2),
+          'ni area_reset ni out_of_area: la lista se achicó, no apareció ninguna ciudad');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b2_z2),
+          jsonb_build_array('01920000-0000-7000-8000-0000000014c1'::text),
+          'el watermark guarda la lista nueva (solo c1)');
 select is(jsonb_path_query_array((select d from pull_b2_z2),
             '$.rows.*[*] ? (@.id == "01920000-0000-7000-8000-00000000140b" || @.ubicacion_id == "01920000-0000-7000-8000-00000000140b")'),
           '[]'::jsonb,
@@ -289,9 +294,9 @@ select is(pg_temp.ids(d, 'ubicacion'), array[pg_temp.u('02')],
           'una edición en la ciudad vieja ya no le llega; la de su ciudad sí') from pull_b2_sigue;
 
 -- ---------------------------------------------------------------------------
--- 7. Una zona de otra ciudad: baja esa ciudad completa y la vieja deja de actualizarse
+-- 7. Una zona de otra ciudad: si ya la tenía no baja de nuevo; si no, baja completa
 -- ---------------------------------------------------------------------------
--- b4, sin zona: todas las ciudades de Verano. Le asignan Z3 (Canelones).
+-- b4, sin zona: todas las ciudades de Verano (c1 y Canelones). Le asignan Z3 (Canelones): se achica.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b4');
 create temp table pull_b4 as
 select sync.pull(array['ubicacion', 'house_status'], '{}'::jsonb, 1000) as d;
@@ -307,11 +312,11 @@ select lives_ok(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b4');
 create temp table pull_b4_z3 as
 select sync.pull(array['ubicacion', 'house_status'], (select d -> 'watermark' from pull_b4), 1000) as d;
-select is(d -> 'area_reset', '["ubicacion", "house_status"]'::jsonb, 'con zona en Canelones, las dos entidades arrancan de cero')
-  from pull_b4_z3;
-select is(pg_temp.ids(d, 'ubicacion'), array[pg_temp.u('0b')],
-          'y baja solo Canelones: nada de c1, que quedó en el teléfono como estaba') from pull_b4_z3;
-select is(pg_temp.ids(d, 'house_status', 'ubicacion_id'), array[pg_temp.u('0b')], 'con su estado') from pull_b4_z3;
+select is((select d -> 'rows' from pull_b4_z3), '{}'::jsonb,
+          'con zona en Canelones (c1 y Canelones → Canelones) no baja nada: Canelones ya estaba, y c1 queda en el teléfono como estaba');
+select ok((select not (d ? 'area_reset') and not (d ? 'out_of_area') from pull_b4_z3), 'sin area_reset');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b4_z3),
+          jsonb_build_array('01920000-0000-7000-8000-0000000014c3'::text), 'y el watermark guarda la lista nueva');
 select is((select count(*) from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000014c1'), 0::bigint,
           'la RLS sigue la misma regla: b4 ya no ve c1');
 
@@ -342,6 +347,82 @@ select is(pg_temp.ids(d, 'ubicacion'), array[pg_temp.u('0b')],
 select ok((select not (d ? 'out_of_area') from pull_b1_sigue),
           'y cambiar de zona no es «salir del área»: no se avisa nada de las casas de c1');
 
+-- b4 siguió a Canelones y dejó de seguir c1.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b4');
+create temp table pull_b4_sigue as
+select sync.pull(array['ubicacion'], (select d -> 'watermark' from pull_b4_z3), 1000) as d;
+select is(pg_temp.ids(d, 'ubicacion'), array[pg_temp.u('0b')],
+          'b4 (de c1 y Canelones a Canelones): la edición de Canelones le llega; la de c1, que dejó de seguir, no') from pull_b4_sigue;
+
+-- Un watermark sin lista y con la huella vieja de «zona» (un teléfono de antes de 0023): un solo reinicio.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b1');
+create temp table pull_b1_viejo as
+select sync.pull(array['ubicacion', 'house_status', 'espacio'],
+                 (select jsonb_object_agg(e.k, (e.v - 'ciudades') || jsonb_build_object('area', 'zona|viejo'))
+                    from pull_b1_sigue, jsonb_each(d -> 'watermark') e (k, v)), 1000) as d;
+select is(d -> 'area_reset', '["ubicacion", "house_status", "espacio"]'::jsonb,
+          'un watermark sin lista y con la huella de «zona»: las tres entidades arrancan de cero') from pull_b1_viejo;
+select is(pg_temp.ids(d, 'ubicacion'), array[pg_temp.u('0a'), pg_temp.u('0b')],
+          'y baja su ciudad completa (más lo que registró él)') from pull_b1_viejo;
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b1_viejo),
+          jsonb_build_array('01920000-0000-7000-8000-0000000014c3'::text), 'el watermark que sale ya lleva la lista');
+select ok((select not (sync.pull(array['ubicacion', 'house_status', 'espacio'], d -> 'watermark', 1000) ? 'area_reset')
+             from pull_b1_viejo),
+          'una sola vez: con el watermark nuevo no hay otro area_reset');
+
+-- ---------------------------------------------------------------------------
+-- 7b. Termina una de sus dos campañas, y después vuelve a empezar
+-- ---------------------------------------------------------------------------
+-- b6, sin zona, en Verano (c1 y Canelones) y en Corta (c4): trabaja c1, Canelones y c4.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b6');
+create temp table pull_b6 as
+select sync.pull(array['ubicacion', 'house_status', 'espacio'], '{}'::jsonb, 1000) as d;
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b6),
+          jsonb_build_array('01920000-0000-7000-8000-0000000014c1'::text, '01920000-0000-7000-8000-0000000014c3',
+                            '01920000-0000-7000-8000-0000000014c4'),
+          'b6 trabaja c1, Canelones y c4');
+select ok((select pg_temp.u('0d') = any (pg_temp.ids(d, 'ubicacion')) from pull_b6), 'y baja la casa de c4');
+
+-- Termina Corta: c1, Canelones y c4 → c1 y Canelones. No baja nada de nuevo.
+select pg_temp.como_servidor();
+update public.campania set fecha_fin = current_date - 2 where id = '01920000-0000-7000-8000-0000000014e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b6');
+create temp table pull_b6_termina as
+select sync.pull(array['ubicacion', 'house_status', 'espacio'], (select d -> 'watermark' from pull_b6), 1000) as d;
+select is((select d -> 'rows' from pull_b6_termina), '{}'::jsonb,
+          'termina una de sus dos campañas: no baja nada, ni vuelve a bajar lo que ya tiene');
+select ok((select not (d ? 'area_reset') and not (d ? 'out_of_area') from pull_b6_termina), 'ni area_reset ni out_of_area');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b6_termina),
+          jsonb_build_array('01920000-0000-7000-8000-0000000014c1'::text, '01920000-0000-7000-8000-0000000014c3'),
+          'y el watermark guarda la lista nueva');
+
+-- La ciudad de la campaña que terminó deja de actualizarse; las otras siguen al día.
+select pg_temp.como_servidor();
+update public.ubicacion set calle = 'Cuatro nueva' where id = '01920000-0000-7000-8000-00000000140d';
+update public.ubicacion set calle = 'Canelones tres' where id = '01920000-0000-7000-8000-00000000140b';
+update public.ubicacion set calle = 'Rivera tres' where id = '01920000-0000-7000-8000-000000001402';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b6');
+create temp table pull_b6_sigue as
+select sync.pull(array['ubicacion'], (select d -> 'watermark' from pull_b6_termina), 1000) as d;
+select is(pg_temp.ids(d, 'ubicacion'), array[pg_temp.u('02'), pg_temp.u('0b')],
+          'c1 y Canelones siguen al día; c4, que ya no es suya, no') from pull_b6_sigue;
+
+-- Vuelve a empezar: c4 vuelve a su lista y no estaba en la guardada. Baja completa, con lo que cambió.
+select pg_temp.como_servidor();
+update public.campania set fecha_fin = current_date + 30 where id = '01920000-0000-7000-8000-0000000014e3';
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000014b6');
+create temp table pull_b6_vuelve as
+select sync.pull(array['ubicacion', 'house_status', 'espacio'], (select d -> 'watermark' from pull_b6_sigue), 1000) as d;
+select is((select d -> 'area_reset' from pull_b6_vuelve), '["ubicacion", "house_status", "espacio"]'::jsonb,
+          'la lista se achicó y vuelve a crecer (c4 no está en la guardada): las tres entidades arrancan de cero');
+select is((select e ->> 'calle' from pull_b6_vuelve, jsonb_array_elements(d -> 'rows' -> 'ubicacion') e
+            where e ->> 'id' = '01920000-0000-7000-8000-00000000140d'),
+          'Cuatro nueva', 'y c4 baja completa, con lo que cambió mientras no la seguía');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b6_vuelve),
+          jsonb_build_array('01920000-0000-7000-8000-0000000014c1'::text, '01920000-0000-7000-8000-0000000014c3',
+                            '01920000-0000-7000-8000-0000000014c4'),
+          'y la lista guardada vuelve a ser la de ahora');
+
 -- ---------------------------------------------------------------------------
 -- 8. Paginado: la huella no reinicia la página siguiente
 -- ---------------------------------------------------------------------------
@@ -357,8 +438,8 @@ select is((select array[(d ->> 'has_more')::text, array_length(pg_temp.ids(d, 'u
           array['false', '3'], 'página 3: las 3 que faltan (9 en total: c1 completa)');
 select is((select array_agg(i order by i) from pagina_1 p1, pagina_2 p2, pagina_3 p3,
              unnest(pg_temp.ids(p1.d, 'ubicacion') || pg_temp.ids(p2.d, 'ubicacion') || pg_temp.ids(p3.d, 'ubicacion')) i),
-          (select pg_temp.ids(d, 'ubicacion') from pull_b2_z2),
-          'entre las tres, toda c1, sin repetir ni volver a empezar');
+          pg_temp.ids(sync.pull(array['ubicacion'], '{}'::jsonb, 1000), 'ubicacion'),
+          'entre las tres, toda c1 (lo mismo que baja de una vez), sin repetir ni volver a empezar');
 
 -- ---------------------------------------------------------------------------
 -- 9. No hay elección: el alcance que mande la app se ignora (contrato 0.9.8)
@@ -457,23 +538,27 @@ drop table lote_b1;
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
 drop table pull_b1, pull_b2, pull_b2_vacio, pull_b3, pull_b1_mueve, pull_b2_mueve, pull_b1_z2, pull_b1_redibujo,
-           pull_b2_z2, pull_b2_sigue, pull_b4, pull_b4_z3, pull_b1_z3, pull_b1_sigue, pagina_1, pagina_2, pagina_3;
+           pull_b2_z2, pull_b2_sigue, pull_b4, pull_b4_z3, pull_b4_sigue, pull_b1_z3, pull_b1_sigue, pull_b1_viejo,
+           pull_b6, pull_b6_termina, pull_b6_sigue, pull_b6_vuelve, pagina_1, pagina_2, pagina_3;
 delete from public.zona_vertice where zona_id in ('01920000-0000-7000-8000-0000000014d1', '01920000-0000-7000-8000-0000000014d2');
 delete from public.espacio where ubicacion_id::text like '01920000-0000-7000-8000-00000000140%';
 delete from public.house_status where ubicacion_id::text like '01920000-0000-7000-8000-00000000140%';
 delete from public.ubicacion where id::text like '01920000-0000-7000-8000-00000000140%';
-delete from public.campania_colportor where campania_id in ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014e2');
+delete from public.campania_colportor where campania_id in ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014e2',
+                                                            '01920000-0000-7000-8000-0000000014e3');
 delete from public.zona where campania_ciudad_id in ('01920000-0000-7000-8000-0000000014f1', '01920000-0000-7000-8000-0000000014f2',
                                                       '01920000-0000-7000-8000-0000000014f3');
 delete from public.campania_ciudad where id in ('01920000-0000-7000-8000-0000000014f1', '01920000-0000-7000-8000-0000000014f2',
-                                                '01920000-0000-7000-8000-0000000014f3');
-delete from public.campania where id in ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014e2');
+                                                '01920000-0000-7000-8000-0000000014f3', '01920000-0000-7000-8000-0000000014f4');
+delete from public.campania where id in ('01920000-0000-7000-8000-0000000014e1', '01920000-0000-7000-8000-0000000014e2',
+                                         '01920000-0000-7000-8000-0000000014e3');
 delete from public.ciudad where id in ('01920000-0000-7000-8000-0000000014c1', '01920000-0000-7000-8000-0000000014c2',
-                                       '01920000-0000-7000-8000-0000000014c3');
+                                       '01920000-0000-7000-8000-0000000014c3', '01920000-0000-7000-8000-0000000014c4');
 delete from public.pais where id = '01920000-0000-7000-8000-0000000014c0';
 delete from public.usuario_rol where usuario_id = '01920000-0000-7000-8000-0000000014a1';
 delete from auth.users where id in ('01920000-0000-7000-8000-0000000014a1', '01920000-0000-7000-8000-0000000014b1',
                                     '01920000-0000-7000-8000-0000000014b2', '01920000-0000-7000-8000-0000000014b3',
-                                    '01920000-0000-7000-8000-0000000014b4', '01920000-0000-7000-8000-0000000014b5');
+                                    '01920000-0000-7000-8000-0000000014b4', '01920000-0000-7000-8000-0000000014b5',
+                                    '01920000-0000-7000-8000-0000000014b6');
 
 select * from finish();

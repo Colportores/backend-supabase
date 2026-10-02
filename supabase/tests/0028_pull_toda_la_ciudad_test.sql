@@ -3,8 +3,10 @@
 --   2. sync.area_del_pull(): las ciudades de trabajo y su huella (la fórmula que ya tenía «ciudad»),
 --      para quien tiene zona, quien no la tiene y quien no tiene inscripción, y cómo cambia al
 --      cambiarle la zona;
---   3. sync.ubicacion_movida solo anota los cambios de ciudad;
---   4. el alcance que mande un motor viejo no rompe el pull.
+--   3. sync.ubicacion_movida sigue como en 0016: anota cada cambio de posición o de ciudad;
+--   4. el alcance que mande un motor viejo no rompe el pull;
+--   5. el watermark guarda la lista de ciudades, y solo una ciudad nueva reinicia la entidad
+--      (area_reset): con watermarks armados a mano.
 -- Qué baja y qué se avisa, con datos de verdad: 0014 y 0019 (no van en transacción). Acá, lo que se
 -- puede mirar adentro de una.
 begin;
@@ -78,9 +80,9 @@ select ok(has_function_privilege('authenticated', 'sync.area_del_pull()', 'execu
 select ok(not has_function_privilege('anon', 'sync.area_del_pull()', 'execute'), 'anon no');
 select ok(pg_get_function_arguments('sync.pull(text[], jsonb, integer, uuid, text)'::regprocedure) like '%p_alcance text DEFAULT NULL%',
           'sync.pull conserva p_alcance (un motor viejo lo sigue mandando), sin valor por defecto');
-select hasnt_column('sync', 'ubicacion_movida', 'lat', 'el registro de movimientos ya no guarda la posición de antes (lat)');
-select hasnt_column('sync', 'ubicacion_movida', 'lon', 'ni lon');
-select has_column('sync', 'ubicacion_movida', 'ciudad_id', 'solo la ciudad de antes');
+select has_column('sync', 'ubicacion_movida', 'lat', 'el registro de movimientos sigue guardando la posición de antes (lat), como en 0016');
+select has_column('sync', 'ubicacion_movida', 'lon', 'y lon');
+select has_column('sync', 'ubicacion_movida', 'ciudad_id', 'y la ciudad de antes');
 
 -- ---------------------------------------------------------------------------
 -- 2. area_del_pull(): las ciudades de trabajo y su huella
@@ -125,21 +127,22 @@ select is((select array_length(ciudades, 1) from sync.area_del_pull()), 2,
           'sin zona otra vez: las dos ciudades de la campaña');
 
 -- ---------------------------------------------------------------------------
--- 3. sync.ubicacion_movida solo anota los cambios de ciudad
+-- 3. sync.ubicacion_movida sigue anotando cada cambio de posición o de ciudad (0016, sin cambios)
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como_servidor();
 update public.ubicacion set lat = -34.905, lon = -56.205 where id = pg_temp.u('01');
-select is((select count(*)::int from sync.ubicacion_movida where ubicacion_id = pg_temp.u('01')), 0,
-          'corregir solo la posición no anota nada: la casa sigue en su ciudad');
+select is((select array[count(*)::text, min(lat)::text, min(lon)::text, min(ciudad_id::text)]
+             from sync.ubicacion_movida where ubicacion_id = pg_temp.u('01')),
+          array['1', '-34.9', '-56.2', pg_temp.u('c1')::text],
+          'corregir solo la posición anota la de antes y la ciudad (que no avise es cosa de out_of_area, que mira la ciudad: 0019)');
 update public.ubicacion set ciudad_id = pg_temp.u('c3'), lat = -34.7, lon = -56.1 where id = pg_temp.u('01');
-select is((select array_agg(ciudad_id) from sync.ubicacion_movida where ubicacion_id = pg_temp.u('01')),
-          array[pg_temp.u('c1')], 'cambiar de ciudad anota la de antes (también si cambia la posición)');
-update public.ubicacion set ciudad_id = pg_temp.u('c1') where id = pg_temp.u('01');
-select is((select array_agg(ciudad_id) from sync.ubicacion_movida where ubicacion_id = pg_temp.u('01')),
-          array[pg_temp.u('c1')], 'otro cambio en la misma transacción: queda la primera, la que un teléfono pudo haber visto');
+select is((select array[count(*)::text, min(lat)::text, min(lon)::text, min(ciudad_id::text)]
+             from sync.ubicacion_movida where ubicacion_id = pg_temp.u('01')),
+          array['1', '-34.9', '-56.2', pg_temp.u('c1')::text],
+          'otro cambio en la misma transacción (ahora de ciudad): queda el primero, el que un teléfono pudo haber visto');
 update public.ubicacion set calle = 'Rivera nueva' where id = pg_temp.u('02');
 select is((select count(*)::int from sync.ubicacion_movida where ubicacion_id = pg_temp.u('02')), 0,
-          'editar otra cosa de la casa tampoco');
+          'editar otra cosa de la casa no anota nada');
 
 -- ---------------------------------------------------------------------------
 -- 4. El alcance que mande un motor viejo se ignora
@@ -149,6 +152,130 @@ select lives_ok($$ select sync.pull(array['ubicacion'], '{}'::jsonb, 10, null, '
                 'un alcance que no es «zona» ni «ciudad» ya no se rechaza con 22023');
 select lives_ok($$ select sync.pull(array['ubicacion'], '{}'::jsonb, 10, null, 'zona') $$, '«zona» sigue aceptándose');
 select lives_ok($$ select sync.pull(array['ubicacion'], '{}'::jsonb, 10, null, null) $$, 'y null');
+
+-- ---------------------------------------------------------------------------
+-- 5. El watermark guarda la lista de ciudades: solo una ciudad nueva reinicia la entidad
+-- ---------------------------------------------------------------------------
+-- Dentro de una transacción el delta no sirve filas (nada de lo que se escribe acá está por debajo
+-- del horizonte), pero sí se ve cuándo sale area_reset y qué lista queda guardada: el pull de un
+-- watermark con `xid` avisa el reinicio. Qué filas bajan o no, con datos commiteados: 0014.
+-- b2 (sin zona: c1 y c3), a quien se le va cambiando la zona.
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set zona_id = null
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table w_inicial on commit drop as
+select sync.pull(array['ubicacion', 'espacio', 'house_status'], '{}'::jsonb, 10) as d;
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from w_inicial),
+          jsonb_build_array(pg_temp.u('c1'), pg_temp.u('c3')),
+          'el pull guarda en el watermark la lista de ciudades (b2, sin zona: c1 y c3)');
+select ok((select d -> 'watermark' -> 'espacio' -> 'ciudades' = d -> 'watermark' -> 'ubicacion' -> 'ciudades'
+                  and d -> 'watermark' -> 'house_status' -> 'ciudades' = d -> 'watermark' -> 'ubicacion' -> 'ciudades'
+             from w_inicial),
+          'la misma lista en el watermark de espacio y de house_status');
+select is((select d -> 'watermark' -> 'ubicacion' ->> 'area' from w_inicial),
+          md5('ciudad|' || pg_temp.u('c1') || ',' || pg_temp.u('c3')), 'junto a la huella de siempre');
+select ok((select not (sync.pull(array['ubicacion', 'espacio', 'house_status'], d -> 'watermark', 10) ? 'area_reset')
+             from w_inicial),
+          'la misma lista: no hay area_reset');
+
+-- Se achica: le dan una zona de c1 (c1 y c3 → c1). El delta sigue y se guarda la lista nueva.
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set zona_id = pg_temp.u('d1')
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table w_achica on commit drop as
+select sync.pull(array['ubicacion', 'espacio', 'house_status'], (select d -> 'watermark' from w_inicial), 10) as d;
+select ok((select not (d ? 'area_reset') from w_achica),
+          'la lista se achica (c1 y c3 → c1): no hay area_reset, no se vuelve a bajar nada');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from w_achica), jsonb_build_array(pg_temp.u('c1')),
+          'el watermark guarda la lista nueva (solo c1)');
+select is((select d -> 'watermark' -> 'house_status' ->> 'area' from w_achica), md5('ciudad|' || pg_temp.u('c1')),
+          'con la huella nueva');
+
+-- De c1 y c3 a solo c3 (otra zona, desde el watermark inicial): también se achica.
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set zona_id = pg_temp.u('d3')
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select ok((select not (sync.pull(array['ubicacion', 'espacio', 'house_status'], d -> 'watermark', 10) ? 'area_reset')
+             from w_inicial),
+          'de c1 y c3 a solo c3: sin area_reset');
+-- Una ciudad que la lista guardada no tenía: de solo c1 a c3.
+create temp table w_otra on commit drop as
+select sync.pull(array['ubicacion', 'espacio', 'house_status'], (select d -> 'watermark' from w_achica), 10) as d;
+select is((select d -> 'area_reset' from w_otra), '["ubicacion", "espacio", "house_status"]'::jsonb,
+          'de solo c1 a c3 (una ciudad que la lista guardada no tenía): las tres entidades arrancan de cero');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from w_otra), jsonb_build_array(pg_temp.u('c3')),
+          'y el watermark guarda la lista nueva');
+
+-- Se achicó y vuelve a crecer: sin zona otra vez (c1 → c1 y c3). c3 no está en la lista guardada.
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set zona_id = null
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table w_vuelve on commit drop as
+select sync.pull(array['ubicacion', 'espacio', 'house_status'], (select d -> 'watermark' from w_achica), 10) as d;
+select is((select d -> 'area_reset' from w_vuelve), '["ubicacion", "espacio", "house_status"]'::jsonb,
+          'la lista se achicó (c1) y vuelve a crecer (c1 y c3): c3 no está en la lista guardada, hay area_reset');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from w_vuelve),
+          jsonb_build_array(pg_temp.u('c1'), pg_temp.u('c3')), 'y la lista guardada vuelve a ser la de ahora');
+select ok((select not (sync.pull(array['ubicacion', 'espacio', 'house_status'], d -> 'watermark', 10) ? 'area_reset')
+             from w_vuelve),
+          'con el watermark nuevo no hay otro reinicio');
+
+-- Un watermark sin lista (un teléfono de antes de 0023): se compara por la huella, como hasta hoy.
+-- Con la huella de ahora (quien ya bajaba toda la ciudad): sin reinicio, y el watermark pasa a llevar la lista.
+create temp table w_sin_lista on commit drop as
+select jsonb_object_agg(e.k, e.v - 'ciudades') as wm
+  from w_inicial, jsonb_each(d -> 'watermark') e (k, v);
+select ok((select not (wm -> 'ubicacion' ? 'ciudades') and (wm -> 'ubicacion' ? 'xid') from w_sin_lista),
+          'el watermark armado a mano no trae lista y sí cursor');
+create temp table w_sin_lista_pull on commit drop as
+select sync.pull(array['ubicacion', 'espacio', 'house_status'], (select wm from w_sin_lista), 10) as d;
+select ok((select not (d ? 'area_reset') from w_sin_lista_pull),
+          'sin lista y con la huella de ahora (la de «ciudad»): no hay area_reset');
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from w_sin_lista_pull),
+          jsonb_build_array(pg_temp.u('c1'), pg_temp.u('c3')), 'y el watermark que sale ya lleva la lista');
+-- Con la huella vieja de «zona»: un solo reinicio.
+create temp table w_zona on commit drop as
+select sync.pull(array['ubicacion', 'espacio', 'house_status'],
+                 (select jsonb_object_agg(e.k, (e.v - 'ciudades') || jsonb_build_object('area', 'zona|viejo'))
+                    from w_inicial, jsonb_each(d -> 'watermark') e (k, v)), 10) as d;
+select is((select d -> 'area_reset' from w_zona), '["ubicacion", "espacio", "house_status"]'::jsonb,
+          'sin lista y con la huella vieja de «zona»: las tres entidades arrancan de cero');
+select ok((select not (sync.pull(array['ubicacion', 'espacio', 'house_status'], d -> 'watermark', 10) ? 'area_reset')
+             from w_zona),
+          'una sola vez: con el watermark nuevo, que ya lleva la lista, no hay otro reinicio');
+
+-- Una lista rara no rompe el pull: lo que no es una lista cuenta como ausente (se mira la huella)...
+select ok((select not (sync.pull(array['ubicacion'],
+                                 jsonb_build_object('ubicacion', (d -> 'watermark' -> 'ubicacion') || jsonb_build_object('ciudades', 'x')),
+                                 10) ? 'area_reset')
+             from w_inicial),
+          'una «lista» que no es una lista cuenta como ausente: la huella coincide, sin area_reset ni error');
+-- ...y un elemento que no es un id es una ciudad que la lista no tenía: baja de más, nunca de menos.
+select is((select sync.pull(array['ubicacion'],
+                            jsonb_build_object('ubicacion', (d -> 'watermark' -> 'ubicacion')
+                                                            || jsonb_build_object('ciudades', jsonb_build_array('no-es-un-id'))),
+                            10) -> 'area_reset'
+             from w_inicial),
+          '["ubicacion"]'::jsonb, 'una lista con un elemento que no es un id: area_reset, sin error');
+
+-- Sin inscripción (b5): lista vacía; que la lista pase de una ciudad a ninguna es achicarse.
+select pg_temp.actuar_como(pg_temp.u('b5'));
+create temp table w_b5 on commit drop as
+select sync.pull(array['ubicacion'], '{}'::jsonb, 10) as d;
+select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from w_b5), '[]'::jsonb,
+          'sin inscripción: la lista de ciudades es vacía');
+select ok((select not (sync.pull(array['ubicacion'], d -> 'watermark', 10) ? 'area_reset') from w_b5),
+          'y el pull siguiente no reinicia');
+select ok((select not (sync.pull(array['ubicacion'],
+                                 jsonb_build_object('ubicacion', (d -> 'watermark' -> 'ubicacion')
+                                                                 || jsonb_build_object('ciudades', jsonb_build_array(pg_temp.u('c1')))),
+                                 10) ? 'area_reset')
+             from w_b5),
+          'de una ciudad a ninguna (le dieron de baja): la lista se achica, sin area_reset');
 
 select * from finish();
 rollback;

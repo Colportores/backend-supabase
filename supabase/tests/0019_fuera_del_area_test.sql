@@ -2,7 +2,7 @@
 -- salieron de las ciudades del colportor desde su último pull (out_of_area) y las entidades que
 -- arrancaron de cero porque cambió su ciudad de trabajo (area_reset). Nada se borra del teléfono:
 -- el aviso son ids. Corregir la posición dentro de la misma ciudad no es salir: la casa sigue
--- bajando como fila.
+-- bajando como fila (el movimiento queda anotado en sync.ubicacion_movida, como en 0016, y no avisa).
 --
 -- Como 0004, 0011, 0014 y 0017, NO va en una transacción: el delta solo sirve lo commiteado.
 -- Limpia al final.
@@ -149,8 +149,12 @@ update public.ubicacion set ciudad_id = pg_temp.u('c1') where id = pg_temp.u('07
 
 select is((select array[count(*)::text, min(ciudad_id::text)] from sync.ubicacion_movida where ubicacion_id = pg_temp.u('01')),
           array['1', pg_temp.u('c1')::text], 'el movimiento de 01 quedó anotado con la ciudad de antes');
-select is((select count(*)::int from sync.ubicacion_movida where ubicacion_id in (pg_temp.u('04'), pg_temp.u('08'))), 0,
-          'corregir la posición dentro de la ciudad no anota nada: no es salir');
+select is((select array_agg(ubicacion_id::text || ' ' || lat::text || ' ' || ciudad_id::text order by ubicacion_id)
+             from sync.ubicacion_movida where ubicacion_id in (pg_temp.u('04'), pg_temp.u('08'))),
+          array[pg_temp.u('04')::text || ' -34.95 ' || pg_temp.u('c1')::text,
+                pg_temp.u('08')::text || ' -34.917 ' || pg_temp.u('c1')::text],
+          'corregir la posición dentro de la ciudad también se anota, con la posición y la ciudad de antes (0016); '
+          'que no avise lo prueba el out_of_area de abajo');
 
 -- ---------------------------------------------------------------------------
 -- 4. El pull siguiente avisa lo que salió
@@ -299,8 +303,10 @@ begin
   update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000019c3' where id = '01920000-0000-7000-8000-000000001909';
   update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000019c2' where id = '01920000-0000-7000-8000-000000001909';
 end $$;
-select is((select array_agg(ciudad_id) from sync.ubicacion_movida where ubicacion_id = pg_temp.u('09')),
-          array[pg_temp.u('c1')], 'una sola anotación, con la ciudad que un teléfono pudo haber visto');
+select is((select array[count(*)::text, min(lat)::text, min(ciudad_id::text)]
+             from sync.ubicacion_movida where ubicacion_id = pg_temp.u('09')),
+          array['1', '-34.95', pg_temp.u('c1')::text],
+          'una sola anotación, con la posición y la ciudad que un teléfono pudo haber visto');
 
 -- ---------------------------------------------------------------------------
 -- Limpieza (borrar la ubicación borra su registro de movimientos)
