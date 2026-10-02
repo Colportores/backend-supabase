@@ -122,7 +122,8 @@ select pg_temp.actuar_como(pg_temp.u('b3'));
 select throws_ok(format('update public.espacio set piso = %L where id = %L', '5', pg_temp.u('14')),
                  '42501', null, 'un ex colportor (campaña terminada) no corrige su espacio: 42501');
 
--- En una casa que registró él, «puede escribir» sin campaña (puedo_escribir_en_ubicacion(), 0011).
+-- En una casa que registró él, sin campaña en la que escribir, tampoco corrige su espacio (desde
+-- 0021 la rama del autor de puedo_escribir_en_ubicacion() exige campaña; antes, 0011, no).
 select pg_temp.actuar_como_servidor();
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by)
 values (pg_temp.u('03'), 'CASA', 'Propia', '3', -34.91, -56.21, pg_temp.u('c1'), pg_temp.u('b1'));
@@ -130,7 +131,8 @@ insert into public.espacio (id, ubicacion_id, created_by) values (pg_temp.u('15'
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.resultados(sync.push(jsonb_build_array(
             pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('15'), 'piso', '1'), 0)))),
-          array['accepted'], 'en una casa que registró él corrige su espacio sin campaña (como house_status)');
+          array['invalid 42501'],
+          'en una casa que registró él, sin campaña en la que escribir, ya no corrige su espacio (0021: el autor también necesita campaña vigente)');
 
 -- ---------------------------------------------------------------------------
 -- 2. La baja de una casa con ventas (UB001) o con visitas de otro colportor (UB002)

@@ -74,8 +74,8 @@ returns text language sql as $$
 $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
--- x1 registró A (Av. Italia 100, en P0 = -34.90, -56.20). y1 no está inscripto en nada: la RLS
--- solo le muestra lo suyo, así que A no la ve. c2 es otra ciudad.
+-- x1 registró A (Av. Italia 100, en P0 = -34.90, -56.20). y1 está inscripto solo en una campaña de
+-- c2 (otra ciudad): la RLS le muestra lo suyo y lo de c2, así que A no la ve. c2 es otra ciudad.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000020' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'd1-' || s || '@example.com', 'x', now(), now(), now()
@@ -85,6 +85,23 @@ insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000020c1', 'Ciudad D1',      '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2),
   ('01920000-0000-7000-8000-0000000020c2', 'Otra ciudad D1', '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2);
+-- b1 está inscripto (sin zona) en una campaña vigente de c1: desde 0021 el autor de una casa carga
+-- espacios en ella solo con campaña en la que escribir.
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
+values ('01920000-0000-7000-8000-0000000020e0', 'Verano D1', 'VERANO', current_date - 10, current_date + 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id)
+values ('01920000-0000-7000-8000-0000000020f1', '01920000-0000-7000-8000-0000000020e0',
+        '01920000-0000-7000-8000-0000000020c1');
+-- b2 está en otra campaña vigente, de c2: no ve lo de c1 (y1 no ve A) pero sí tiene campaña en la
+-- que escribir.
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
+values ('01920000-0000-7000-8000-0000000020e9', 'Otoño D1', 'VERANO', current_date - 10, current_date + 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id)
+values ('01920000-0000-7000-8000-0000000020f9', '01920000-0000-7000-8000-0000000020e9',
+        '01920000-0000-7000-8000-0000000020c2');
+insert into public.campania_colportor (campania_id, usuario_id) values
+  ('01920000-0000-7000-8000-0000000020e0', '01920000-0000-7000-8000-0000000020b1'),
+  ('01920000-0000-7000-8000-0000000020e9', '01920000-0000-7000-8000-0000000020b2');
 
 -- ---------------------------------------------------------------------------
 -- 1. Forma

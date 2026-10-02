@@ -129,8 +129,66 @@ select is((select count(*) from public.ubicacion where id = pg_temp.u('01')), 0:
           'la lectura tampoco: terminada la campaña, ya no ve la casa ajena');
 select is(pg_temp.resultados(sync.push(jsonb_build_array(
             pg_temp.job('ubicacion', 'update', jsonb_build_object('id', pg_temp.u('01'), 'numero', '1 bis'), 0)))),
-          array['invalid FILA_INEXISTENTE'],
-          'así que corregir una fila ajena que ya no ve sigue volviendo FILA_INEXISTENTE (anotado en el PR)');
+          array['invalid CG001'],
+          'corregir una fila ajena que ya no ve vuelve CG001 (decisión de Cristian del 02/10 en #52), no FILA_INEXISTENTE');
+
+-- Los 15 días: solo entran las ventas y las altas, y las correcciones de lo propio. Lo ajeno que
+-- sube después del fin vuelve CG001 (un código propio, que el teléfono distingue del 42501).
+select pg_temp.actuar_como_servidor();
+insert into public.espacio (id, ubicacion_id, created_by) values (pg_temp.u('16'), pg_temp.u('01'), pg_temp.u('b2'));
+insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad, created_by)
+values (pg_temp.u('01'), -34.9, -56.2, 'CASA', 'RECHAZO', 7, pg_temp.u('b2'));
+select pg_temp.terminada_hace(1);
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('16'), 'piso', '2'), 0),
+            pg_temp.job('house_status', 'update', jsonb_build_object('ubicacion_id', pg_temp.u('01'), 'color', 'SIN_CONTESTAR', 'prioridad', 6), 0),
+            pg_temp.job('espacio', 'delete', jsonb_build_object('id', pg_temp.u('16')), 0)))),
+          array['invalid CG001', 'invalid CG001', 'invalid CG001'],
+          'día 1 después del fin: corregir el depto y el estado ajenos, o dar de baja el depto: CG001');
+
+-- Día 15: la venta propia entra (con su depto, persona y visita), la corrección ajena sigue en CG001.
+select pg_temp.actuar_como_servidor();
+select pg_temp.terminada_hace(15);
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'insert', jsonb_build_object('id', pg_temp.u('17'), 'ubicacion_id', pg_temp.u('01'), 'numero_depto', '3C')),
+            pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('22'), 'espacio_id', pg_temp.u('17'),
+                                                                        'persona_id', pg_temp.u('32'))),
+            pg_temp.job('visita', 'insert', jsonb_build_object('id', pg_temp.u('42'), 'espacio_persona_id', pg_temp.u('22'),
+                                                               'fecha', now() - interval '15 days', 'tipo_resultado', 'VENTA')),
+            pg_temp.job('venta', 'insert', jsonb_build_object('id', pg_temp.u('52'), 'espacio_persona_id', pg_temp.u('22'),
+                                                              'visita_id', pg_temp.u('42'), 'numero_talonario', 'G-2',
+                                                              'monto_total', 90000, 'fecha', now() - interval '15 days'))))),
+          array['accepted', 'accepted', 'accepted', 'accepted'],
+          'día 15: la venta propia, con su depto, su persona y su visita, entra');
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('16'), 'piso', '2'), 0)))),
+          array['invalid CG001'], 'día 15: la corrección ajena sigue en CG001');
+
+-- Día 16: ya no escribe en nada; lo ajeno que no ve vuelve FILA_INEXISTENTE como antes.
+select pg_temp.actuar_como_servidor();
+select pg_temp.terminada_hace(16);
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('16'), 'piso', '2'), 0)))),
+          array['invalid FILA_INEXISTENTE'], 'día 16: sin gracia, FILA_INEXISTENTE como antes');
+
+-- Con otra campaña en curso que cubre la ciudad, la corrección ajena entra.
+select pg_temp.actuar_como_servidor();
+select pg_temp.terminada_hace(1);
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
+values (pg_temp.u('e3'), 'Otoño gracia', 'VERANO', current_date - 10, current_date + 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.u('f3'), pg_temp.u('e3'), pg_temp.u('c1'));
+insert into public.campania_colportor (campania_id, usuario_id) values (pg_temp.u('e3'), pg_temp.u('b1'));
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('16'), 'piso', '2'),
+                        (select sync_version from public.espacio where id = pg_temp.u('16')))))),
+          array['accepted'], 'con otra campaña en curso en la ciudad, corregir lo ajeno entra (CG001 es solo de la gracia)');
+select pg_temp.actuar_como_servidor();
+update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('e3');
+select pg_temp.actuar_como(pg_temp.u('b1'));
 
 -- Una campaña que todavía no empezó tampoco admite escrituras (como hoy).
 select pg_temp.actuar_como_servidor();
