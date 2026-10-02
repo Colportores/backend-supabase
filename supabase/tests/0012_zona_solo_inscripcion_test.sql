@@ -165,10 +165,19 @@ select is((select count(*) from public.mis_zonas()), 0::bigint,
 -- ---------------------------------------------------------------------------
 -- Mientras la inscripción de b4 está de baja nadie la cuenta como asignada, y su zona
 -- (Cordón) se da de baja. Al reactivarla con esa zona se rechaza y dice qué hacer.
+--
+-- Desde 0022, dar de baja una inscripción la deja sin zona (decisión de Cristian del 02/10), así que
+-- esta revalidación solo alcanza a una inscripción que ya estaba dada de baja con zona (el estado de
+-- antes de 0022): se arma poniéndole la zona al servidor mientras está de baja.
 select pg_temp.actuar_como_servidor();
 update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000012d5'
  where usuario_id = '01920000-0000-7000-8000-0000000012b4';
 update public.campania_colportor set deleted_at = now()
+ where usuario_id = '01920000-0000-7000-8000-0000000012b4';
+select is(
+  (select zona_id from public.campania_colportor where usuario_id = '01920000-0000-7000-8000-0000000012b4'),
+  null, 'dar de baja la inscripción la deja sin zona (0022)');
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000012d5'
  where usuario_id = '01920000-0000-7000-8000-0000000012b4';
 update public.zona set deleted_at = now() where id = '01920000-0000-7000-8000-0000000012d5';
 select throws_ok(
@@ -186,6 +195,8 @@ update public.campania_colportor set zona_id = '01920000-0000-7000-8000-00000000
  where usuario_id = '01920000-0000-7000-8000-0000000012b4';
 update public.campania_colportor set deleted_at = now()
  where usuario_id = '01920000-0000-7000-8000-0000000012b4';
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000012d1'
+ where usuario_id = '01920000-0000-7000-8000-0000000012b4';
 update public.campania_ciudad set deleted_at = now() where id = '01920000-0000-7000-8000-0000000012f1';
 select throws_ok(
   $$ update public.campania_colportor set deleted_at = null
@@ -193,16 +204,28 @@ select throws_ok(
   'CZ005', 'La inscripción que se reactiva tiene la zona «Centro», que es de una ciudad que se quitó de la campaña. Reactivala sin zona (zona_id = null) y asignale otra con asignar_zona().',
   'reactivar una inscripción cuya zona es de una ciudad quitada → CZ005, con qué hacer');
 
--- Con la zona todavía válida, la reactivación la conserva (no se borra en silencio).
+-- Con la zona todavía válida, la reactivación de una inscripción que ya estaba de baja con zona (antes
+-- de 0022) la conserva (no se borra en silencio). Las que se dan de baja desde 0022 vuelven sin zona.
 update public.campania_ciudad set deleted_at = null where id = '01920000-0000-7000-8000-0000000012f1';
 select lives_ok(
   $$ update public.campania_colportor set deleted_at = null
       where usuario_id = '01920000-0000-7000-8000-0000000012b4' $$,
-  'reactivar una inscripción con una zona viva → ok');
+  'reactivar una inscripción de baja con una zona viva (de antes de 0022) → ok');
 select is(
   (select zona_id from public.campania_colportor where usuario_id = '01920000-0000-7000-8000-0000000012b4'),
   '01920000-0000-7000-8000-0000000012d1'::uuid,
   'la inscripción reactivada conserva su zona');
+
+-- El camino de ahora: baja y reactivación, sin zona de por medio.
+update public.campania_colportor set deleted_at = now()
+ where usuario_id = '01920000-0000-7000-8000-0000000012b4';
+select lives_ok(
+  $$ update public.campania_colportor set deleted_at = null
+      where usuario_id = '01920000-0000-7000-8000-0000000012b4' $$,
+  'dar de baja y reactivar una inscripción → ok');
+select is(
+  (select zona_id from public.campania_colportor where usuario_id = '01920000-0000-7000-8000-0000000012b4'),
+  null, 'y vuelve sin zona: hay que asignarle una con asignar_zona()');
 
 select * from finish();
 rollback;

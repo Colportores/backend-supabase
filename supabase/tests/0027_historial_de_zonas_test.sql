@@ -1,6 +1,7 @@
 -- pgTAP · migración 0022 (backend-supabase#57): el historial de zonas se llena solo al asignar,
--- cambiar, quitar o dar de baja la zona de una inscripción: zona, desde, hasta y quién. Lo leen el
--- ADMIN y el coordinador de la campaña; nadie lo escribe directo.
+-- cambiar, quitar o dar de baja la zona de una inscripción, o dar de baja la inscripción (que la deja
+-- sin zona): zona, desde, hasta y quién. Lo leen el ADMIN y el coordinador de la campaña; nadie lo
+-- escribe directo. Borrar al usuario que asignó o cerró un tramo no se traba.
 begin;
 select * from no_plan();
 
@@ -35,7 +36,7 @@ returns text language sql as $$
   select coalesce(string_agg(
            z.nombre || ' ' || coalesce(right(h.created_by::text, 2), '-') || '>'
              || case when h.hasta is null then '*' else coalesce(right(h.cerrada_por::text, 2), '-') end,
-           ' | ' order by h.desde, h.id), '')
+           ' | ' order by h.desde, h.hasta nulls last, h.id), '')
     from public.campania_colportor_zona_historial h
     join public.campania_colportor cc on cc.id = h.campania_colportor_id
     join public.zona z on z.id = h.zona_id
@@ -53,9 +54,10 @@ $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
 -- Verano (e1, coordina a1) y Otra (e2, coordina a2) en Montevideo. ad es ADMIN.
--- Zonas de Verano: d1 Norte, d2 Sur, d3 Oeste. d4 «Otra zona», de Otra.
+-- Zonas de Verano: d1 Norte, d2 Sur, d3 Oeste, d5 Este. d4 «Otra zona», de Otra.
 -- Inscripciones en Verano: b1 sin zona; b2 con Norte; b3 y b4 con Oeste; b5 con Sur pero la
--- inscripción dada de baja; b6 suspendida y sin zona. En Otra: b7 sin zona.
+-- inscripción dada de baja (como las que había antes de 0022, que conservaban la zona); b6
+-- suspendida y sin zona. En Otra: b7 sin zona.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000027' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'hz-' || s || '@example.com', 'x', now(), now(), now()
@@ -79,7 +81,8 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat,
   ('01920000-0000-7000-8000-0000000027d1', 'Norte',      '01920000-0000-7000-8000-0000000027f1', 'RADIAL', -34.88, -56.16, 300),
   ('01920000-0000-7000-8000-0000000027d2', 'Sur',        '01920000-0000-7000-8000-0000000027f1', 'RADIAL', -34.92, -56.16, 300),
   ('01920000-0000-7000-8000-0000000027d3', 'Oeste',      '01920000-0000-7000-8000-0000000027f1', 'RADIAL', -34.90, -56.20, 300),
-  ('01920000-0000-7000-8000-0000000027d4', 'Otra zona',  '01920000-0000-7000-8000-0000000027f2', 'RADIAL', -34.90, -56.16, 300);
+  ('01920000-0000-7000-8000-0000000027d4', 'Otra zona',  '01920000-0000-7000-8000-0000000027f2', 'RADIAL', -34.90, -56.16, 300),
+  ('01920000-0000-7000-8000-0000000027d5', 'Este',       '01920000-0000-7000-8000-0000000027f1', 'RADIAL', -34.90, -56.12, 300);
 
 -- Altas del servidor: las que traen zona abren su primer tramo (sin nadie que la «asigne»).
 insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at)
@@ -107,6 +110,9 @@ select ok((select relrowsecurity from pg_class where oid = 'public.campania_colp
           'RLS habilitada');
 select has_trigger('public', 'campania_colportor', 'campania_colportor_historial_de_zona_insert', 'trigger de las altas con zona');
 select has_trigger('public', 'campania_colportor', 'campania_colportor_historial_de_zona_update', 'trigger del cambio de zona');
+select has_trigger('public', 'campania_colportor', 'campania_colportor_zona_sale_con_la_baja', 'trigger de la baja de la inscripción');
+select has_trigger('public', 'campania_colportor_zona_historial', 'campania_colportor_zona_historial_sin_usuario',
+                   'trigger que suelta al usuario borrado');
 select ok(not exists (select 1 from sync.entidad where nombre = 'campania_colportor_zona_historial'),
           'no está en sync.entidad: no va al pull ni al push, vive solo en la nube');
 
@@ -117,13 +123,20 @@ select ok(not has_table_privilege('authenticated', 'public.campania_colportor_zo
 select ok(not has_table_privilege('anon', 'public.campania_colportor_zona_historial', 'select'), 'anon no lee');
 select ok(not has_function_privilege('authenticated', 'public.tg_campania_colportor_historial_de_zona()', 'execute'),
           'el trigger no se ejecuta con JWT');
+select ok(not has_function_privilege('authenticated', 'public.tg_campania_colportor_baja_sin_zona()', 'execute')
+          and not has_function_privilege('authenticated', 'public.tg_campania_colportor_zona_historial_sin_usuario()', 'execute'),
+          'ni los otros dos');
+select ok(obj_description('public.tg_campania_colportor_baja_sin_zona()'::regprocedure, 'pg_proc') is not null
+          and obj_description('public.tg_campania_colportor_zona_historial_sin_usuario()'::regprocedure, 'pg_proc') is not null,
+          'todas las funciones nuevas llevan su comment on');
 
 -- ---------------------------------------------------------------------------
 -- 2. Las altas del servidor con zona abren su primer tramo
 -- ---------------------------------------------------------------------------
 select is(pg_temp.historial_de('b2'), 'Norte ->*', 'alta con zona: un tramo abierto, sin quién (proceso del servidor)');
 select is(pg_temp.historial_de('b3'), 'Oeste ->*', 'b3, con Oeste');
-select is(pg_temp.historial_de('b5'), 'Sur ->*', 'una inscripción dada de baja que conserva su zona: el historial sigue a zona_id');
+select is(pg_temp.historial_de('b5'), 'Sur ->*',
+          'una inscripción que ya estaba dada de baja con zona (como antes de 0022): el historial sigue a zona_id');
 select is(pg_temp.historial_de('b1'), '', 'sin zona, sin tramos');
 select is(pg_temp.historial_de('b6'), '', 'b6 (suspendida), sin zona, sin tramos');
 select is((select h.inicial from public.campania_colportor_zona_historial h
@@ -259,8 +272,8 @@ select is(pg_temp.historial_de('b2'), 'Norte ->*', 'quien tiene otra zona no se 
 select is(pg_temp.historial_de('b1'), 'Norte a1>a1 | Sur a1>ad | Oeste ad>a1 | Norte a1>*',
           'ni b1, que ya no estaba en Oeste');
 
--- La inscripción dada de baja conserva su zona y su tramo, aunque la zona se dé de baja (0012):
--- el historial sigue a zona_id.
+-- Una inscripción que ya estaba dada de baja con zona (el estado de antes de 0022) la conserva, y su
+-- tramo, aunque la zona se dé de baja (0012): el historial sigue a zona_id.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000027a1');
 select lives_ok(
   $$ select public.baja_zona('01920000-0000-7000-8000-0000000027d2') $$,
@@ -269,6 +282,64 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.historial_de('b5'), 'Sur ->*', 'la inscripción dada de baja conserva la zona y su tramo abierto');
 select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b5'),
           '01920000-0000-7000-8000-0000000027d2'::uuid, 'porque su zona_id sigue ahí');
+
+-- ---------------------------------------------------------------------------
+-- 5b. Dar de baja la inscripción la deja sin zona y cierra el tramo (decisión de Cristian, 02/10)
+-- ---------------------------------------------------------------------------
+-- a1 (coordinador, con JWT y por UPDATE directo) saca a b2 de la campaña.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000027a1');
+select lives_ok(
+  $$ update public.campania_colportor set deleted_at = now()
+      where usuario_id = '01920000-0000-7000-8000-0000000027b2' and campania_id = '01920000-0000-7000-8000-0000000027e1' $$,
+  'el coordinador da de baja la inscripción de b2 (que tiene Norte)');
+select pg_temp.actuar_como_servidor();
+select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b2'),
+          null, 'queda sin zona');
+select ok((select cc.deleted_at is not null from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b2'),
+          'y la inscripción dada de baja');
+select is(pg_temp.historial_de('b2'), 'Norte ->a1', 'el tramo se cierra con quién la sacó (a1) y no abre ninguno');
+select ok((select h.hasta is not null and h.hasta >= h.desde from public.campania_colportor_zona_historial h
+             join public.campania_colportor cc on cc.id = h.campania_colportor_id
+            where cc.usuario_id = '01920000-0000-7000-8000-0000000027b2'),
+          'con cuándo (hasta)');
+
+-- Vuelve (el camino del servidor: con JWT, 0005 no deja reactivar): vuelve sin zona y sin tramo.
+update public.campania_colportor set deleted_at = null
+ where usuario_id = '01920000-0000-7000-8000-0000000027b2' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b2'),
+          null, 'al reactivarla vuelve sin zona: aparece en «Sin zona», como con «Quitar»');
+select is(pg_temp.historial_de('b2'), 'Norte ->a1', 'y reactivar no abre ningún tramo');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000027b2');
+select is((select count(*) from public.mis_zonas()), 0::bigint, 'y no se le abre ninguna zona');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000027a1');
+select lives_ok(
+  $$ select public.asignar_zona('01920000-0000-7000-8000-0000000027e1', '01920000-0000-7000-8000-0000000027b2',
+                                '01920000-0000-7000-8000-0000000027d1') $$,
+  'el coordinador le asigna una zona: vuelve a ser un colportor como cualquiera');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.historial_de('b2'), 'Norte ->a1 | Norte a1>*', 'y se abre un tramo nuevo, con quién la asignó');
+
+-- La baja que hace el servidor (sin JWT) también la deja sin zona; el tramo se cierra sin quién.
+update public.campania_colportor set deleted_at = now()
+ where usuario_id = '01920000-0000-7000-8000-0000000027b1' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b1'),
+          null, 'la baja del servidor también deja sin zona');
+select is(pg_temp.historial_de('b1'), 'Norte a1>a1 | Sur a1>ad | Oeste ad>a1 | Norte a1>-',
+          'y cierra el tramo vigente (sin quién: «-»)');
+update public.campania_colportor set deleted_at = null
+ where usuario_id = '01920000-0000-7000-8000-0000000027b1' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+
+-- Dar de baja a quien no tiene zona no escribe nada; dar de baja de nuevo a la que ya estaba de baja, tampoco.
+update public.campania_colportor set deleted_at = now()
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is(pg_temp.tramos_de('b6'), 0::bigint, 'dar de baja una inscripción sin zona no toca el historial');
+update public.campania_colportor set deleted_at = null
+ where usuario_id = '01920000-0000-7000-8000-0000000027b6' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+update public.campania_colportor set deleted_at = now() + interval '1 minute'
+ where usuario_id = '01920000-0000-7000-8000-0000000027b5' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+select is(pg_temp.historial_de('b5'), 'Sur ->*', 'y la inscripción que ya estaba de baja con zona no se toca');
+select is((select cc.zona_id from public.campania_colportor cc where cc.usuario_id = '01920000-0000-7000-8000-0000000027b5'),
+          '01920000-0000-7000-8000-0000000027d2'::uuid, 'ni su zona');
 
 -- ---------------------------------------------------------------------------
 -- 6. Cualquier otro camino del servidor
@@ -296,6 +367,27 @@ select ok((select h.hasta = h.desde from public.campania_colportor_zona_historia
                                                                    where usuario_id = '01920000-0000-7000-8000-0000000027b7')),
           'y lo cierra en su propio desde');
 
+-- Con el reloj retrocedido, el cambio a OTRA zona: el tramo nuevo no empieza antes de que termine el
+-- anterior (b4, que no tiene zona: Norte con un desde en el futuro, y después Este).
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000027d1'
+ where usuario_id = '01920000-0000-7000-8000-0000000027b4' and campania_id = '01920000-0000-7000-8000-0000000027e1';
+update public.campania_colportor_zona_historial set desde = now() + interval '2 hours'
+ where hasta is null and campania_colportor_id = (select id from public.campania_colportor
+                                                   where usuario_id = '01920000-0000-7000-8000-0000000027b4');
+select lives_ok(
+  $$ update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000027d5'
+      where usuario_id = '01920000-0000-7000-8000-0000000027b4' and campania_id = '01920000-0000-7000-8000-0000000027e1' $$,
+  'cambiar a otra zona con un tramo abierto que empieza en el futuro');
+select ok((select n.desde >= v.hasta and n.hasta is null
+             from public.campania_colportor_zona_historial v, public.campania_colportor_zona_historial n
+            where v.campania_colportor_id = n.campania_colportor_id and v.zona_id = '01920000-0000-7000-8000-0000000027d1'
+              and v.desde > now() + interval '90 minutes' and n.zona_id = '01920000-0000-7000-8000-0000000027d5'
+              and v.campania_colportor_id = (select id from public.campania_colportor
+                                              where usuario_id = '01920000-0000-7000-8000-0000000027b4')),
+          'el tramo nuevo empieza donde cierra el anterior, no antes');
+select is(pg_temp.historial_de('b4'), 'Oeste ->ad | Norte ->- | Este ->*',
+          'y el último, por orden de fecha, es el abierto');
+
 -- ---------------------------------------------------------------------------
 -- 7. El historial es coherente con la zona actual
 -- ---------------------------------------------------------------------------
@@ -304,7 +396,7 @@ select is((select count(*)::integer from public.campania_colportor cc
                                                 where h.campania_colportor_id = cc.id and h.hasta is null)),
           0, 'toda inscripción tiene abierto exactamente el tramo de su zona actual (o ninguno si no tiene)');
 select is((select count(*)::integer from (
-             select lead(h.desde) over (partition by h.campania_colportor_id order by h.desde, h.id) as siguiente, h.hasta
+             select lead(h.desde) over (partition by h.campania_colportor_id order by h.desde, h.hasta nulls last, h.id) as siguiente, h.hasta
                from public.campania_colportor_zona_historial h) x
             where x.siguiente is not null and (x.hasta is null or x.siguiente < x.hasta)),
           0, 'ningún tramo se superpone con el siguiente');
@@ -402,6 +494,59 @@ delete from public.campania_colportor where usuario_id = '01920000-0000-7000-800
 select is((select count(*)::integer from public.campania_colportor_zona_historial h
             where not exists (select 1 from public.campania_colportor cc where cc.id = h.campania_colportor_id)),
           0, 'borrar la inscripción borra su historial: no queda ningún tramo huérfano');
+
+-- ---------------------------------------------------------------------------
+-- 10. Borrar al usuario que asignó y después cambió la zona (revisión del PR #60)
+-- ---------------------------------------------------------------------------
+-- Con created_by y cerrada_por en el mismo tramo, el borrado fallaba con 23503: tg_auditoria_update
+-- deshacía el ON DELETE SET NULL de created_by y el de cerrada_por revisaba todas las FK de la fila.
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+select ('01920000-0000-7000-8000-0000000027' || s)::uuid, '00000000-0000-0000-0000-000000000000',
+       'authenticated', 'authenticated', 'hz-' || s || '@example.com', 'x', now(), now(), now()
+  from unnest(array['ae','af','b9','ba']) s;
+insert into public.usuario_rol (usuario_id, rol_id)
+select ('01920000-0000-7000-8000-0000000027' || x.s)::uuid, r.id
+  from (values ('ae'), ('af')) x(s) join public.rol r on r.codigo = 'ADMIN';
+insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+  ('01920000-0000-7000-8000-0000000027e1', '01920000-0000-7000-8000-0000000027b9', '01920000-0000-7000-8000-0000000027d1'),
+  ('01920000-0000-7000-8000-0000000027e1', '01920000-0000-7000-8000-0000000027ba', '01920000-0000-7000-8000-0000000027d1');
+
+-- ae le cambia la zona a b9 dos veces: el tramo Este lo asignó y lo cerró él.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000027ae');
+select lives_ok(
+  $$ select public.asignar_zona('01920000-0000-7000-8000-0000000027e1', '01920000-0000-7000-8000-0000000027b9',
+                                '01920000-0000-7000-8000-0000000027d5') $$,
+  'ae le cambia a b9 la zona a Este');
+select lives_ok(
+  $$ select public.asignar_zona('01920000-0000-7000-8000-0000000027e1', '01920000-0000-7000-8000-0000000027b9',
+                                '01920000-0000-7000-8000-0000000027d1') $$,
+  'y después otra vez a Norte');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.historial_de('b9'), 'Norte ->ae | Este ae>ae | Norte ae>*', 'el tramo Este lo asignó y lo cerró ae');
+select lives_ok($$ delete from auth.users where id = '01920000-0000-7000-8000-0000000027ae' $$,
+                'se puede borrar al usuario que asignó y cerró tramos');
+select is(pg_temp.historial_de('b9'), 'Norte ->- | Este ->- | Norte ->*',
+          'sus tramos siguen, con created_by y cerrada_por en null');
+select is((select count(*)::integer from public.campania_colportor_zona_historial h
+            where h.created_by = '01920000-0000-7000-8000-0000000027ae' or h.cerrada_por = '01920000-0000-7000-8000-0000000027ae'),
+          0, 'ningún tramo apunta a un usuario que ya no existe');
+
+-- Lo mismo si el usuario cerró un tramo y abrió otro distinto, y después cae el colportor.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000027af');
+select lives_ok(
+  $$ select public.asignar_zona('01920000-0000-7000-8000-0000000027e1', '01920000-0000-7000-8000-0000000027ba',
+                                '01920000-0000-7000-8000-0000000027d5') $$,
+  'af le cambia a ba la zona');
+select pg_temp.actuar_como_servidor();
+select lives_ok($$ delete from auth.users where id = '01920000-0000-7000-8000-0000000027af' $$,
+                'se puede borrar al usuario que cerró un tramo y abrió otro');
+select is(pg_temp.historial_de('ba'), 'Norte ->- | Este ->*',
+          'los tramos de ba siguen, sin quién (null) y el vigente abierto');
+select lives_ok($$ delete from auth.users where id = '01920000-0000-7000-8000-0000000027ba' $$,
+                'y después se puede borrar al colportor');
+select is((select count(*)::integer from public.campania_colportor_zona_historial h
+            where not exists (select 1 from public.campania_colportor cc where cc.id = h.campania_colportor_id)),
+          0, 'y no queda ningún tramo huérfano');
 
 select * from finish();
 rollback;
