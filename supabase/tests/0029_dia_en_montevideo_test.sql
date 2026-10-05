@@ -111,8 +111,8 @@ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, crea
 select has_function('public', 'hoy_montevideo', array['timestamp with time zone'], 'existe hoy_montevideo(timestamptz)');
 select volatility_is('public', 'hoy_montevideo', array['timestamp with time zone'], 'stable', 'es stable (no mira datos)');
 select ok(not has_function_privilege('anon', 'public.hoy_montevideo(timestamptz)', 'execute'), 'anon no la ejecuta');
-select ok(not has_function_privilege('authenticated', 'public.hoy_montevideo(timestamptz)', 'execute'),
-          'authenticated no la ejecuta: es interna, la llaman funciones SECURITY DEFINER');
+select ok(has_function_privilege('authenticated', 'public.hoy_montevideo(timestamptz)', 'execute'),
+          'authenticated sí, desde 0027: el default de precio_por_zona.valido_desde la evalúa con quien inserta');
 select ok(has_function_privilege('service_role', 'public.hoy_montevideo(timestamptz)', 'execute'), 'service_role sí');
 
 select is(public.hoy_montevideo('2026-10-03 02:59:59+00'), '2026-10-02'::date,
