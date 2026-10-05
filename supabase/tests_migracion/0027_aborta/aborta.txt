@@ -1,0 +1,6 @@
+La migración 0027 (precio de venta por ciudad) no se aplicó
+No se cambió nada.
+· Libro de choque A, en Montevideo (campaña «Verano»): $ 250,00 en la zona «Norte» (precio 01920000-0000-7000-8000-00000000a201, desde 01/01/2026 sin fin) y $ 270,00 en la zona «Sur» (precio 01920000-0000-7000-8000-00000000a202, desde 01/01/2026 sin fin) valen a la vez.
+· Colección de choque, en Montevideo (campaña «Verano»): $ 450,00 en la zona «Norte» (precio 01920000-0000-7000-8000-00000000a211, desde 01/01/2026 hasta 30/06/2026) y $ 460,00 en la zona «Oeste» (dada de baja) (precio 01920000-0000-7000-8000-00000000a212, desde 01/06/2026 sin fin) valen a la vez.
+dejá un solo importe vigente por ciudad de la campaña
+volvé a aplicar la migración.

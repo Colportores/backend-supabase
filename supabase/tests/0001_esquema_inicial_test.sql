@@ -152,30 +152,27 @@ values ('01920000-0000-7000-8000-0000000000ac', 'Argentina', 'AR', 999);
 select is(sync_version, 0::bigint, 'INSERT ignora el sync_version que manda el cliente')
 from public.pais where id = '01920000-0000-7000-8000-0000000000ac';
 
--- Dos precios abiertos para el mismo producto/zona harían ambiguo "el precio actual".
+-- Dos precios abiertos para el mismo producto en la misma ciudad de la campaña harían ambiguo "el precio actual".
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
 values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio)
 values ('01920000-0000-7000-8000-0000000000b0', 'Verano', 'VERANO', '2026-01-01');
 insert into public.campania_ciudad (id, campania_id, ciudad_id)
 values ('01920000-0000-7000-8000-0000000000b1', '01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000ad');
-insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
-values ('01920000-0000-7000-8000-0000000000ae', 'Centro', '01920000-0000-7000-8000-0000000000b1',
-        'RADIAL', -34.9, -56.16, 300);
 insert into public.producto (id, nombre, tipo)
 values ('01920000-0000-7000-8000-0000000000af', 'Conflicto de los Siglos', 'LIBRO');
-insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde)
-values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000ae', 50000, '2026-01-01');
+insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde)
+values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000b1', 50000, '2026-01-01');
 
 select throws_ok(
-  $$ insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde)
-     values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000ae', 70000, '2026-01-01') $$,
+  $$ insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde)
+     values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000b1', 70000, '2026-01-01') $$,
   '23P01', null,
-  'dos precios vigentes solapados para el mismo producto y zona se rechazan'
+  'dos precios vigentes solapados para el mismo producto y ciudad de la campaña se rechazan'
 );
 select lives_ok(
-  $$ insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde, valido_hasta)
-     values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000ae',
+  $$ insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+     values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000b1',
              70000, '2020-01-01', '2025-12-31') $$,
   'un precio histórico cerrado antes del vigente se acepta'
 );

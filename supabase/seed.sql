@@ -22,7 +22,8 @@
 --
 -- Dos límites de ese "idempotente" a tener presentes:
 --   · Si un dato real cargado a mano choca con uno del seed (p. ej. un precio
---     que se solapa en rango de fechas para la misma zona y producto), el
+--     que se solapa en rango de fechas para la misma ciudad de la campaña y
+--     producto), el
 --     insert del seed se saltea EN SILENCIO — no avisa, no falla.
 --   · "No duplica ni falla" no es "converge al contenido de este archivo": si
 --     mañana se edita un valor acá (por id ya existente) y se re-corre sobre
@@ -128,28 +129,29 @@ insert into public.producto_coleccion (id, producto_id, coleccion_id) values
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
--- 5. Precios por zona — mismo producto, distinto precio según zona; un precio
---    de colección; y un ejemplar misionero a precio 0 (se entrega, no se vende).
+-- 5. Precios por ciudad de la campaña (migración 0027) — mismo producto, distinto
+--    precio según la ciudad; un precio de colección; y un ejemplar misionero a
+--    precio 0 (se entrega, no se vende).
 -- ----------------------------------------------------------------------------
 
 insert into public.precio_por_zona
-  (id, producto_id, coleccion_id, zona_id, precio_venta, valido_desde, valido_hasta) values
+  (id, producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta) values
   ('09990000-0000-7000-8008-000000000001',
-    '09990000-0000-7000-8005-000000000001', null, '09990000-0000-7000-8004-000000000001',
+    '09990000-0000-7000-8005-000000000001', null, '09990000-0000-7000-8009-000000000001',
     25000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000002',
-    '09990000-0000-7000-8005-000000000001', null, '09990000-0000-7000-8004-000000000002',
+    '09990000-0000-7000-8005-000000000001', null, '09990000-0000-7000-8009-000000000002',
     27000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000003',
-    null, '09990000-0000-7000-8006-000000000001', '09990000-0000-7000-8004-000000000001',
+    null, '09990000-0000-7000-8006-000000000001', '09990000-0000-7000-8009-000000000001',
     45000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000004',
-    '09990000-0000-7000-8005-000000000003', null, '09990000-0000-7000-8004-000000000002',
+    '09990000-0000-7000-8005-000000000003', null, '09990000-0000-7000-8009-000000000002',
     8000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000005',
-    '09990000-0000-7000-8005-000000000004', null, '09990000-0000-7000-8004-000000000003',
+    '09990000-0000-7000-8005-000000000004', null, '09990000-0000-7000-8009-000000000003',
     15000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000006',
-    '09990000-0000-7000-8005-000000000005', null, '09990000-0000-7000-8004-000000000003',
+    '09990000-0000-7000-8005-000000000005', null, '09990000-0000-7000-8009-000000000003',
     0, '2026-01-01', null)
 on conflict do nothing;
