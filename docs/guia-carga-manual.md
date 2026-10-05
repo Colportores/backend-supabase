@@ -50,21 +50,24 @@ Supabase y permiso para correr SQL.
 
 ```
 pais → ciudad ─┐
-     campania ─┴→ campania_ciudad → zona ─┬→ zona_vertice (solo ESQUINAS)
-                                          │
-producto ────────────────────────────────┼→ precio_por_zona
-                                          │   (FK directa a producto O a coleccion —
-coleccion ────────────────────────────────┘    NO pasa por producto_coleccion)
+     campania ─┴→ campania_ciudad ─┬→ zona ─→ zona_vertice (solo ESQUINAS)
+                                    │
+producto ──────────────────────────┼→ precio_por_zona
+                                    │   (FK a campania_ciudad y, directa, a producto O a
+coleccion ─────────────────────────┘    coleccion — NO pasa por la zona ni por producto_coleccion)
    │
    └→ producto_coleccion   (vínculo M:N producto↔colección; solo agrupa
                              para mostrar/vender junto, no es prerequisito
                              de un precio de colección)
 ```
 
-`precio_por_zona` tiene FKs **directas** a `producto(id)` y a `coleccion(id)`
-(`0001_esquema_inicial.sql` §4) — `producto_coleccion` es un vínculo aparte,
-para armar el catálogo agrupado. Podés cargar un precio de colección sin haber
-cargado `producto_coleccion` todavía.
+`precio_por_zona` cuelga de la **ciudad de la campaña** (`campania_ciudad(id)`, desde
+la migración `0027`; antes colgaba de la zona), y tiene FKs **directas** a
+`producto(id)` y a `coleccion(id)` (`0001_esquema_inicial.sql` §4) —
+`producto_coleccion` es un vínculo aparte, para armar el catálogo agrupado.
+Podés cargar un precio de colección sin haber cargado `producto_coleccion`
+todavía. El nombre de la tabla viene de cuando era por zona (renombrarla a
+`precio_por_ciudad` está sin decidir).
 
 ### 1. `pais` (normalmente ya existe — V1 es solo Uruguay)
 
@@ -161,38 +164,46 @@ values ('<id de producto>', '<id de coleccion>');
 - El par `(producto_id, coleccion_id)` es único: cargarlo dos veces lo
   rechaza.
 
-### 8. `precio_por_zona`
+### 8. `precio_por_zona` (el precio de venta, por ciudad de la campaña)
+
+El precio es de la **ciudad de la campaña** (`campania_ciudad_id`), no de una
+zona: vale para todas las zonas de esa ciudad y dibujar o mover una zona no lo
+toca. Dos campañas en la misma ciudad tienen cada una el suyo.
 
 ```sql
--- Precio de un producto individual en una zona:
-insert into public.precio_por_zona (producto_id, coleccion_id, zona_id, precio_venta, valido_desde, valido_hasta)
-values ('<id de producto>', null, '<id de zona>', 25000, current_date, null);
+-- Precio de un producto individual en una ciudad de una campaña:
+insert into public.precio_por_zona (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+values ('<id de producto>', null, '<id de campania_ciudad>', 25000, public.hoy_montevideo(), null);
 
--- Precio de una colección completa en una zona (excluyente con lo anterior):
-insert into public.precio_por_zona (producto_id, coleccion_id, zona_id, precio_venta, valido_desde, valido_hasta)
-values (null, '<id de coleccion>', '<id de zona>', 45000, current_date, null);
+-- Precio de una colección completa en una ciudad de una campaña (excluyente con lo anterior):
+insert into public.precio_por_zona (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_montevideo(), null);
 ```
 
 - **Exactamente uno** de `producto_id` / `coleccion_id` tiene que ir cargado y
   el otro en `null` — mandar los dos o ninguno lo rechaza el `check`.
 - `precio_venta` en centavos, entero, `>= 0`.
-- `valido_desde` es obligatorio (default `current_date` si no lo mandás).
+- `valido_desde` es obligatorio (si no lo mandás, toma el día de Montevideo,
+  `public.hoy_montevideo()`, no el `current_date` de la sesión, que es UTC).
   `valido_hasta` en `null` significa "vigente hasta nuevo aviso".
 - **No puede haber dos precios vigentes a la vez para el mismo
-  producto/colección en la misma zona** (rango de fechas que se superpone): si
-  ya existe una fila con `valido_hasta` en `null` (abierta) para ese
-  producto+zona, insertar una nueva **falla** con un error de exclusión
-  (`conflicting key value violates exclusion constraint`). Para cambiar un
-  precio:
+  producto/colección en la misma ciudad de la campaña** (rango de fechas que se
+  superpone): si ya existe una fila con `valido_hasta` en `null` (abierta) para
+  ese producto+`campania_ciudad`, insertar una nueva **falla** con un error de
+  exclusión (`conflicting key value violates exclusion constraint`, 23P01).
+  Otra ciudad de la misma campaña, u otra campaña en la misma ciudad (otra
+  `campania_ciudad`), no cuenta. Un precio dado de baja (`deleted_at`) tampoco.
+  Para cambiar un precio:
   ```sql
   -- 1. Cerrar el precio viejo:
   update public.precio_por_zona
-     set valido_hasta = current_date - 1
-   where producto_id = '<id de producto>' and zona_id = '<id de zona>' and valido_hasta is null;
+     set valido_hasta = public.hoy_montevideo() - 1
+   where producto_id = '<id de producto>' and campania_ciudad_id = '<id de campania_ciudad>'
+     and valido_hasta is null and deleted_at is null;
 
   -- 2. Recién ahí insertar el nuevo:
-  insert into public.precio_por_zona (producto_id, zona_id, precio_venta, valido_desde)
-  values ('<id de producto>', '<id de zona>', 27000, current_date);
+  insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde)
+  values ('<id de producto>', '<id de campania_ciudad>', 27000, public.hoy_montevideo());
   ```
 
 ## Qué NO se carga por esta vía
@@ -206,6 +217,6 @@ values (null, '<id de coleccion>', '<id de zona>', 45000, current_date, null);
 ## Datos de ejemplo para desarrollo
 
 `supabase/seed.sql` trae un set fijo y **claramente ficticio** de zonas,
-campañas, catálogo y precios para levantar el entorno local sin cargar nada a
+campañas, catálogo y precios (por ciudad de la campaña) para levantar el entorno local sin cargar nada a
 mano. Se aplica con `scripts/db-seed.sh` (ver README §Desarrollo) — no se usa
 en `staging`/`production`.
