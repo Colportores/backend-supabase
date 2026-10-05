@@ -209,10 +209,8 @@ select is(
   jsonb_build_object('campania_id', '01920000-0000-7000-8000-0000000007e2', 'campania_nombre', 'Salto'),
   'CI007 trae en details la campaña en conflicto (id y nombre) para el BFF'
 );
-select throws_ok(
-  $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b6') $$,
-  'CI008', null, 'inscripción borrada en esta campaña → CI008 (decisión pendiente)'
-);
+-- Una inscripción borrada en esta campaña (b6, b3) ya no es CI008: inscribir_colportor() la reactiva
+-- (0028, decisión de Cristian del 02/10). Lo cubre 0035_reactivar_inscripcion_test.
 
 -- El INSERT directo está cerrado para todos: sin el lock del RPC, dos coordinadores podían
 -- dejar a la misma persona en dos campañas vigentes.
@@ -286,7 +284,7 @@ select throws_ok(
   $$ update public.campania_colportor set deleted_at = null
       where campania_id = '01920000-0000-7000-8000-0000000007e1'
         and usuario_id = '01920000-0000-7000-8000-0000000007b6' $$,
-  '23514', null, 'el coordinador de la campaña no reactiva una inscripción borrada (decisión pendiente)'
+  '23514', null, 'el coordinador de la campaña no reactiva una inscripción borrada con un UPDATE: solo con inscribir_colportor() (0028)'
 );
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000007a2');
 select throws_ok(
