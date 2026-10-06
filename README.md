@@ -147,12 +147,13 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 `select public.inscribir_colportor(campania_id, usuario_id);` inscribe a un colportor en una campaña y devuelve la fila de `campania_colportor` (HU-CAM-004). Con eso su cuenta pasa sola de `PENDIENTE_ASIGNACION` a `ACTIVA`. Lo consume `bff-coordinadores`; por PostgREST es `POST /rest/v1/rpc/inscribir_colportor`.
 
 - **Quién.** El coordinador de esa campaña (`campania.coordinador_id`) o un ADMIN. Si no, `42501`.
-- **Qué reglas.** Campaña vigente; usuario existente, con email verificado y no suspendido; que no esté ya inscripto; que no esté en otra campaña vigente. Cada regla tiene su código propio, `CI001`..`CI008`: ver el header de la migración `0005`.
+- **Qué reglas.** Campaña vigente; usuario existente, con email verificado y no suspendido; que no esté ya inscripto; que no esté en otra campaña vigente. Cada regla tiene su código propio, `CI001`..`CI007`: ver el header de la migración `0005` (desde la `0028` no existe `CI008`: una inscripción dada de baja se reactiva, ver más abajo). No se mira el rol de la persona: un coordinador o un ADMIN se inscriben como colportores en otra campaña igual que cualquiera (decisión de Cristian, 02/10).
+- **Reactivar.** Si la persona tiene una inscripción dada de baja en **esa misma campaña**, `inscribir_colportor()` la reactiva (backend-supabase#41, migración `0028`, decisión de Cristian del 02/10): devuelve la misma fila (mismo `id`, `created_at`, `created_by` y `meta_libros`) con `deleted_at = null` y **sin zona**, y no crea otra. Las reglas de arriba valen igual (campaña vigente, cuenta no suspendida, sin otra campaña vigente). En `buscar_candidatos()` la persona que el coordinador quitó aparece con `motivo_bloqueo = null`: ya no hay motivo `INSCRIPCION_BORRADA`.
 - **Dónde viven.** Una sola definición, `motivo_rechazo_inscripcion()`, que es interna.
 - **Un solo camino.** El RPC es el único camino para inscribir con JWT. `campania_colportor` no tiene política INSERT, así que la RLS niega el INSERT directo, incluso al ADMIN. El RPC es `SECURITY DEFINER` y toma un lock por usuario: así nadie queda en dos campañas vigentes por dos inscripciones simultáneas.
 - **Qué no se puede hacer con un UPDATE.**
   - Cambiar la campaña o el usuario de una inscripción. Reasignar es cerrar una y abrir otra (HU-CAM-005).
-  - Reactivar una inscripción borrada. Si se reactiva o no está pendiente de decisión.
+  - Reactivar una inscripción borrada. Se hace con `inscribir_colportor()`, que revisa el permiso, la suspensión y la otra campaña: un UPDATE con JWT que pase `deleted_at` a `null` se rechaza con `23514` (el servidor, sin JWT, sí puede: seeds y jobs).
 
 ### Cuentas: qué ve el coordinador y búsqueda de candidatos
 
@@ -164,7 +165,7 @@ select * from public.buscar_candidatos(campania_id, texto, despues_de); -- vista
 ```
 
 - **Quién.** El coordinador de esa campaña o un ADMIN, con la campaña vigente. Si no, `42501`; `buscar_candidatos()` responde `CI001`/`CI002` como `inscribir_colportor()`.
-- **Candidatas.** Cuentas vivas, con el email verificado y que no estén ya en el equipo. Aparecen también las suspendidas, las que están en otra campaña vigente y las que tienen una inscripción dada de baja en esta campaña, con su `motivo_bloqueo`: el motivo con que `inscribir_colportor()` las rechazaría (`null` si se pueden añadir).
+- **Candidatas.** Cuentas vivas, con el email verificado y que no estén ya en el equipo. Aparecen también las suspendidas y las que están en otra campaña vigente, con su `motivo_bloqueo`: el motivo con que `inscribir_colportor()` las rechazaría (`null` si se pueden añadir). Desde la `0028` la persona que el coordinador quitó de esta campaña aparece con `motivo_bloqueo = null`: «Añadir» reactiva su inscripción.
 - **Sin texto: sugeridos.** Hasta 5 cuentas `PENDIENTE_ASIGNACION`, de la más nueva a la más vieja.
 - **Con texto: búsqueda.** Las cuentas cuyo nombre completo o email contiene el texto, sin distinguir mayúsculas ni tildes. Primero las que empiezan con él (nombre, apellido o email); después el resto, alfabético (decisión del 02/10). De a 10 por página: para la siguiente, `despues_de` es el `usuario_id` de la última cuenta mostrada (cursor, sin duplicados ni huecos aunque la lista cambie entre páginas). Una página con menos de 10 es la última.
 - **Columnas.** `usuario_id`, `nombre`, `apellido`, `email`, `estado` (como `estado_cuenta()`), `campania_actual` (la campaña vigente en la que está, para «Está en campaña X»), `creada_en` y `motivo_bloqueo`.

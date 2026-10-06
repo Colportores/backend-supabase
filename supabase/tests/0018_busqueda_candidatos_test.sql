@@ -208,7 +208,7 @@ select results_eq(
   $$ values (pg_temp.u('b1'), 'PENDIENTE_ASIGNACION'::text, null::text, null::text),
             (pg_temp.u('b2'), 'PENDIENTE_ASIGNACION', null, null),
             (pg_temp.u('b5'), 'PENDIENTE_ASIGNACION', null, null),
-            (pg_temp.u('ba'), 'PENDIENTE_ASIGNACION', null, 'INSCRIPCION_BORRADA'),
+            (pg_temp.u('ba'), 'PENDIENTE_ASIGNACION', null, null),
             (pg_temp.u('be'), 'PENDIENTE_ASIGNACION', null, null) $$,
   'sugeridos: hasta 5 pendientes, más nuevas primero (empate por id desc: be antes que bd); '
   'sin suspendidas, en otra campaña, ya en el equipo, sin verificar ni dadas de baja aunque sean más nuevas; '
@@ -285,8 +285,8 @@ select is_empty($$ select * from public.buscar_candidatos(pg_temp.u('e1'), 'bent
                 'una cuenta dada de baja no aparece');
 select results_eq(
   $$ select usuario_id, motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1'), 'acosta') $$,
-  $$ values (pg_temp.u('ba'), 'INSCRIPCION_BORRADA'::text) $$,
-  'con una inscripción dada de baja en esta campaña aparece, con su motivo'
+  $$ values (pg_temp.u('ba'), null::text) $$,
+  'con una inscripción dada de baja en esta campaña aparece, y se puede volver a añadir (motivo null: 0028)'
 );
 
 -- Pocas cuentas: hasta 10.
@@ -414,8 +414,8 @@ select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u
   'CI005', null, 'USUARIO_SUSPENDIDO → CI005');
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('bb')) $$,
   'CI005', null, 'suspendido y en otra campaña → CI005, como dice el motivo');
-select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('ba')) $$,
-  'CI008', null, 'INSCRIPCION_BORRADA → CI008');
+select is((select motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1'), 'acosta')), null,
+  'con una inscripción dada de baja en esta campaña no hay motivo: inscribir la reactiva (0035)');
 select lives_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), c.usuario_id)
                      from public.buscar_candidatos(pg_temp.u('e1'), 'ana') c
                     where c.motivo_bloqueo is null $$,
