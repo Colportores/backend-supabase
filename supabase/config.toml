@@ -119,12 +119,13 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
-# Uncomment to configure local storage buckets
-# [storage.buckets.images]
-# public = false
-# file_size_limit = "50MiB"
-# allowed_mime_types = ["image/png", "image/jpeg"]
-# objects_path = "./images"
+# Buckets locales. El del proyecto hosteado NO sale de acá: lo crea la migración 0029 (`db push`
+# no manda este archivo). Tienen que decir lo mismo; docs/mapas-tiles.md § «Bucket».
+# `mapas`: los mapas propios (PMTiles, estilo, glyphs, sprites y catalogo.json), públicos, sin login.
+[storage.buckets.mapas]
+public = true
+file_size_limit = "50MiB"
+allowed_mime_types = ["application/json", "application/octet-stream", "application/x-protobuf", "image/png", "text/plain"]
 
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]

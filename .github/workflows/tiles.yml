@@ -1,0 +1,123 @@
+name: Mapas
+
+# Publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo) en el bucket público
+# `mapas` del proyecto Supabase del environment. Explicación completa: docs/mapas-tiles.md.
+#
+# Se dispara a mano, a propósito: los mapas cambian cuando alguien lo decide (una ciudad nueva, una
+# paleta nueva, un build más reciente de Protomaps), no con cada merge. Re-cortar cada vez que
+# Protomaps publica un build (a diario) le haría bajar a cada teléfono ~11 MB de mapa idéntico.
+#
+# NO necesita secretos nuevos. Usa los del environment de deploy.yml:
+#   SUPABASE_PROJECT_ID    → de ahí sale la URL del proyecto (https://<id>.supabase.co);
+#   SUPABASE_ACCESS_TOKEN  → con él el CLI pide la clave de servicio, que no se guarda en ningún lado.
+# Si el environment tiene además SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_URL, por si el proyecto
+# tiene dominio propio), se usan esos y no se llama a la API.
+#
+# Como cualquier workflow_dispatch, para que aparezca en Actions tiene que existir en la rama por
+# defecto (`production`); mientras tanto, la misma publicación corre desde una máquina: ver
+# docs/mapas-tiles.md § «Publicar a mano».
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment cuyo bucket `mapas` se publica
+        required: true
+        type: choice
+        options: [develop, staging, production]
+      solo:
+        description: Qué publicar
+        required: true
+        type: choice
+        default: todo
+        options: [todo, estilo, ciudades]
+      ciudad:
+        description: Solo esta ciudad (slug de tiles/ciudades.json, p. ej. montevideo). Vacío = todas
+        required: false
+        type: string
+      build:
+        description: Build de Protomaps (AAAAMMDD). Vacío = el más reciente
+        required: false
+        type: string
+      simulacro:
+        description: Hacer todo menos escribir en el bucket
+        required: false
+        type: boolean
+        default: false
+
+# Un solo publicador por environment a la vez: todos leen y reescriben el mismo catalogo.json.
+concurrency:
+  group: tiles-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    name: publicar mapas (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: tiles
+    # Sin `env:` a nivel de job a propósito: los secretos llegan solo al paso «Publicar», que es el único
+    # que los usa. `npm ci` y `npm test` ejecutan el código de las dependencias y no los necesitan.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tiles/package-lock.json
+
+      - run: npm ci
+
+      # Las pruebas primero: si el publicador está roto, no se toca el bucket.
+      - run: npm test
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      # Los secretos del environment entran solo acá. La clave de servicio (que, si no está como secreto, se
+      # le pide al CLI de Supabase) vive únicamente en este paso, como variable de shell: no se escribe en
+      # GITHUB_ENV, así que ningún paso posterior (ni sus dependencias) la ve.
+      - name: Publicar
+        env:
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SOLO: ${{ inputs.solo }}
+          CIUDAD: ${{ inputs.ciudad }}
+          BUILD: ${{ inputs.build }}
+          SIMULACRO: ${{ inputs.simulacro }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            test -n "${SUPABASE_PROJECT_ID:-}" || { echo "::error::Falta SUPABASE_PROJECT_ID (o SUPABASE_URL) en el environment"; exit 1; }
+            export SUPABASE_URL="https://${SUPABASE_PROJECT_ID}.supabase.co"
+          fi
+          if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+            key="$(supabase projects api-keys --project-ref "$SUPABASE_PROJECT_ID" -o json \
+              | jq -r '[.[] | select(.name == "service_role" or .id == "service_role")][0].api_key // empty' || true)"
+            test -n "$key" || { echo "::error::No pude obtener la clave de servicio con SUPABASE_ACCESS_TOKEN"; exit 1; }
+            echo "::add-mask::$key"
+            export SUPABASE_SERVICE_ROLE_KEY="$key"
+          fi
+          # Lo único que sigue: la dirección del proyecto (no es secreta), para el paso de verificación.
+          echo "SUPABASE_URL=$SUPABASE_URL" >> "$GITHUB_ENV"
+
+          args=(publicar)
+          if [ "$SOLO" != "todo" ]; then args+=(--solo "$SOLO"); fi
+          if [ -n "$CIUDAD" ]; then args+=(--ciudad "$CIUDAD"); fi
+          if [ -n "$BUILD" ]; then args+=(--build "$BUILD"); fi
+          if [ "$SIMULACRO" = "true" ]; then args+=(--dry-run); fi
+          node src/cli.mjs "${args[@]}"
+
+      # Lo que importa del bucket: se lee sin login, con CORS para localhost y GitHub Pages, y con Range.
+      # Solo necesita la dirección del proyecto (SUPABASE_URL, que dejó el paso anterior), ningún secreto.
+      - name: Verificar el bucket publicado
+        if: ${{ !inputs.simulacro }}
+        run: node src/cli.mjs verificar

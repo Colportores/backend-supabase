@@ -74,6 +74,7 @@ supabase/
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno (llegan con ADR-014)
+tiles/                 ← mapas propios: publicador del bucket `mapas` (PMTiles, estilo, catálogo), Node 22; ver docs/mapas-tiles.md
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
 scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench
 ```
@@ -85,6 +86,7 @@ scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / 
 ## CI/CD
 
 - `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
+- `tiles.yml` (manual, `workflow_dispatch`): publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo) en el bucket público `mapas` del environment y lo verifica. No lleva secretos nuevos. [`docs/mapas-tiles.md`](./docs/mapas-tiles.md). El job **tiles** de `ci.yml` corre las pruebas del publicador (`npm ci && npm test` en `tiles/`).
 - `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment*. **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
 ### Cuándo aplica cada rama

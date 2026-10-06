@@ -11,6 +11,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Pruebas del publicador de mapas (tiles/, backend-supabase#42): catálogo, estilo, política de
+  # tamaño, subida a Storage y verificación, todo contra un Storage de mentira. No necesita Docker
+  # ni credenciales. El bucket en sí no se prueba acá: la base de este CI no trae el servicio
+  # Storage, así que pgTAP 0036 se saltea. Lo comprueba `node src/cli.mjs verificar` después de
+  # cada publicación (workflow Mapas) y la prueba contra un storage-api real que se corre a mano.
+  tiles:
+    name: tiles · pruebas del publicador
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: tiles
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tiles/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   migraciones:
     name: migraciones desde cero · pgTAP
     runs-on: ubuntu-latest
