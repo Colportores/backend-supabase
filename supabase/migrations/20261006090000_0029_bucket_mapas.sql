@@ -25,9 +25,10 @@
 --     (.github/workflows/tiles.yml). Una política de lectura sobre storage.objects dejaría listar
 --     todo el bucket, y no hace falta: el catálogo ya dice qué hay.
 --
--- CORS y Range no se configuran acá: son del servicio Storage (el hosteado responde con
--- `Access-Control-Allow-Origin: *`, vale para localhost y GitHub Pages, y con 206 a los Range).
--- docs/mapas-tiles.md dice cómo se verifica.
+-- CORS y Range no se configuran acá: son del servicio Storage y de su gateway. Se espera que el
+-- proyecto hosteado responda `Access-Control-Allow-Origin: *` (vale para localhost y GitHub Pages) y
+-- con 206 a los Range, pero eso está SIN CONFIRMAR contra el proyecto real: lo confirma
+-- `node tiles/src/cli.mjs verificar` después de la primera publicación (docs/mapas-tiles.md).
 -- ============================================================================
 
 -- Las tablas de `storage` las crea el servicio Storage (storage-api) cuando arranca, no la imagen de
