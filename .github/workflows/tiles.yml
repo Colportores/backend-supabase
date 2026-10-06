@@ -60,11 +60,8 @@ jobs:
     defaults:
       run:
         working-directory: tiles
-    env:
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    # Sin `env:` a nivel de job a propósito: los secretos llegan solo al paso «Publicar», que es el único
+    # que los usa. `npm ci` y `npm test` ejecutan el código de las dependencias y no los necesitan.
     steps:
       - uses: actions/checkout@v4
 
@@ -83,29 +80,35 @@ jobs:
         with:
           version: 2.116.0
 
-      - name: Credenciales del proyecto
-        run: |
-          set -euo pipefail
-          if [ -z "${SUPABASE_URL:-}" ]; then
-            test -n "${SUPABASE_PROJECT_ID:-}" || { echo "::error::Falta SUPABASE_PROJECT_ID (o SUPABASE_URL) en el environment"; exit 1; }
-            echo "SUPABASE_URL=https://${SUPABASE_PROJECT_ID}.supabase.co" >> "$GITHUB_ENV"
-          fi
-          if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
-            key="$(supabase projects api-keys --project-ref "$SUPABASE_PROJECT_ID" -o json \
-              | jq -r '[.[] | select(.name == "service_role" or .id == "service_role")][0].api_key // empty')"
-            test -n "$key" || { echo "::error::No pude obtener la clave de servicio con SUPABASE_ACCESS_TOKEN"; exit 1; }
-            echo "::add-mask::$key"
-            echo "SUPABASE_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
-          fi
-
+      # Los secretos del environment entran solo acá. La clave de servicio (que, si no está como secreto, se
+      # le pide al CLI de Supabase) vive únicamente en este paso, como variable de shell: no se escribe en
+      # GITHUB_ENV, así que ningún paso posterior (ni sus dependencias) la ve.
       - name: Publicar
         env:
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SOLO: ${{ inputs.solo }}
           CIUDAD: ${{ inputs.ciudad }}
           BUILD: ${{ inputs.build }}
           SIMULACRO: ${{ inputs.simulacro }}
         run: |
           set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            test -n "${SUPABASE_PROJECT_ID:-}" || { echo "::error::Falta SUPABASE_PROJECT_ID (o SUPABASE_URL) en el environment"; exit 1; }
+            export SUPABASE_URL="https://${SUPABASE_PROJECT_ID}.supabase.co"
+          fi
+          if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+            key="$(supabase projects api-keys --project-ref "$SUPABASE_PROJECT_ID" -o json \
+              | jq -r '[.[] | select(.name == "service_role" or .id == "service_role")][0].api_key // empty' || true)"
+            test -n "$key" || { echo "::error::No pude obtener la clave de servicio con SUPABASE_ACCESS_TOKEN"; exit 1; }
+            echo "::add-mask::$key"
+            export SUPABASE_SERVICE_ROLE_KEY="$key"
+          fi
+          # Lo único que sigue: la dirección del proyecto (no es secreta), para el paso de verificación.
+          echo "SUPABASE_URL=$SUPABASE_URL" >> "$GITHUB_ENV"
+
           args=(publicar)
           if [ "$SOLO" != "todo" ]; then args+=(--solo "$SOLO"); fi
           if [ -n "$CIUDAD" ]; then args+=(--ciudad "$CIUDAD"); fi
@@ -114,6 +117,7 @@ jobs:
           node src/cli.mjs "${args[@]}"
 
       # Lo que importa del bucket: se lee sin login, con CORS para localhost y GitHub Pages, y con Range.
+      # Solo necesita la dirección del proyecto (SUPABASE_URL, que dejó el paso anterior), ningún secreto.
       - name: Verificar el bucket publicado
         if: ${{ !inputs.simulacro }}
         run: node src/cli.mjs verificar
