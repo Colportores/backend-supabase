@@ -17,7 +17,7 @@
 -- Idempotente: cada fila tiene un id fijo (prefijo 09990000, uno por entidad
 -- en el tercer grupo) e `insert ... on conflict do nothing` sin conflict_target,
 -- así que una fila que ya existe (por id o por cualquier otro unique/exclusion,
--- como el anti-solape de precio_por_zona) se saltea en vez de fallar o duplicar.
+-- como el anti-solape de precio_por_ciudad) se saltea en vez de fallar o duplicar.
 -- Correr este archivo dos veces deja la base igual que correrlo una vez.
 --
 -- Dos límites de ese "idempotente" a tener presentes:
@@ -134,7 +134,7 @@ on conflict do nothing;
 --    precio 0 (se entrega, no se vende).
 -- ----------------------------------------------------------------------------
 
-insert into public.precio_por_zona
+insert into public.precio_por_ciudad
   (id, producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta) values
   ('09990000-0000-7000-8008-000000000001',
     '09990000-0000-7000-8005-000000000001', null, '09990000-0000-7000-8009-000000000001',

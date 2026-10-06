@@ -3,7 +3,7 @@
 -- Corre el seed de ejemplo dos veces dentro de la misma transacción y verifica
 -- que la segunda pasada no duplica filas ni lanza error: el `on conflict do
 -- nothing` sin conflict_target de cada insert cubre tanto el conflicto por id
--- fijo como el anti-solape de precio_por_zona (constraint distinta del id, que
+-- fijo como el anti-solape de precio_por_ciudad (constraint distinta del id, que
 -- un `on conflict (id)` NO habría cubierto).
 --
 -- Todo en un `begin ... rollback`, como 0001-0003: no deja datos de ejemplo
@@ -31,7 +31,7 @@ select is((select count(*) from public.zona_vertice),        8::bigint, 'primera
 select is((select count(*) from public.producto),            5::bigint, 'primera pasada: 5 productos');
 select is((select count(*) from public.coleccion),           1::bigint, 'primera pasada: 1 colección');
 select is((select count(*) from public.producto_coleccion),  2::bigint, 'primera pasada: 2 vínculos producto-colección');
-select is((select count(*) from public.precio_por_zona),     6::bigint, 'primera pasada: 6 precios');
+select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'primera pasada: 6 precios');
 
 -- Segunda pasada: mismo archivo, no debe duplicar ni fallar.
 \i supabase/seed.sql
@@ -45,7 +45,7 @@ select is((select count(*) from public.zona_vertice),        8::bigint, 'segunda
 select is((select count(*) from public.producto),            5::bigint, 'segunda pasada: sigue en 5 productos');
 select is((select count(*) from public.coleccion),           1::bigint, 'segunda pasada: sigue en 1 colección');
 select is((select count(*) from public.producto_coleccion),  2::bigint, 'segunda pasada: sigue en 2 vínculos producto-colección');
-select is((select count(*) from public.precio_por_zona),     6::bigint, 'segunda pasada: sigue en 6 precios');
+select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'segunda pasada: sigue en 6 precios');
 
 select * from finish();
 rollback;

@@ -19,7 +19,7 @@ Supabase y permiso para correr SQL.
   insertar — pero también que ninguna política de permisos te va a frenar si
   te equivocás. Los únicos frenos son las validaciones del esquema que lista
   cada sección de abajo (`not null`, `check`, FKs, y el anti-solape de
-  `precio_por_zona`).
+  `precio_por_ciudad`).
 - Envolvé cada carga en una transacción y revisá con `select` antes de hacer
   `commit`:
   ```sql
@@ -52,7 +52,7 @@ Supabase y permiso para correr SQL.
 pais → ciudad ─┐
      campania ─┴→ campania_ciudad ─┬→ zona ─→ zona_vertice (solo ESQUINAS)
                                     │
-producto ──────────────────────────┼→ precio_por_zona
+producto ──────────────────────────┼→ precio_por_ciudad
                                     │   (FK a campania_ciudad y, directa, a producto O a
 coleccion ─────────────────────────┘    coleccion — NO pasa por la zona ni por producto_coleccion)
    │
@@ -61,13 +61,15 @@ coleccion ───────────────────────�
                              de un precio de colección)
 ```
 
-`precio_por_zona` cuelga de la **ciudad de la campaña** (`campania_ciudad(id)`, desde
+`precio_por_ciudad` cuelga de la **ciudad de la campaña** (`campania_ciudad(id)`, desde
 la migración `0027`; antes colgaba de la zona), y tiene FKs **directas** a
 `producto(id)` y a `coleccion(id)` (`0001_esquema_inicial.sql` §4) —
 `producto_coleccion` es un vínculo aparte, para armar el catálogo agrupado.
 Podés cargar un precio de colección sin haber cargado `producto_coleccion`
-todavía. El nombre de la tabla viene de cuando era por zona (renombrarla a
-`precio_por_ciudad` está sin decidir).
+todavía. La tabla se llamaba `precio_por_zona`: la migración `0030` la renombró
+(decisión de Cristian del 06/10). Son los precios **por ciudad**, los casos
+específicos: el precio general todavía no existe en el modelo (espera una
+respuesta de Cristian), y un libro sin precio en una ciudad no se ofrece allí.
 
 ### 1. `pais` (normalmente ya existe — V1 es solo Uruguay)
 
@@ -164,7 +166,9 @@ values ('<id de producto>', '<id de coleccion>');
 - El par `(producto_id, coleccion_id)` es único: cargarlo dos veces lo
   rechaza.
 
-### 8. `precio_por_zona` (el precio de venta, por ciudad de la campaña)
+### 8. `precio_por_ciudad` (el precio de venta, por ciudad de la campaña)
+
+Antes de `0030` esta tabla se llamaba `precio_por_zona`.
 
 El precio es de la **ciudad de la campaña** (`campania_ciudad_id`), no de una
 zona: vale para todas las zonas de esa ciudad y dibujar o mover una zona no lo
@@ -172,11 +176,11 @@ toca. Dos campañas en la misma ciudad tienen cada una el suyo.
 
 ```sql
 -- Precio de un producto individual en una ciudad de una campaña:
-insert into public.precio_por_zona (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+insert into public.precio_por_ciudad (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
 values ('<id de producto>', null, '<id de campania_ciudad>', 25000, public.hoy_montevideo(), null);
 
 -- Precio de una colección completa en una ciudad de una campaña (excluyente con lo anterior):
-insert into public.precio_por_zona (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+insert into public.precio_por_ciudad (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
 values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_montevideo(), null);
 ```
 
@@ -196,13 +200,13 @@ values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_
   Para cambiar un precio:
   ```sql
   -- 1. Cerrar el precio viejo:
-  update public.precio_por_zona
+  update public.precio_por_ciudad
      set valido_hasta = public.hoy_montevideo() - 1
    where producto_id = '<id de producto>' and campania_ciudad_id = '<id de campania_ciudad>'
      and valido_hasta is null and deleted_at is null;
 
   -- 2. Recién ahí insertar el nuevo:
-  insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde)
+  insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde)
   values ('<id de producto>', '<id de campania_ciudad>', 27000, public.hoy_montevideo());
   ```
 

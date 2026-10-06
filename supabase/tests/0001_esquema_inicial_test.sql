@@ -9,7 +9,7 @@ select * from no_plan();
 select has_table('public', t, format('tabla %s existe', t))
 from unnest(array[
   'pais','ciudad','usuario','rol','usuario_rol','horario_colportor','campania','zona',
-  'campania_colportor','producto','coleccion','producto_coleccion','precio_por_zona',
+  'campania_colportor','producto','coleccion','producto_coleccion','precio_por_ciudad',
   'ubicacion','espacio','espacio_persona','jornada','visita','agenda','venta','venta_item',
   'entrega','cobranza','house_status',
   -- 0008: el mapa de la campaña
@@ -161,17 +161,17 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id)
 values ('01920000-0000-7000-8000-0000000000b1', '01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000ad');
 insert into public.producto (id, nombre, tipo)
 values ('01920000-0000-7000-8000-0000000000af', 'Conflicto de los Siglos', 'LIBRO');
-insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde)
+insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde)
 values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000b1', 50000, '2026-01-01');
 
 select throws_ok(
-  $$ insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde)
+  $$ insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde)
      values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000b1', 70000, '2026-01-01') $$,
   '23P01', null,
   'dos precios vigentes solapados para el mismo producto y ciudad de la campaña se rechazan'
 );
 select lives_ok(
-  $$ insert into public.precio_por_zona (producto_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+  $$ insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
      values ('01920000-0000-7000-8000-0000000000af', '01920000-0000-7000-8000-0000000000b1',
              70000, '2020-01-01', '2025-12-31') $$,
   'un precio histórico cerrado antes del vigente se acepta'
@@ -203,7 +203,7 @@ select bag_eq(
 -- ---------------------------------------------------------------------------
 select bag_eq(
   $$ select tablename::text from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' $$,
-  array['producto','coleccion','producto_coleccion','precio_por_zona'],
+  array['producto','coleccion','producto_coleccion','precio_por_ciudad'],
   'supabase_realtime publica solo el catálogo'
 );
 

@@ -88,7 +88,7 @@ select hasnt_trigger('public', 'campania_colportor', 'campania_colportor_republi
                      'inscribir ya no republica el mapa: lo reemplaza la huella de las campañas en el pull');
 select results_eq(
   $$ select nombre from sync.entidad where sigue_campanias order by nombre $$,
-  $$ values ('campania_ciudad'), ('precio_por_zona'), ('zona'), ('zona_vertice') $$,
+  $$ values ('campania_ciudad'), ('precio_por_ciudad'), ('zona'), ('zona_vertice') $$,
   'el mapa y los precios de sus ciudades (0027), y nada más, bajan según las campañas que ve');
 select ok(has_function_privilege('authenticated', 'public.mis_campanias_del_mapa()', 'execute'),
           'authenticated ejecuta mis_campanias_del_mapa (la usa la huella, que corre como él)');
