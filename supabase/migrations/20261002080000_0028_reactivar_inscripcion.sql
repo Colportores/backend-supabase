@@ -57,10 +57,13 @@
 --
 -- ## El sync
 --
--- campania_colportor no está en sync.entidad: no baja al teléfono ni entra por el push. La
--- reactivación vuelve visible el mapa de la campaña para el colportor igual que una inscripción
--- nueva: el UPDATE dispara los triggers de 0008 (republicar el mapa y las ubicaciones de la
--- campaña) y la huella de las campañas que sigue sync.pull (0023) cambia.
+-- campania_colportor está en sync.entidad como pull desde 0014 (la app no la escribe: el push
+-- responde ENTIDAD_DE_SOLO_LECTURA). El UPDATE de la reactivación pasa por tg_auditoria_update, que
+-- sube el xmin_w, y el pull le vuelve a bajar al colportor su fila, ya sin deleted_at y sin zona.
+-- El mapa de la campaña también vuelve a bajar, igual que con una inscripción nueva, pero no por
+-- los triggers de republicar de 0008 y 0010 (se borraron en 0013 y 0011): cambia la huella de las
+-- campañas que ve (mis_campanias_del_mapa(), 0013) que compara sync.pull (0023), y esas entidades
+-- bajan completas.
 --
 -- ## Para otros repos
 --
