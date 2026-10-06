@@ -15,6 +15,7 @@ const catalogo = fusionar(
     armarPaquete({
       nivel: 'ciudad',
       clave: 'montevideo',
+      ambitoId: '09990000-0000-7000-8003-000000000001',
       nombre: 'Montevideo',
       zoomMax: 15,
       partes: [{ archivo: ARCHIVO, tamano_bytes: CONTENIDO.length, sha256: SHA }],
@@ -22,7 +23,7 @@ const catalogo = fusionar(
       ahora: '2026-10-07T12:00:00Z',
     }),
   ],
-  { ahora: '2026-10-07T12:00:00Z' },
+  { ahora: '2026-10-07T12:00:00Z', estiloVersion: 'e'.repeat(64) },
 );
 const estilo = estiloDePrueba();
 

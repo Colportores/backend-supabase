@@ -6,12 +6,14 @@
 //   2. estilo, glyphs y sprites;
 //   3. cada paquete, solo si no estaba ya publicado (el nombre lleva el SHA-256);
 //   4. el catálogo, último;
-//   5. recién ahí, borrar lo que el catálogo ya no menciona y pasó el período de gracia.
+//   5. recién ahí, borrar lo que el catálogo ya no menciona y pasó el período de gracia, que corre
+//      desde que el archivo salió del catálogo (`retirados`), no desde que se subió.
 
+import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { BUCKET, cacheControlDe, tipoDe } from './bucket.mjs';
-import { armarPaquete, fusionar, obsoletos, rutaArchivo, validar, versionDe } from './catalogo.mjs';
+import { DIAS_DE_GRACIA, armarPaquete, fusionar, obsoletos, podarRetirados, rutaArchivo, validar, versionDe } from './catalogo.mjs';
 import { planificar } from './politica.mjs';
 import { sha256DeArchivo } from './recorte.mjs';
 
@@ -43,7 +45,13 @@ async function subirArchivo(storage, ruta, contenido) {
   await storage.subir(ruta, contenido, { contentType: tipoDe(ruta), cacheControl: cacheControlDe(ruta) });
 }
 
-/** Sube el estilo y sus glyphs y sprites. `estilo` es el objeto de armarEstilo(). */
+/** Los bytes con los que el estilo se sube al bucket. */
+export const serializarEstilo = (estilo) => Buffer.from(`${JSON.stringify(estilo, null, 2)}\n`);
+
+/** La versión del estilo en el catálogo: el SHA-256 de esos bytes (como la de los paquetes). */
+export const versionDeEstilo = (contenido) => createHash('sha256').update(contenido).digest('hex');
+
+/** Sube el estilo y sus glyphs y sprites; devuelve su `version`. `estilo` es el objeto de armarEstilo(). */
 export async function publicarEstilo({ storage, estilo, raizAssets, log = () => {} }) {
   const archivos = [
     ...(await listarArchivos(join(raizAssets, 'glyphs'), 'estilo/glyphs')),
@@ -51,8 +59,36 @@ export async function publicarEstilo({ storage, estilo, raizAssets, log = () => 
   ];
   for (const { ruta, local } of archivos) await subirArchivo(storage, ruta, await readFile(local));
   log(`estilo: ${archivos.length} archivos de glyphs y sprites`);
-  await subirArchivo(storage, RUTA_ESTILO, Buffer.from(`${JSON.stringify(estilo, null, 2)}\n`));
-  log(`estilo: ${RUTA_ESTILO}`);
+  const contenido = serializarEstilo(estilo);
+  await subirArchivo(storage, RUTA_ESTILO, contenido);
+  const version = versionDeEstilo(contenido);
+  log(`estilo: ${RUTA_ESTILO} (versión ${version.slice(0, 12)})`);
+  return { version };
+}
+
+async function subirCatalogo(storage, catalogo) {
+  await storage.subir(RUTA_CATALOGO, Buffer.from(`${JSON.stringify(catalogo, null, 2)}\n`), {
+    contentType: tipoDe(RUTA_CATALOGO),
+    cacheControl: cacheControlDe(RUTA_CATALOGO),
+  });
+}
+
+/**
+ * `publicar --solo estilo`: el estilo cambió, así que el catálogo también (su `estilo.version` es lo que
+ * le dice a la app que hay un estilo nuevo, igual que `version` en los paquetes). No toca los paquetes.
+ */
+export async function publicarCatalogoDeEstilo({ storage, estiloVersion, ahora = ahoraIso(), dryRun = false, log = () => {} }) {
+  const previo = await storage.bajarJson(RUTA_CATALOGO);
+  const catalogo = fusionar(previo, previo?.paquetes ?? [], { ahora, estiloVersion });
+  const errores = validar(catalogo, { exigirAmbito: !dryRun });
+  if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
+  if (dryRun) {
+    log(`[dry-run] catálogo con el estilo ${estiloVersion.slice(0, 12)}, no se sube`);
+    return { catalogo };
+  }
+  await subirCatalogo(storage, catalogo);
+  log(`catálogo publicado: estilo ${estiloVersion.slice(0, 12)}, ${catalogo.paquetes.length} paquetes`);
+  return { catalogo };
 }
 
 /**
@@ -88,7 +124,9 @@ export async function prepararPaquete({ nivel, clave, bbox, extraer, tmp, log = 
 }
 
 /**
- * Publica las ciudades de `ciudades` (tiles/ciudades.json) y deja el catálogo al día.
+ * Publica las ciudades de `ciudades` (tiles/ciudades.json, cada una con su `ciudad_id` de public.ciudad)
+ * y deja el catálogo al día. `estiloVersion`: la versión del estilo que se acaba de subir; si no viene,
+ * se conserva la del catálogo publicado (y si no hay, no se publica: antes va el estilo).
  * `dryRun`: hace todo menos escribir en el bucket.
  */
 export async function publicarCiudades({
@@ -97,12 +135,23 @@ export async function publicarCiudades({
   extraer,
   tmp,
   build,
+  estiloVersion,
   ahora = ahoraIso(),
   dryRun = false,
   log = () => {},
   limites,
 }) {
+  // Todo lo que puede impedir publicar se mira ANTES de subir un solo archivo.
+  const sinAmbito = ciudades.filter((c) => !c.ciudad_id);
+  if (!dryRun && sinAmbito.length > 0) {
+    throw new Error(
+      `Falta el ciudad_id (public.ciudad) de ${sinAmbito.map((c) => c.slug).join(', ')}: un paquete de ciudad sin ambito_id no lo encuentra la app. No se subió nada.`,
+    );
+  }
   const previo = await storage.bajarJson(RUTA_CATALOGO);
+  if (!estiloVersion && !previo?.estilo?.version) {
+    throw new Error('El catálogo del bucket no tiene la versión del estilo: publicá el estilo primero (--solo estilo, o todo). No se subió nada.');
+  }
   const nuevos = [];
 
   for (const ciudad of ciudades) {
@@ -120,8 +169,27 @@ export async function publicarCiudades({
     const anterior = previo?.paquetes.find((p) => p.id === id);
 
     if (anterior && anterior.version === versionDe(publicables) && anterior.zoom_max === zoomMax) {
-      log(`${id}: sin cambios (${anterior.version.slice(0, 12)})`);
-      nuevos.push(anterior);
+      // El mismo mapa: no se sube nada ni cambia su versión ni su fecha (la app no ve una actualización).
+      // Pero lo que dice el catálogo de la ciudad (nombre, ámbito, bbox) sale de ciudades.json y puede
+      // haber cambiado sin que cambien los tiles: se rearma la entrada con los datos de hoy.
+      const rearmado = armarPaquete({
+        nivel: 'ciudad',
+        clave: ciudad.slug,
+        ambitoId: ciudad.ciudad_id,
+        nombre: ciudad.nombre,
+        bbox: ciudad.bbox,
+        zoomMax,
+        partes: publicables,
+        build: anterior.fuente_build,
+        ahora: anterior.actualizado_en,
+      });
+      if (JSON.stringify(rearmado) === JSON.stringify(anterior)) {
+        log(`${id}: sin cambios (${anterior.version.slice(0, 12)})`);
+        nuevos.push(anterior);
+      } else {
+        log(`${id}: mismo mapa (${anterior.version.slice(0, 12)}), datos del catálogo actualizados`);
+        nuevos.push(rearmado);
+      }
       continue;
     }
 
@@ -150,27 +218,35 @@ export async function publicarCiudades({
     );
   }
 
-  const catalogo = fusionar(previo, nuevos, { ahora });
-  const errores = validar(catalogo);
-  if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
+  const fusionado = fusionar(previo, nuevos, { ahora, estiloVersion });
+  const erroresFusionado = validar(fusionado, { exigirAmbito: !dryRun });
+  if (erroresFusionado.length > 0) throw new Error(`El catálogo no es válido:\n  ${erroresFusionado.join('\n  ')}`);
 
   if (dryRun) {
-    log(`[dry-run] catálogo con ${catalogo.paquetes.length} paquetes, no se sube`);
-    return { catalogo, borrados: [] };
+    log(`[dry-run] catálogo con ${fusionado.paquetes.length} paquetes, no se sube`);
+    return { catalogo: fusionado, borrados: [] };
   }
-  await storage.subir(RUTA_CATALOGO, Buffer.from(`${JSON.stringify(catalogo, null, 2)}\n`), {
-    contentType: tipoDe(RUTA_CATALOGO),
-    cacheControl: cacheControlDe(RUTA_CATALOGO),
-  });
-  log(`catálogo publicado: ${catalogo.paquetes.map((p) => p.id).join(', ')}`);
 
+  // Qué se puede borrar se decide ANTES de subir el catálogo, para que el catálogo que se publica ya
+  // no recuerde como «retirado» lo que se va a borrar. Si el borrado falla, esos archivos quedan sin
+  // fecha de retiro y la próxima corrida los junta por su fecha de subida (ya vieja).
   const publicados = [
     ...(await storage.listar('paquetes/ciudad')),
     ...(await storage.listar('paquetes/zona')),
   ];
-  const borrar = obsoletos(publicados, catalogo, { ahora });
+  const borrar = obsoletos(publicados, fusionado, { ahora });
+  const catalogo = podarRetirados(fusionado, { borrados: borrar, publicados });
+  const errores = validar(catalogo);
+  if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
+
+  await subirCatalogo(storage, catalogo);
+  log(`catálogo publicado: ${catalogo.paquetes.map((p) => p.id).join(', ')}`);
+  if (catalogo.retirados.length > 0) {
+    log(`retirados, con su período de gracia de ${DIAS_DE_GRACIA} días: ${catalogo.retirados.map((r) => `${r.archivo} (desde ${r.desde})`).join(', ')}`);
+  }
+
   await storage.borrar(borrar);
-  if (borrar.length > 0) log(`borrados por obsoletos (más de 7 días sin catálogo): ${borrar.join(', ')}`);
+  if (borrar.length > 0) log(`borrados (más de ${DIAS_DE_GRACIA} días fuera del catálogo): ${borrar.join(', ')}`);
   return { catalogo, borrados: borrar };
 }
 

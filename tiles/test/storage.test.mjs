@@ -67,11 +67,12 @@ test('no reintenta un 4xx', async () => {
   assert.equal(llamadas.length, 1);
 });
 
-test('lee el catálogo por la URL pública, sin credenciales, y devuelve null si todavía no existe', async () => {
+test('lee el catálogo por el endpoint autenticado, con la clave (no por la URL pública, que pasa por la caché), y devuelve null si todavía no existe', async () => {
   const { fn, llamadas } = fetchFalso(() => json({ version: 1 }));
   assert.deepEqual(await cliente(fn).bajarJson('catalogo.json'), { version: 1 });
-  assert.equal(llamadas[0].url, `${URL}/storage/v1/object/public/mapas/catalogo.json`);
-  assert.equal(llamadas[0].headers.Authorization, undefined);
+  assert.equal(llamadas[0].url, `${URL}/storage/v1/object/authenticated/mapas/catalogo.json`);
+  assert.equal(llamadas[0].headers.Authorization, 'Bearer CLAVE-DE-SERVICIO');
+  assert.equal(llamadas[0].headers['cache-control'], 'no-cache');
 
   for (const status of [404, 400]) {
     const ausente = fetchFalso(() => json({ error: 'Object not found' }, status));
@@ -79,6 +80,26 @@ test('lee el catálogo por la URL pública, sin credenciales, y devuelve null si
   }
   const roto = fetchFalso(() => json({ error: 'boom' }, 403));
   await assert.rejects(cliente(roto.fn).bajarJson('catalogo.json'), /403/);
+});
+
+test('sin clave (un simulacro) lee por la URL pública, sin credenciales', async () => {
+  const { fn, llamadas } = fetchFalso(() => json({ version: 1 }));
+  const sinClave = cliente(fn, { clave: undefined });
+  assert.deepEqual(await sinClave.bajarJson('catalogo.json'), { version: 1 });
+  assert.equal(await sinClave.existe('catalogo.json'), true);
+  assert.equal(llamadas[0].url, `${URL}/storage/v1/object/public/mapas/catalogo.json`);
+  assert.equal(llamadas[0].headers.Authorization, undefined);
+  assert.equal(llamadas[1].url, `${URL}/storage/v1/object/public/mapas/catalogo.json`);
+});
+
+test('pregunta si un paquete ya está por el endpoint autenticado (HEAD), con la clave', async () => {
+  const { fn, llamadas } = fetchFalso((l) => new Response('', { status: l.url.endsWith('ya-esta.pmtiles') ? 200 : 400 }));
+  const c = cliente(fn);
+  assert.equal(await c.existe('paquetes/ciudad/ya-esta.pmtiles'), true);
+  assert.equal(await c.existe('paquetes/ciudad/no-esta.pmtiles'), false);
+  assert.equal(llamadas[0].metodo, 'HEAD');
+  assert.equal(llamadas[0].url, `${URL}/storage/v1/object/authenticated/mapas/paquetes/ciudad/ya-esta.pmtiles`);
+  assert.equal(llamadas[0].headers.Authorization, 'Bearer CLAVE-DE-SERVICIO');
 });
 
 test('lista paginando de a 100 y sin contar las carpetas', async () => {

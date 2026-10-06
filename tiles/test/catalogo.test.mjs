@@ -5,15 +5,21 @@ import {
   archivosDe,
   armarPaquete,
   catalogoVacio,
-  fusionar,
+  fusionar as fusionarSuelto,
   obsoletos,
+  podarRetirados,
   rutaArchivo,
   validar,
   versionDe,
 } from '../src/catalogo.mjs';
 
 const AHORA = '2026-10-07T12:00:00Z';
+const AMBITO = '09990000-0000-7000-8003-000000000001';
+const ESTILO_VERSION = 'e'.repeat(64);
 const sha = (c) => c.repeat(64).slice(0, 64);
+
+// Casi todos los tests quieren un catálogo con la versión del estilo ya puesta.
+const fusionar = (previo, nuevos, opciones) => fusionarSuelto(previo, nuevos, { estiloVersion: ESTILO_VERSION, ...opciones });
 
 function parte(letra, bytes = 10_920_234, nivel = 'ciudad', clave = 'montevideo') {
   return {
@@ -27,7 +33,7 @@ function paquete(sobrescribir = {}) {
   return armarPaquete({
     nivel: 'ciudad',
     clave: 'montevideo',
-    ambitoId: null,
+    ambitoId: AMBITO,
     nombre: 'Montevideo',
     bbox: [-56.433, -34.945, -55.948, -34.701],
     zoomMax: 15,
@@ -56,11 +62,36 @@ test('la versión de un paquete de un archivo es su SHA-256; la de varios, el de
   assert.notEqual(dos, versionDe([{ sha256: sha('b') }, { sha256: sha('a') }]), 'el orden importa');
 });
 
+test('el estilo lleva su versión en el catálogo, y validar la exige (como la de los paquetes)', () => {
+  const sin = fusionarSuelto(null, [paquete()], { ahora: AHORA });
+  assert.match(validar(sin).join('\n'), /estilo\.version/);
+  const con = fusionarSuelto(null, [paquete()], { ahora: AHORA, estiloVersion: ESTILO_VERSION });
+  assert.equal(con.estilo.version, ESTILO_VERSION);
+  assert.deepEqual(validar(con), []);
+  const corta = { ...con, estilo: { ...con.estilo, version: 'abc' } };
+  assert.match(validar(corta).join('\n'), /estilo\.version/, 'tiene que ser un SHA-256');
+});
+
+test('fusionar conserva la versión del estilo del catálogo previo si no llega una nueva, y la reemplaza si llega', () => {
+  const v1 = fusionarSuelto(null, [paquete()], { ahora: AHORA, estiloVersion: ESTILO_VERSION });
+  const igual = fusionarSuelto(v1, [paquete()], { ahora: '2026-10-08T12:00:00Z' });
+  assert.equal(igual.estilo.version, ESTILO_VERSION);
+  const nueva = fusionarSuelto(v1, [], { ahora: '2026-10-09T12:00:00Z', estiloVersion: 'f'.repeat(64) });
+  assert.equal(nueva.estilo.version, 'f'.repeat(64));
+  assert.equal(nueva.estilo.url, v1.estilo.url);
+});
+
+test('un paquete de ciudad sin ambito_id no es válido (la app elige su paquete por ahí)', () => {
+  const sinAmbito = fusionar(null, [paquete({ ambitoId: null })], { ahora: AHORA });
+  assert.match(validar(sinAmbito).join('\n'), /ciudad-montevideo: ambito_id falta/);
+  assert.deepEqual(validar(sinAmbito, { exigirAmbito: false }), [], 'solo un simulacro sin clave lo deja pasar');
+});
+
 test('un paquete de ciudad lleva nivel, ámbito, tamaño, SHA-256 y partes', () => {
   const p = paquete();
   assert.equal(p.id, 'ciudad-montevideo');
   assert.equal(p.nivel, 'ciudad');
-  assert.equal(p.ambito_id, null);
+  assert.equal(p.ambito_id, AMBITO);
   assert.equal(p.tamano_bytes, 10_920_234);
   assert.equal(p.version, sha('a'));
   assert.equal(p.partes.length, 1);
@@ -115,7 +146,7 @@ test('fusionar puede sacar paquetes', () => {
 
 test('un catálogo bien armado valida', () => {
   assert.deepEqual(validar(fusionar(null, [paquete()], { ahora: AHORA })), []);
-  assert.deepEqual(validar(catalogoVacio(AHORA)), []);
+  assert.deepEqual(validar({ ...catalogoVacio(AHORA), estilo: { ...catalogoVacio(AHORA).estilo, version: ESTILO_VERSION } }), []);
 });
 
 test('validar rechaza lo que la app no podría usar', () => {
@@ -161,9 +192,25 @@ test('validar rechaza lo que la app no podría usar', () => {
   const fecha = base();
   fecha.generado_en = 'ayer';
   assert.match(validar(fecha).join('\n'), /generado_en/);
+
+  const retiradoVigente = base();
+  retiradoVigente.retirados = [{ archivo: retiradoVigente.paquetes[0].partes[0].archivo, desde: AHORA }];
+  assert.match(validar(retiradoVigente).join('\n'), /retirado y a la vez en un paquete/);
+
+  const retiradoSinFecha = base();
+  retiradoSinFecha.retirados = [{ archivo: 'paquetes/ciudad/montevideo.viejo.pmtiles', desde: 'hace una semana' }];
+  assert.match(validar(retiradoSinFecha).join('\n'), /desde debe ser una fecha/);
+
+  const retiradoAbsoluto = base();
+  retiradoAbsoluto.retirados = [{ archivo: '/paquetes/x.pmtiles', desde: AHORA }];
+  assert.match(validar(retiradoAbsoluto).join('\n'), /ruta relativa/);
+
+  const retiradosMal = base();
+  retiradosMal.retirados = 'ninguno';
+  assert.match(validar(retiradosMal).join('\n'), /retirados debe ser una lista/);
 });
 
-test('un archivo obsoleto se borra solo pasado el período de gracia de 7 días', () => {
+test('un archivo que nunca figuró en un catálogo se borra pasados 7 días desde que se subió', () => {
   const catalogo = fusionar(null, [paquete()], { ahora: AHORA });
   const vigente = catalogo.paquetes[0].partes[0].archivo;
   assert.deepEqual([...archivosDe(catalogo)], [vigente]);
@@ -174,4 +221,58 @@ test('un archivo obsoleto se borra solo pasado el período de gracia de 7 días'
     { ruta: 'paquetes/ciudad/montevideo.reciente.pmtiles', actualizado_en: '2026-10-05T00:00:00Z' },
   ];
   assert.deepEqual(obsoletos(publicados, catalogo, { ahora: AHORA }), ['paquetes/ciudad/montevideo.viejo.pmtiles']);
+});
+
+test('fusionar anota qué archivos salieron del catálogo y desde cuándo', () => {
+  const v1 = fusionar(null, [paquete({ partes: [parte('a')] })], { ahora: AHORA });
+  assert.deepEqual(v1.retirados, [], 'la primera publicación no retira nada');
+
+  const AHORA2 = '2026-11-06T12:00:00Z';
+  const v2 = fusionar(v1, [paquete({ partes: [parte('b')] })], { ahora: AHORA2 });
+  assert.deepEqual(v2.retirados, [{ archivo: parte('a').archivo, desde: AHORA2 }]);
+
+  // Una publicación posterior que no cambia nada conserva la fecha en que salió: no se «rejuvenece».
+  const v3 = fusionar(v2, [], { ahora: '2026-11-10T12:00:00Z' });
+  assert.deepEqual(v3.retirados, [{ archivo: parte('a').archivo, desde: AHORA2 }]);
+
+  // Y si el archivo vuelve a estar en un paquete, deja de estar retirado (y el que sale queda anotado).
+  const v4 = fusionar(v3, [paquete({ partes: [parte('a')] })], { ahora: '2026-11-11T12:00:00Z' });
+  assert.deepEqual(v4.retirados, [{ archivo: parte('b').archivo, desde: '2026-11-11T12:00:00Z' }]);
+
+  // Sacar un paquete entero (quitar) también retira sus archivos.
+  const dos = fusionar(null, [paquete(), paquete({ clave: 'salto', partes: [parte('s', 1_000, 'ciudad', 'salto')] })], { ahora: AHORA });
+  const sinSalto = fusionar(dos, [], { quitar: ['ciudad-salto'], ahora: AHORA2 });
+  assert.deepEqual(sinSalto.retirados, [{ archivo: parte('s', 1_000, 'ciudad', 'salto').archivo, desde: AHORA2 }]);
+});
+
+test('el período de gracia corre desde que el archivo salió del catálogo, no desde que se subió', () => {
+  const v1 = fusionar(null, [paquete({ partes: [parte('a')] })], { ahora: '2026-10-07T12:00:00Z' });
+  const salio = '2026-11-06T12:00:00Z';
+  const v2 = fusionar(v1, [paquete({ partes: [parte('b')] })], { ahora: salio });
+  const viejo = parte('a').archivo;
+  // Se subió el 07/10 (30 días antes de que lo reemplacen): por su fecha de subida ya «vencería».
+  const publicados = [
+    { ruta: viejo, actualizado_en: '2026-10-07T12:00:00Z' },
+    { ruta: parte('b').archivo, actualizado_en: salio },
+  ];
+
+  assert.deepEqual(obsoletos(publicados, v2, { ahora: salio }), [], 'el día que sale, se queda');
+  assert.deepEqual(obsoletos(publicados, v2, { ahora: '2026-11-13T11:59:59Z' }), [], 'a los 6 días y 23 h, se queda');
+  assert.deepEqual(obsoletos(publicados, v2, { ahora: '2026-11-13T12:00:01Z' }), [viejo], 'recién pasados 7 días fuera del catálogo, se va');
+});
+
+test('podarRetirados olvida lo que se borró y lo que ya no está en el bucket', () => {
+  const catalogo = {
+    ...fusionar(null, [paquete()], { ahora: AHORA }),
+    retirados: [
+      { archivo: 'paquetes/ciudad/a.pmtiles', desde: AHORA },
+      { archivo: 'paquetes/ciudad/b.pmtiles', desde: AHORA },
+      { archivo: 'paquetes/ciudad/c.pmtiles', desde: AHORA },
+    ],
+  };
+  const podado = podarRetirados(catalogo, {
+    borrados: ['paquetes/ciudad/a.pmtiles'],
+    publicados: [{ ruta: 'paquetes/ciudad/a.pmtiles' }, { ruta: 'paquetes/ciudad/b.pmtiles' }],
+  });
+  assert.deepEqual(podado.retirados.map((r) => r.archivo), ['paquetes/ciudad/b.pmtiles']);
 });

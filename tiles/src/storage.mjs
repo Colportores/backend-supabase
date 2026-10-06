@@ -1,6 +1,9 @@
 // Cliente mínimo de la API REST de Supabase Storage (sin dependencias: usa `fetch`).
 // Escribe con la clave de servicio (service_role / secret key), que nunca va al repo: sale de
-// variables de entorno (ver docs/mapas-tiles.md § «Credenciales»). Lee por la URL pública.
+// variables de entorno (ver docs/mapas-tiles.md § «Credenciales»). Lo que el publicador necesita
+// leer para decidir (el catálogo, si un paquete ya está) lo pide por el endpoint autenticado, con la
+// misma clave: no pasa por la caché de la URL pública y nunca ve algo de hace un minuto. Sin clave
+// (un simulacro) cae a la URL pública.
 
 const REINTENTOS = 3;
 
@@ -11,6 +14,8 @@ export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, 
 
   const codificar = (ruta) => ruta.split('/').map(encodeURIComponent).join('/');
   const urlPublica = (ruta) => `${raiz}/object/public/${bucket}/${codificar(ruta)}`;
+  const urlAutenticada = (ruta) => `${raiz}/object/authenticated/${bucket}/${codificar(ruta)}`;
+  const urlDeLectura = (ruta) => (clave ? urlAutenticada(ruta) : urlPublica(ruta));
 
   async function pedir(metodo, destino, { headers = {}, body } = {}) {
     let ultimo;
@@ -95,8 +100,8 @@ export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, 
 
     /** El JSON publicado en `ruta`, o null si no existe todavía. */
     async bajarJson(ruta) {
-      const respuesta = await pedir('GET', urlPublica(ruta), {
-        headers: { 'cache-control': 'no-cache' },
+      const respuesta = await pedir('GET', urlDeLectura(ruta), {
+        headers: { ...autorizacion, 'cache-control': 'no-cache' },
       });
       // Storage responde 400 o 404 según la versión cuando el objeto no existe.
       if (respuesta.status === 404 || respuesta.status === 400) return null;
@@ -104,9 +109,9 @@ export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, 
       return respuesta.json();
     },
 
-    /** Si el objeto público existe. */
+    /** Si el objeto existe. */
     async existe(ruta) {
-      const respuesta = await pedir('HEAD', urlPublica(ruta));
+      const respuesta = await pedir('HEAD', urlDeLectura(ruta), { headers: autorizacion });
       return respuesta.ok;
     },
 
