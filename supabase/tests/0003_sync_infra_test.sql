@@ -53,7 +53,7 @@ select is((select count(*)::integer from sync.entidad), 22, 'hay 22 entidades re
 -- 0008 suma campania_ciudad y zona_vertice (el mapa de la campaña); 0014, campania_colportor.
 select is(
   (select array_agg(nombre order by nombre) from sync.entidad where not permite_push),
-  array['campania','campania_ciudad','campania_colportor','ciudad','coleccion','pais','precio_por_zona',
+  array['campania','campania_ciudad','campania_colportor','ciudad','coleccion','pais','precio_por_ciudad',
         'producto','producto_coleccion','zona','zona_vertice'],
   'las entidades pull están marcadas de solo lectura (contrato §2)'
 );
