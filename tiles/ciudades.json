@@ -1,0 +1,11 @@
+{
+  "$comentario": "Ciudades de las que se recorta un paquete PMTiles. Lo que no está acá no se publica. Ver docs/mapas-tiles.md.",
+  "ciudades": [
+    {
+      "slug": "montevideo",
+      "nombre": "Montevideo",
+      "ciudad_id": null,
+      "bbox": [-56.433, -34.945, -55.948, -34.701]
+    }
+  ]
+}
