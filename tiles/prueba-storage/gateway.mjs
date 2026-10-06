@@ -1,4 +1,5 @@
-// Hace de gateway de Supabase (Kong) delante de un storage-api suelto: /storage/v1/* → storage:5000/*.
+// Hace de gateway de Supabase (Kong) delante de un storage-api suelto: /storage/v1/* → storage:5000/*, y de
+// un PostgREST (el publicador lee public.ciudad por ahí): /rest/v1/* → rest:3000/*.
 // Imita el plugin `cors` de Kong con su configuración por defecto, que es la que el gateway hosteado
 // le pone al Storage: Access-Control-Allow-Origin: *, el preflight lo contesta el gateway (200, con
 // los headers pedidos reflejados) y no hay Access-Control-Expose-Headers.
@@ -8,12 +9,17 @@
 import http from 'node:http';
 
 const conCors = process.env.CORS !== '0';
+const RUTAS = [
+  { prefijo: '/storage/v1', host: 'storage', port: 5000 },
+  { prefijo: '/rest/v1', host: 'rest', port: 3000 },
+];
 
 http
   .createServer((req, res) => {
-    if (!req.url.startsWith('/storage/v1/')) {
+    const ruta = RUTAS.find((r) => req.url.startsWith(`${r.prefijo}/`));
+    if (!ruta) {
       res.writeHead(404);
-      return res.end('solo /storage/v1');
+      return res.end('solo /storage/v1 y /rest/v1');
     }
     if (conCors && req.method === 'OPTIONS' && req.headers.origin && req.headers['access-control-request-method']) {
       res.writeHead(200, {
@@ -25,7 +31,7 @@ http
       return res.end();
     }
     const arriba = http.request(
-      { host: 'storage', port: 5000, method: req.method, path: req.url.slice('/storage/v1'.length), headers: { ...req.headers, host: 'storage:5000' } },
+      { host: ruta.host, port: ruta.port, method: req.method, path: req.url.slice(ruta.prefijo.length), headers: { ...req.headers, host: `${ruta.host}:${ruta.port}` } },
       (respuesta) => {
         const headers = { ...respuesta.headers };
         if (conCors && req.headers.origin) headers['access-control-allow-origin'] = '*';

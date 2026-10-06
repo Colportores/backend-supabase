@@ -40,6 +40,37 @@ test('pinta con la paleta del canvas: tierra, agua, parques y avenidas', () => {
   }
 });
 
+/** Contraste WCAG entre dos colores #RRGGBB. */
+function contraste(a, b) {
+  const luz = (hex) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const lineal = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * lineal(r) + 0.7152 * lineal(g) + 0.0722 * lineal(bl);
+  };
+  const [claro, oscuro] = [luz(a), luz(b)].sort((x, y) => y - x);
+  return (claro + 0.05) / (oscuro + 0.05);
+}
+
+/** El objeto de paleta.json que tiene la clave `clave` (no importa a qué profundidad esté). */
+function conClave(valor, clave) {
+  if (!valor || typeof valor !== 'object') return undefined;
+  if (clave in valor) return valor;
+  for (const hijo of Object.values(valor)) {
+    const hallado = conClave(hijo, clave);
+    if (hallado) return hallado;
+  }
+  return undefined;
+}
+
+test('los rótulos que se leen (calles, barrios, números de puerta) cumplen AA (4,5:1) sobre su halo', async () => {
+  // Decisión del 06/10: AA gana al canvas, que da 3,41:1 (#7C8594) y 2,85:1 (#8A93A0) sobre #F6F5F0.
+  const colores = conClave(JSON.parse(await readFile(join(RAIZ, 'paleta.json'), 'utf8')), 'roads_label_minor');
+  for (const clave of ['roads_label_minor', 'roads_label_major', 'subplace_label', 'address_label']) {
+    const razon = contraste(colores[clave], colores[`${clave}_halo`]);
+    assert.ok(razon >= 4.5, `${clave} (${colores[clave]} sobre ${colores[`${clave}_halo`]}) da ${razon.toFixed(2)}:1`);
+  }
+});
+
 test('un solo estilo: una fuente de tiles que el cliente completa con el archivo de su paquete', () => {
   assert.deepEqual(Object.keys(estilo.sources), [NOMBRE_DE_LA_FUENTE]);
   assert.equal(estilo.sources.protomaps.url, URL_A_REEMPLAZAR);
