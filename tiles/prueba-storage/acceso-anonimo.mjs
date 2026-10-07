@@ -42,6 +42,15 @@ await esperar('anon no ve la lista de archivos', async () => {
   const cuerpo = r.status === 200 ? await r.json() : [];
   assert.deepEqual(cuerpo, []);
 });
+await esperar('anon no ve la carpeta de los paquetes de zona (su nombre no se puede listar)', async () => {
+  const r = await fetch(`${raiz}/object/list/mapas`, { method: 'POST', body: JSON.stringify({ prefix: 'zonas' }), headers: { ...auth, ...json } });
+  const cuerpo = r.status === 200 ? await r.json() : [];
+  assert.deepEqual(cuerpo, []);
+});
+await esperar('anon no puede subir un paquete a zonas/', async () => {
+  const r = await fetch(`${raiz}/object/mapas/zonas/${'0'.repeat(32)}.pmtiles`, { method: 'POST', body: 'x', headers: { ...auth, 'content-type': 'application/octet-stream' } });
+  assert.ok(r.status >= 400, `HTTP ${r.status}`);
+});
 await esperar('el catálogo quedó intacto', async () => {
   assert.equal(await (await fetch(`${publica}/catalogo.json`)).text(), antes);
 });
