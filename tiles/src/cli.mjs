@@ -2,7 +2,8 @@
 // Herramienta de los mapas propios (backend-supabase#42). Se explica entera en docs/mapas-tiles.md.
 //
 //   node src/cli.mjs estilo    [--url-base URL] [--salida DIR]
-//   node src/cli.mjs publicar  [--solo estilo|ciudades] [--ciudad SLUG]... [--build AAAAMMDD] [--dry-run]
+//   node src/cli.mjs publicar  [--solo estilo|ciudades|zonas] [--ciudad SLUG]... [--zona ID]... [--regenerar]
+//                              [--build AAAAMMDD] [--dry-run]
 //   node src/cli.mjs verificar [--url URL]
 //
 // Variables de entorno:
@@ -16,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { asignarAmbitos, leerCiudades } from './ambito.mjs';
+import { ciudadesPublicables, leerCiudades } from './ambito.mjs';
 import { BUCKET } from './bucket.mjs';
 import { armarEstilo, leerPaleta } from './estilo.mjs';
 import {
@@ -31,6 +32,7 @@ import { FUENTE_PROTOMAPS, asegurarPmtiles, buscarBuild, extraer } from './recor
 import { ocultar } from './secretos.mjs';
 import { clienteStorage } from './storage.mjs';
 import { verificar } from './verificar.mjs';
+import { clienteZonas, publicarZonas } from './zonas.mjs';
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url));
 const secretos = () => [process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_ACCESS_TOKEN];
@@ -65,30 +67,43 @@ async function comandoEstilo(opciones) {
 async function comandoPublicar(opciones) {
   const dryRun = Boolean(opciones['dry-run']);
   const solo = opciones.solo ?? 'todo';
-  if (!['todo', 'estilo', 'ciudades'].includes(solo)) throw new Error('--solo es estilo o ciudades');
+  if (!['todo', 'estilo', 'ciudades', 'zonas'].includes(solo)) throw new Error('--solo es estilo, ciudades o zonas');
+  const conCiudades = solo === 'todo' || solo === 'ciudades';
+  const conZonas = solo === 'todo' || solo === 'zonas';
 
   const supabaseUrl = entorno('SUPABASE_URL');
   const clave = dryRun ? process.env.SUPABASE_SERVICE_ROLE_KEY : entorno('SUPABASE_SERVICE_ROLE_KEY');
   const storage = clienteStorage({ url: supabaseUrl, clave, bucket: BUCKET.id });
 
-  // Lo que puede impedir publicar se resuelve ANTES de escribir nada en el bucket: las ciudades elegidas y
-  // el id de cada una en public.ciudad (su `ambito_id` en el catálogo).
+  // Lo que puede impedir publicar se resuelve ANTES de escribir nada en el bucket: qué ciudades se publican
+  // (las de public.ciudad que tienen su rectángulo: no hay ninguna lista en el repo) y el id de cada una (su
+  // `ambito_id` en el catálogo).
   let elegidas = [];
-  if (solo !== 'estilo') {
-    const { ciudades } = JSON.parse(await readFile(join(RAIZ, 'ciudades.json'), 'utf8'));
-    elegidas = opciones.ciudad?.length ? ciudades.filter((c) => opciones.ciudad.includes(c.slug)) : ciudades;
-    if (elegidas.length === 0) throw new Error(`Ninguna ciudad coincide con ${opciones.ciudad}`);
+  let ciudadesEnBase;
+  if (conCiudades) {
     if (clave) {
-      elegidas = asignarAmbitos(elegidas, await leerCiudades({ url: supabaseUrl, clave }));
+      ciudadesEnBase = await leerCiudades({ url: supabaseUrl, clave });
+      const { publicables, sinRectangulo } = ciudadesPublicables(ciudadesEnBase);
+      if (sinRectangulo.length > 0) {
+        log(
+          `ciudades sin rectángulo (no tienen mapa propio; se carga en public.ciudad, docs/guia-carga-manual.md § 2): ${sinRectangulo.join(', ')}`,
+        );
+      }
+      elegidas = opciones.ciudad?.length ? publicables.filter((c) => opciones.ciudad.includes(c.slug)) : publicables;
+      if (opciones.ciudad?.length && elegidas.length === 0) {
+        throw new Error(`Ninguna ciudad con rectángulo coincide con ${opciones.ciudad.join(', ')} (las que hay: ${publicables.map((c) => c.slug).join(', ') || 'ninguna'})`);
+      }
+      if (elegidas.length === 0) log('no hay ciudades con rectángulo en public.ciudad: no hay mapas de ciudad para publicar');
     } else {
-      log('[dry-run] sin clave de servicio no puedo leer public.ciudad: no se resuelve el ambito_id');
+      log('[dry-run] sin clave de servicio no puedo leer public.ciudad: no hay ciudades que simular');
     }
   }
 
+  if (conZonas && !clave) log('[dry-run] sin clave de servicio no puedo leer public.zona: no hay zonas que simular');
   if (!dryRun) log(`bucket ${BUCKET.id}: ${await storage.asegurarBucket(BUCKET)}`);
 
   let estiloVersion;
-  if (solo !== 'ciudades') {
+  if (solo === 'todo' || solo === 'estilo') {
     const estilo = await generarEstilo(`${urlPublicaDe(supabaseUrl)}/estilo`);
     if (dryRun) {
       estiloVersion = versionDeEstilo(serializarEstilo(estilo));
@@ -100,17 +115,35 @@ async function comandoPublicar(opciones) {
     if (solo === 'estilo') await publicarCatalogoDeEstilo({ storage, estiloVersion, ahora: ahoraIso(), dryRun, log });
   }
 
-  if (solo !== 'estilo') {
-    const build = opciones.build ?? (await buscarBuild());
-    const pmtiles = await asegurarPmtiles({ cache: join(RAIZ, '.cache') });
-    const tmp = await mkdtemp(join(tmpdir(), 'tiles-'));
-    try {
-      log(`fuente: ${FUENTE_PROTOMAPS(build)}`);
+  const hayCiudades = conCiudades && ciudadesEnBase !== undefined;
+  const hayZonas = conZonas && Boolean(clave);
+  if (!hayCiudades && !hayZonas) return;
+
+  const tmp = await mkdtemp(join(tmpdir(), 'tiles-'));
+  try {
+    // La fuente (el build de Protomaps y el CLI `pmtiles`) se busca la primera vez que hay algo que cortar:
+    // una corrida en la que ninguna zona cambió no la necesita.
+    let fuente;
+    const preparar = async (build) => {
+      fuente ??= (async () => {
+        const elegido = build ?? (await buscarBuild());
+        const pmtiles = await asegurarPmtiles({ cache: join(RAIZ, '.cache') });
+        log(`fuente: ${FUENTE_PROTOMAPS(elegido)}`);
+        return { build: elegido, pmtiles, url: FUENTE_PROTOMAPS(elegido) };
+      })();
+      return fuente;
+    };
+
+    if (hayCiudades) {
+      const { build } = elegidas.length > 0 ? await preparar(opciones.build) : { build: opciones.build };
       await publicarCiudades({
         storage,
         ciudades: elegidas,
-        extraer: ({ bbox, zoomMax, destino }) =>
-          extraer({ pmtiles, fuente: FUENTE_PROTOMAPS(build), destino, bbox, zoomMax }),
+        ciudadesEnBase: opciones.ciudad?.length ? undefined : ciudadesEnBase,
+        extraer: async ({ bbox, zoomMax, destino }) => {
+          const { pmtiles, url } = await preparar(opciones.build);
+          return extraer({ pmtiles, fuente: url, destino, bbox, zoomMax });
+        },
         tmp,
         build,
         estiloVersion,
@@ -118,9 +151,29 @@ async function comandoPublicar(opciones) {
         dryRun,
         log,
       });
-    } finally {
-      await rm(tmp, { recursive: true, force: true });
     }
+
+    // Las zonas, DESPUÉS de las ciudades: una zona con falla no deshace lo ya publicado ni corta a las demás
+    // (la corrida termina con error al final), y las ciudades son lo que el Hito 1 necesita.
+    if (hayZonas) {
+      const resultado = await publicarZonas({
+        storage,
+        repo: clienteZonas({ url: supabaseUrl, clave }),
+        extraer: async ({ region, zoomMax, destino }) => {
+          const { pmtiles, url } = await preparar(opciones.build);
+          return extraer({ pmtiles, fuente: url, destino, region, zoomMax });
+        },
+        tmp,
+        ahora: ahoraIso(),
+        dryRun,
+        log,
+        solo: opciones.zona ?? [],
+        regenerar: Boolean(opciones.regenerar),
+      });
+      if (resultado.fallas.length > 0) process.exitCode = 1;
+    }
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
   }
 }
 
@@ -144,6 +197,8 @@ async function main() {
       salida: { type: 'string' },
       solo: { type: 'string' },
       ciudad: { type: 'string', multiple: true },
+      zona: { type: 'string', multiple: true },
+      regenerar: { type: 'boolean' },
       build: { type: 'string' },
       url: { type: 'string' },
       'dry-run': { type: 'boolean' },
