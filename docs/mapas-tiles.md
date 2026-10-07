@@ -152,8 +152,11 @@ en los tiles**: quien lo baje ve dónde trabaja ese equipo. Decisión de Cristia
   que el nombre no figura en ningún lado público;
 - el enlace está en `public.zona.paquete_mapa`, y le llega **solo al colportor que ve esa zona** (la política de
   lectura de `zona` y el sync);
-- el publicador **no imprime ese nombre** en ningún mensaje (la consola de GitHub Actions queda como la de cualquier
-  otra corrida).
+- el publicador **no imprime ese nombre** en ningún mensaje, **tampoco en un error** de Storage o de la red (la consola
+  de GitHub Actions queda como la de cualquier otra corrida): `tapar`, en `tiles/src/storage.mjs`, lo reemplaza por
+  `zonas/<paquete de zona>` en todo lo que el cliente dice de una URL o de lo que contestó el servidor, y el CLI lo
+  vuelve a tapar en su log y en el error final. Lo vigilan `storage.test.mjs` y `zonas.test.mjs` (HEAD y POST caídos, o
+  un cuerpo de error que lo repite).
 
 Lo que esto da es «no adivinable y sin listado», no un secreto fuerte: quien tenga el enlace lo baja, y el enlace
 está en el teléfono de cada colportor de la zona. Las ciudades no tienen el problema: son públicas.
@@ -253,7 +256,7 @@ se corta por su polígono (`public.zona.poligono_geojson`).
 ```
 node src/cli.mjs estilo     [--url-base URL] [--salida DIR]      # solo escribe el estilo en un archivo
 node src/cli.mjs publicar   [--solo estilo|ciudades|zonas] [--ciudad SLUG] [--zona ID] [--regenerar]
-                            [--build AAAAMMDD] [--dry-run]
+                            [--quitar ID] [--build AAAAMMDD] [--dry-run]
 node src/cli.mjs verificar  [--url URL]
 ```
 
@@ -275,6 +278,13 @@ se actualiza («datos del catálogo actualizados»). Si una ciudad **cambia de n
 viejo en el catálogo (el mismo `ambito_id` no puede estar en dos) y el archivo viejo se retira con su gracia. Una
 ciudad ya publicada que **perdió su rectángulo o se dio de baja se conserva** y el publicador avisa («aviso: … sigue
 en el catálogo, pero …»): retirar un mapa a los teléfonos es una decisión de producto, no un efecto de editar una fila.
+**El aviso dice qué hacer.** Si fue a propósito, `publicar --solo ciudades --quitar ciudad-<slug>` (se puede repetir)
+saca ese paquete del catálogo y deja sus archivos en `retirados`, con la gracia de 7 días
+([§ Qué se borra y cuándo](#qué-se-borra-y-cuándo)); si no, se vuelve a cargar su rectángulo o se la da de alta
+([guía de carga manual § 2](guia-carga-manual.md#2-ciudad)). `--quitar` se rechaza, **sin subir nada**, si el catálogo no
+tiene ese paquete de ciudad, si esa ciudad **se sigue publicando** (está viva y con rectángulo: primero hay que darla de
+baja o sacarle el rectángulo), si va con `--ciudad` o si va con `--solo estilo|zonas`; lo que se quita a propósito deja
+de avisarse.
 `--dry-run` hace todo menos escribir; sin clave de servicio no puede leer la base, lo avisa y no simula ciudades ni zonas.
 
 `--ciudad <slug>` publica solo esa ciudad (el slug es su nombre en minúsculas, sin tildes y con guiones: `montevideo`,
@@ -291,9 +301,15 @@ build de Protomaps. El publicador (`tiles/src/zonas.mjs`) lee todas las zonas de
 - **activa** = viva, de una campaña y una ciudad de campaña vivas, y la campaña **no terminó hace más de 15 días**
   (las escrituras tienen 15 días de gracia, migración 0020; una campaña sin fecha de fin no termina);
 - **cuándo se vuelve a cortar**: cuando cambia su polígono (`region_sha256`), cuando no tiene paquete, o cuando el
-  archivo que nombra ya no está en el bucket. **No** cuando Protomaps saca un build nuevo (a diario): igual que con las
+  archivo que nombra ya no está en el bucket (**solo** un 404 de Storage dice «no está»: con cualquier otra respuesta,
+  un 429 o una caída, esa zona falla en esa corrida y **no se toca**, ni se republica ni se le retira su mapa vigente,
+  hasta la próxima). **No** cuando Protomaps saca un build nuevo (a diario): igual que con las
   ciudades, un mapa nuevo solo porque cambió la fecha de la fuente le haría bajar el mapa de nuevo a cada teléfono.
   `--regenerar` (o la casilla del workflow) fuerza el corte;
+- **el borde**: se corta por el polígono, **sin margen** (no hay *buffer*). `pmtiles extract --region` copia **teselas
+  enteras** (de ~1 km de lado a zoom 15 en Montevideo), así que el borde de la zona trae la manzana completa. Si el
+  borde cae justo sobre el corte de una tesela, lo cubre el paquete de la ciudad (HU-SYNC-011). Si al publicar la primera
+  zona real se ve que el corte **no** es por teselas enteras, se pasa a `--bbox` con el rectángulo del polígono;
 - **el orden**: corta, sube a `zonas/<al azar>.pmtiles` y **recién después** guarda el enlace en la zona (el teléfono
   nunca recibe un enlace a algo que todavía no está). La escritura es optimista (`sync_version`): si un coordinador
   editó la zona mientras se cortaba, no se la pisa y queda para la próxima corrida («en conflicto»);
@@ -312,7 +328,8 @@ build de Protomaps. El publicador (`tiles/src/zonas.mjs`) lee todas las zonas de
 - **huérfanos**: un archivo de `zonas/` que ninguna zona nombra y se subió hace más de 7 días se borra (solo si el
   nombre es de los que pone el publicador, y nunca si la lectura de zonas vino vacía);
 - **una zona que no entra en 50 MB** ni a zoom 14 **falla** (no se parte en dos como una ciudad: una zona es un
-  barrio) y la corrida sigue con las demás.
+  barrio) y la corrida sigue con las demás. El error dice qué hacer: pedirle al coordinador que la achique o la divida en
+  dos zonas; mientras tanto, el colportor usa el mapa de la ciudad.
 
 Qué dice cada resultado en el log: `publicadas`, `sin cambios`, `retiradas`, `en conflicto`, `con falla`. El log no
 lleva nunca el nombre del archivo ([§ Privacidad](#privacidad)).
@@ -406,8 +423,12 @@ Va aparte para que una zona con problemas nunca tape el resultado de las ciudade
 
 #### Antes de publicar
 
-- la **migración 0031** en el proyecto (`public.ciudad` con `bbox_*` y `public.zona` con `paquete_mapa`): la aplica el
-  deploy de `develop` o `supabase db push`. Sin ella el publicador falla al leer `public.ciudad`. Si la base ya tenía
+- la **migración 0031** en el proyecto (`public.ciudad` con `bbox_*` y `public.zona` con `paquete_mapa`): se aplica con
+  `supabase db push` (después de `supabase link --project-ref <id del proyecto>`). **No cuentes con el deploy de
+  `develop`**: `deploy.yml` corre solo al terminar la CI de `develop`, `staging` o `production` (nunca de una rama de
+  feature) y, en `develop`, solo con la variable `DEPLOY_DEVELOP=true`. Si el proyecto tiene una migración pendiente
+  numerada **antes** de otras ya aplicadas (pasa si entra la de #64), `db push` se niega y hay que usar
+  `supabase db push --include-all`. Sin la 0031 el publicador falla al leer `public.ciudad`. Si la base ya tenía
   **una sola** Montevideo viva y sin rectángulo, la migración se lo pone sola;
 - el paso 0 (Montevideo con su rectángulo) y, para las zonas, la campaña de la demo con sus ciudades y zonas (los seeds
   traen ciudades ficticias, sin rectángulo: no se publican);
@@ -430,7 +451,7 @@ Un «aviso» no es un error: hoy es que el gateway no expone `Content-Range` al 
 | una ciudad nueva | cargarla en `public.ciudad` **con su rectángulo** ([guía de carga manual § 2](guia-carga-manual.md#2-ciudad)) y publicar (`publicar --solo ciudades`). No se toca ningún archivo del repo | una entrada nueva en el catálogo |
 | el rectángulo de una ciudad | `UPDATE` de los cuatro `bbox_*` a la vez y publicar: sale un mapa nuevo | un `version` nuevo en el paquete |
 | una ciudad que no entra en 50 MB | nada: la política baja el zoom o la parte en dos | `partes` con dos archivos |
-| quitar una ciudad | **no se quita sola** (ni al darla de baja ni al sacarle el rectángulo: el publicador avisa). Hay que sacarla del catálogo a propósito (`fusionar` con `quitar`); sus archivos se borran a los 7 días de haber salido | desaparece del catálogo |
+| quitar una ciudad | **no se quita sola** (ni al darla de baja ni al sacarle el rectángulo: el publicador avisa, y el aviso dice cómo seguir). Hay que sacarla a propósito: `publicar --solo ciudades --quitar ciudad-<slug>`; sus archivos se borran a los 7 días de haber salido | desaparece del catálogo |
 | una zona nueva, o movida | nada: el `schedule` ([§ Con GitHub Actions](#con-github-actions)) o `publicar --solo zonas` | `paquete_mapa` nuevo en la zona, por delta |
 | el mapa de una zona, aunque no se haya movido | `publicar --solo zonas --zona <id> --regenerar` | `paquete_mapa` con otro `sha256` |
 
