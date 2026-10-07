@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BUCKET, cacheControlDe, tipoDe } from '../src/bucket.mjs';
-import { clienteStorage } from '../src/storage.mjs';
+import { clienteStorage, tapar } from '../src/storage.mjs';
 
 const URL = 'https://proyecto.supabase.co';
 
@@ -100,6 +100,63 @@ test('pregunta si un paquete ya está por el endpoint autenticado (HEAD), con la
   assert.equal(llamadas[0].metodo, 'HEAD');
   assert.equal(llamadas[0].url, `${URL}/storage/v1/object/authenticated/mapas/paquetes/ciudad/ya-esta.pmtiles`);
   assert.equal(llamadas[0].headers.Authorization, 'Bearer CLAVE-DE-SERVICIO');
+});
+
+test('existe solo dice «no está» con 404 o 400: un límite de pedidos o un permiso caído es un error, no un archivo ausente', async () => {
+  for (const status of [404, 400]) {
+    const { fn } = fetchFalso(() => new Response('', { status }));
+    assert.equal(await cliente(fn).existe('paquetes/ciudad/x.pmtiles'), false, `estado ${status}`);
+  }
+  for (const status of [429, 401, 403]) {
+    const { fn, llamadas } = fetchFalso(() => new Response('', { status }));
+    await assert.rejects(cliente(fn).existe('paquetes/ciudad/x.pmtiles'), new RegExp(`falló: ${status}`), `estado ${status}`);
+    assert.equal(llamadas.length, 1, 'un 4xx no se reintenta');
+  }
+});
+
+// El nombre del archivo del mapa de una zona es la llave de ese mapa: no sale en ningún error, venga de donde venga.
+const LLAVE_HEX = '0123456789abcdef'.repeat(2);
+const LLAVE = `zonas/${LLAVE_HEX}.pmtiles`;
+const sinLlave = (error) => {
+  const dicho = `${error.message} ${JSON.stringify(error.cause ?? '')}`;
+  assert.ok(!dicho.includes(LLAVE_HEX), `el error nombra el archivo de la zona: ${dicho}`);
+  return true;
+};
+
+test('el nombre del archivo de una zona no sale en el error de un 5xx, ni al preguntar (HEAD) ni al subir (POST)', async () => {
+  const caido = fetchFalso(() => new Response('', { status: 503 }));
+  await assert.rejects(cliente(caido.fn).existe(LLAVE), (e) => sinLlave(e) && /HEAD .* → 503/.test(e.message));
+  assert.equal(caido.llamadas.length, 3, 'reintentó');
+  assert.ok(caido.llamadas[0].url.includes(LLAVE_HEX), 'el pedido sí lleva el nombre: es lo que se está comprobando');
+
+  const subida = fetchFalso(() => new Response('', { status: 503 }));
+  await assert.rejects(
+    cliente(subida.fn).subir(LLAVE, Buffer.from('x'), { contentType: 'application/octet-stream', cacheControl: 'x' }),
+    (e) => sinLlave(e) && /POST .* → 503/.test(e.message),
+  );
+});
+
+test('el nombre del archivo de una zona no sale cuando el servidor lo repite en un error 4xx, ni en un corte de red', async () => {
+  const eco = fetchFalso((l) => json({ message: `The resource ${LLAVE} already exists`, url: l.url }, 413));
+  await assert.rejects(
+    cliente(eco.fn).subir(LLAVE, Buffer.from('x'), { contentType: 'application/octet-stream', cacheControl: 'x' }),
+    (e) => sinLlave(e) && /Subir zonas\/<paquete de zona> falló: 413 .*already exists/.test(e.message),
+  );
+  await assert.rejects(cliente(eco.fn).bajarJson(LLAVE), (e) => sinLlave(e) && /falló: 413/.test(e.message));
+
+  const corte = fetchFalso((l) => {
+    throw new TypeError(`fetch failed ${l.url}`);
+  });
+  await assert.rejects(cliente(corte.fn).existe(LLAVE), (e) => sinLlave(e) && /fetch failed/.test(e.message));
+  await assert.rejects(cliente(corte.fn).subir(LLAVE, Buffer.from('x'), { contentType: 'a', cacheControl: 'b' }), sinLlave);
+});
+
+test('tapar cambia solo los nombres de los archivos de zona (con o sin carpeta, escritos o codificados) y deja lo demás', () => {
+  assert.equal(tapar(`HEAD https://p.supabase.co/storage/v1/object/authenticated/mapas/${LLAVE} → 503`), 'HEAD https://p.supabase.co/storage/v1/object/authenticated/mapas/zonas/<paquete de zona> → 503');
+  assert.equal(tapar(`${LLAVE_HEX.toUpperCase()}.pmtiles y zonas%2F${LLAVE_HEX}.pmtiles`), 'zonas/<paquete de zona> y zonas/<paquete de zona>');
+  for (const intacto of ['paquetes/ciudad/montevideo.0123456789ab.pmtiles', 'catalogo.json', 'estilo/colportores.json', 'sin nada']) {
+    assert.equal(tapar(intacto), intacto);
+  }
 });
 
 test('lista paginando de a 100 y sin contar las carpetas', async () => {

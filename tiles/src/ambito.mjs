@@ -95,7 +95,8 @@ export function ciudadesPublicables(filas) {
  * Avisos sobre los paquetes de ciudad que el catálogo ya publicó y que esta corrida no vuelve a publicar:
  * la ciudad ya no existe (o está dada de baja) o ya no tiene rectángulo. **No se retiran solos**: el
  * paquete sigue en el catálogo hasta que alguien lo decida (retirar un mapa a los teléfonos es una decisión
- * de producto). Solo se avisa.
+ * de producto). Solo se avisa, y el aviso dice cómo sacarlo (`publicar --solo ciudades --quitar <id>`) o cómo
+ * volver a dejarlo como estaba.
  */
 export function avisosDeCiudades(catalogo, filas) {
   const porId = new Map(filas.map((f) => [f.id, f]));
@@ -103,10 +104,17 @@ export function avisosDeCiudades(catalogo, filas) {
   for (const paquete of catalogo?.paquetes ?? []) {
     if (paquete.nivel !== 'ciudad') continue;
     const fila = porId.get(paquete.ambito_id);
+    const sacarlo = `Si fue a propósito, sacalo con \`publicar --solo ciudades --quitar ${paquete.id}\``;
     if (!fila) {
-      avisos.push(`${paquete.id} sigue en el catálogo, pero su ciudad (${paquete.ambito_id}) ya no está en public.ciudad o está dada de baja`);
+      avisos.push(
+        `${paquete.id} sigue en el catálogo, pero su ciudad (${paquete.ambito_id}) ya no está en public.ciudad o está dada de baja. ` +
+          `${sacarlo}; si no, volvé a dejarla viva con su rectángulo (docs/guia-carga-manual.md § 2).`,
+      );
     } else if (!tieneRectangulo(fila)) {
-      avisos.push(`${paquete.id} sigue en el catálogo, pero la ciudad «${fila.nombre}» ya no tiene rectángulo`);
+      avisos.push(
+        `${paquete.id} sigue en el catálogo, pero la ciudad «${fila.nombre}» ya no tiene rectángulo. ` +
+          `${sacarlo}; si no, volvé a cargar su rectángulo (docs/guia-carga-manual.md § 2).`,
+      );
     }
   }
   return avisos;

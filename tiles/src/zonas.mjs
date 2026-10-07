@@ -29,6 +29,7 @@ import { cacheControlDe, tipoDe } from './bucket.mjs';
 import { DIAS_DE_GRACIA } from './catalogo.mjs';
 import { MAX_BYTES, ZOOM_PISO, ZOOM_TOPE } from './politica.mjs';
 import { sha256DeArchivo } from './recorte.mjs';
+import { tapar } from './storage.mjs';
 
 export const PREFIJO_ZONAS = 'zonas';
 
@@ -142,7 +143,8 @@ export function clienteZonas({ url, clave, fetchImpl = fetch }) {
     }
     if (!respuesta.ok) {
       const texto = await respuesta.text().catch(() => '');
-      throw new Error(`${que} falló: ${respuesta.status} ${texto.slice(0, 300)}`);
+      // PostgREST repite la fila que no pudo escribir: trae `paquete_mapa.archivo`, la llave del mapa de la zona.
+      throw new Error(`${que} falló: ${respuesta.status} ${tapar(texto.slice(0, 300))}`);
     }
     return respuesta.json();
   }
@@ -188,7 +190,10 @@ async function recortar({ zona, geometria, extraer, tmp, maxBytes, log }) {
     log(`zona ${zona.id}: zoom ${zoom} → ${(bytes / 1e6).toFixed(1)} MB`);
     if (bytes <= maxBytes) return { destino, bytes, zoomMax: zoom };
   }
-  throw new Error(`no entra en ${maxBytes} bytes ni con zoom máximo ${ZOOM_PISO}: la zona es demasiado grande para un solo archivo`);
+  throw new Error(
+    `la zona ${zona.id} no entra en ${maxBytes} bytes ni con zoom máximo ${ZOOM_PISO}: es demasiado grande para un solo archivo. ` +
+      'Pedile al coordinador que la achique o la divida en dos zonas; mientras tanto, el colportor usa el mapa de la ciudad.',
+  );
 }
 
 /**
@@ -316,8 +321,10 @@ export async function publicarZonas({
       await atender(zona);
       await podar(zona);
     } catch (error) {
-      resultado.fallas.push({ id: zona.id, error: error.message });
-      log(`zona ${zona.id}: FALLA — ${error.message}`);
+      // El mensaje de un error de Storage o de la red puede traer la ruta de un archivo de zona: se tapa.
+      const mensaje = tapar(error.message);
+      resultado.fallas.push({ id: zona.id, error: mensaje });
+      log(`zona ${zona.id}: FALLA — ${mensaje}`);
     }
   }
 

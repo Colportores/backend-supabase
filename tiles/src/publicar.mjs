@@ -133,6 +133,10 @@ export async function prepararPaquete({ nivel, clave, bbox, extraer, tmp, log = 
  * `ciudadesEnBase`: todas las filas de public.ciudad (opcional). Con ellas se avisa de los paquetes que el
  * catálogo ya tenía y esta corrida no publica (la ciudad se dio de baja o perdió su rectángulo): se
  * conservan, retirarlos es una decisión de producto.
+ *
+ * `quitarIds`: ids de paquete (`ciudad-<slug>`) que se sacan del catálogo a propósito (`--quitar`); sus archivos
+ * quedan en `retirados` y se borran a los 7 días. Solo se puede quitar un paquete que el catálogo ya tiene y
+ * que esta corrida no vuelve a publicar: se mira ANTES de subir nada.
  */
 export async function publicarCiudades({
   storage,
@@ -146,6 +150,7 @@ export async function publicarCiudades({
   log = () => {},
   limites,
   ciudadesEnBase,
+  quitarIds = [],
 }) {
   // Todo lo que puede impedir publicar se mira ANTES de subir un solo archivo.
   const sinAmbito = ciudades.filter((c) => !c.ciudad_id);
@@ -158,17 +163,36 @@ export async function publicarCiudades({
   if (!estiloVersion && !previo?.estilo?.version) {
     throw new Error('El catálogo del bucket no tiene la versión del estilo: publicá el estilo primero (--solo estilo, o todo). No se subió nada.');
   }
+  const aQuitar = [...new Set(quitarIds)];
+  const deCiudad = (previo?.paquetes ?? []).filter((p) => p.nivel === 'ciudad').map((p) => p.id);
+  const desconocidos = aQuitar.filter((id) => !deCiudad.includes(id));
+  if (desconocidos.length > 0) {
+    throw new Error(
+      `El catálogo no tiene un paquete de ciudad ${desconocidos.map((id) => `«${id}»`).join(', ')} (los que tiene: ${deCiudad.join(', ') || 'ninguno'}). No se subió nada.`,
+    );
+  }
+  const siguenPublicandose = aQuitar.filter((id) => ciudades.some((c) => `ciudad-${c.slug}` === id));
+  if (siguenPublicandose.length > 0) {
+    throw new Error(
+      `${siguenPublicandose.join(', ')} se sigue publicando: su ciudad tiene rectángulo en public.ciudad. ` +
+        'Para retirarla, primero dala de baja o sacale el rectángulo (docs/guia-carga-manual.md § 2). No se subió nada.',
+    );
+  }
   if (ciudadesEnBase) {
     // Las ciudades que se publican solo en parte (--ciudad) no se avisan: el aviso es de la corrida completa.
-    for (const aviso of avisosDeCiudades(previo, ciudadesEnBase)) log(`aviso: ${aviso}`);
+    // Los paquetes que esta corrida saca a propósito no se avisan: ya no están.
+    const sinLosQuitados = previo && { ...previo, paquetes: previo.paquetes.filter((p) => !aQuitar.includes(p.id)) };
+    for (const aviso of avisosDeCiudades(sinLosQuitados, ciudadesEnBase)) log(`aviso: ${aviso}`);
   }
+  for (const id of aQuitar) log(`${id}: se saca del catálogo a pedido; sus archivos se borran a los ${DIAS_DE_GRACIA} días`);
   const nuevos = [];
 
   // Una ciudad que cambió de nombre cambia de slug, y su paquete de `id` nuevo reemplaza al viejo (el mismo
   // ambito_id no puede estar en dos paquetes: la app elegiría uno cualquiera).
-  const quitar = (previo?.paquetes ?? [])
+  const renombrados = (previo?.paquetes ?? [])
     .filter((p) => p.nivel === 'ciudad' && ciudades.some((c) => c.ciudad_id === p.ambito_id && `ciudad-${c.slug}` !== p.id))
     .map((p) => p.id);
+  const quitar = [...new Set([...renombrados, ...aQuitar])];
 
   for (const ciudad of ciudades) {
     const { partes, zoomMax } = await prepararPaquete({

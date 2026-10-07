@@ -94,6 +94,9 @@ test('los paquetes ya publicados cuya ciudad se dio de baja o perdió el rectán
   assert.equal(avisos.length, 2);
   assert.match(avisos[0], /ciudad-salto sigue en el catálogo.*«Salto» ya no tiene rectángulo/);
   assert.match(avisos[1], new RegExp(`ciudad-baja sigue en el catálogo.*${ID_3}.*ya no está en public\\.ciudad o está dada de baja`));
+  // Todo aviso dice qué hacer: sacarlo a propósito (con el id exacto) o volver a dejarlo como estaba.
+  assert.match(avisos[0], /Si fue a propósito, sacalo con `publicar --solo ciudades --quitar ciudad-salto`; si no, volvé a cargar su rectángulo \(docs\/guia-carga-manual\.md § 2\)\.$/);
+  assert.match(avisos[1], /Si fue a propósito, sacalo con `publicar --solo ciudades --quitar ciudad-baja`; si no, volvé a dejarla viva con su rectángulo/);
   assert.deepEqual(avisosDeCiudades(null, [MONTEVIDEO]), [], 'sin catálogo previo, nada que avisar');
   assert.deepEqual(avisosDeCiudades({ paquetes: [{ id: 'departamento-x', nivel: 'departamento', ambito_id: 'x' }] }, []), [], 'solo las ciudades');
 });

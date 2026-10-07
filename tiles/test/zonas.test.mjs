@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { BUCKET } from '../src/bucket.mjs';
+import { clienteStorage } from '../src/storage.mjs';
 import {
   NOMBRE_DE_PAQUETE,
   archivosEnUso,
@@ -371,7 +376,10 @@ test('prueba con zoom 15 y, si no entra en el tope, con 14; si tampoco, esa zona
     assert.equal(zonas[0].paquete_mapa.zoom_max, 14);
     assert.equal(resultado.fallas.length, 1);
     assert.equal(resultado.fallas[0].id, 'z2');
-    assert.match(resultado.fallas[0].error, /no entra en 50000 bytes ni con zoom máximo 14: la zona es demasiado grande/);
+    assert.match(
+      resultado.fallas[0].error,
+      /la zona z2 no entra en 50000 bytes ni con zoom máximo 14: es demasiado grande para un solo archivo\. Pedile al coordinador que la achique o la divida en dos zonas; mientras tanto, el colportor usa el mapa de la ciudad/,
+    );
     assert.equal(zonas[1].paquete_mapa, null, 'la zona que falló no queda con un enlace roto');
     assert.equal(repo.guardados.length, 1);
   }));
@@ -433,6 +441,162 @@ test('si la zona cambió mientras se cortaba su mapa, no se pisa: queda en confl
     // La próxima corrida lo logra (y el archivo huérfano de esta lo junta la limpieza a los 7 días).
     const siguiente = await correr({ zonas, storage, repo, tmp, archivoNuevo: () => nombre(2) }).promesa;
     assert.deepEqual(siguiente.publicadas, ['z1']);
+  }));
+
+// El cliente de Storage de verdad sobre un fetch de mentira: lo que sale por el log y por `fallas` es lo que de verdad dice.
+function storageDeMentira(responder) {
+  const llamadas = [];
+  const fetchFn = async (url, opciones = {}) => {
+    const llamada = { url: String(url), metodo: opciones.method };
+    llamadas.push(llamada);
+    return responder(llamada);
+  };
+  return { llamadas, storage: clienteStorage({ url: 'https://p.supabase.co', clave: 'CLAVE-DE-SERVICIO', fetchFn, esperaMs: 0 }) };
+}
+const LLAVE_EN_TEXTO = /[0-9a-f]{32}\.pmtiles/i;
+const listaVacia = () => new Response('[]', { status: 200 });
+
+test('si Storage se cae, ni el log ni la falla de la zona llevan el nombre del archivo (la llave de su mapa): al preguntar, al subir, o con un cuerpo que lo repite', () =>
+  conTmp(async (tmp) => {
+    // HEAD del archivo vigente → 503
+    const vigente = nombre(1);
+    const zonasA = [zona('z1', { paquete_mapa: { archivo: vigente, tamano_bytes: 10_000, sha256: 'a'.repeat(64), zoom_max: 15, region_sha256: regionDe(zona('z1')).sha256, actualizado_en: '2026-10-01T00:00:00Z', anteriores: [] } })];
+    const a = storageDeMentira(({ metodo, url }) => (metodo === 'HEAD' ? new Response('', { status: 503 }) : url.includes('/object/list/') ? listaVacia() : new Response('{}', { status: 200 })));
+    const resA = await correr({ zonas: zonasA, storage: a.storage, tmp }).promesa;
+    assert.equal(resA.fallas.length, 1);
+    assert.match(resA.fallas[0].error, /503/);
+    assert.ok(a.llamadas.some((l) => l.url.includes(vigente.slice(6))), 'el pedido sí llevó el nombre');
+
+    // POST de la subida → 503, y otra vez con un 413 cuyo cuerpo repite el nombre
+    for (const respuestaDeLaSubida of [() => new Response('', { status: 503 }), ({ url }) => new Response(JSON.stringify({ message: `The resource ${url} already exists` }), { status: 413 })]) {
+      const log = [];
+      const b = storageDeMentira((l) => (l.metodo === 'POST' && l.url.includes('/object/list/') ? listaVacia() : respuestaDeLaSubida(l)));
+      const resB = await correr({ zonas: [zona('z2')], storage: b.storage, tmp, archivoNuevo: () => nombre(5), log: (m) => log.push(m) }).promesa;
+      assert.equal(resB.fallas.length, 1);
+      assert.match(resB.fallas[0].error, /(503|413)/);
+      assert.ok(b.llamadas.some((l) => l.url.includes(nombre(5).slice(6))), 'el pedido sí llevó el nombre');
+      assert.doesNotMatch(JSON.stringify(resB.fallas), LLAVE_EN_TEXTO);
+      assert.doesNotMatch(log.join('\n'), LLAVE_EN_TEXTO, 'el log de la corrida');
+    }
+    assert.doesNotMatch(JSON.stringify(resA.fallas), LLAVE_EN_TEXTO);
+
+    // Y aunque el error venga de otro lado y lleve el nombre en el mensaje, la zona lo dice tapado.
+    const log = [];
+    const roto = bucketFalso();
+    roto.subir = async (ruta) => {
+      throw new Error(`Subir ${ruta} falló: 500 ${ruta}`);
+    };
+    const resC = await correr({ zonas: [zona('z3')], storage: roto, tmp, archivoNuevo: () => nombre(7), log: (m) => log.push(m) }).promesa;
+    assert.equal(resC.fallas.length, 1);
+    assert.match(resC.fallas[0].error, /Subir zonas\/<paquete de zona> falló: 500 zonas\/<paquete de zona>/);
+    assert.doesNotMatch(`${JSON.stringify(resC.fallas)}${log.join('\n')}`, LLAVE_EN_TEXTO);
+  }));
+
+test('el programa entero, con Storage caído, no escribe en la consola el nombre del archivo de la zona (ni en stdout ni en stderr)', async () => {
+  const llave = '0123456789abcdef0123456789abcdef';
+  const zonaConMapa = zona('z1', {
+    paquete_mapa: { archivo: `zonas/${llave}.pmtiles`, tamano_bytes: 1, sha256: 'a'.repeat(64), zoom_max: 15, region_sha256: regionDe(zona('z1')).sha256, actualizado_en: '2026-10-01T00:00:00Z', anteriores: [] },
+  });
+  const pedidos = [];
+  const servidor = createServer((req, res) => {
+    pedidos.push(`${req.method} ${req.url}`);
+    const responder = (estado, cuerpo = '') => {
+      res.writeHead(estado, { 'content-type': 'application/json' });
+      res.end(typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo));
+    };
+    if (req.method === 'GET' && req.url.startsWith('/storage/v1/bucket/')) return responder(200, { public: BUCKET.public, file_size_limit: BUCKET.file_size_limit, allowed_mime_types: BUCKET.allowed_mime_types });
+    if (req.method === 'GET' && req.url.startsWith('/rest/v1/zona')) return responder(200, [zonaConMapa]);
+    if (req.method === 'POST' && req.url.startsWith('/storage/v1/object/list/')) return responder(200, []);
+    if (req.url.includes(llave)) return responder(503, `el servidor se cayó con ${req.url}`);
+    return responder(404, {});
+  });
+  await new Promise((resolver) => servidor.listen(0, '127.0.0.1', resolver));
+  try {
+    const cli = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
+    const env = { ...process.env, SUPABASE_URL: `http://127.0.0.1:${servidor.address().port}`, SUPABASE_SERVICE_ROLE_KEY: 'CLAVE-DE-SERVICIO-DE-PRUEBA' };
+    const { codigo, salida } = await new Promise((resolver) => {
+      execFile(process.execPath, [cli, 'publicar', '--solo', 'zonas'], { env, timeout: 30_000 }, (error, stdout, stderr) => {
+        resolver({ codigo: error ? (error.code ?? 1) : 0, salida: `${stdout}\n${stderr}` });
+      });
+    });
+    assert.ok(pedidos.some((p) => p.includes(llave)), `el programa sí le preguntó a Storage por el archivo:\n${pedidos.join('\n')}`);
+    assert.equal(codigo, 1, salida);
+    assert.match(salida, /zona z1: FALLA — .*503/);
+    assert.doesNotMatch(salida, LLAVE_EN_TEXTO);
+  } finally {
+    servidor.close();
+  }
+});
+
+test('si Storage no puede decir si el archivo vigente está (429), esa zona no se toca: ni se republica, ni se borra su mapa vigente o los viejos; las demás siguen', () =>
+  conTmp(async (tmp) => {
+    const vigente = nombre(1);
+    const vencido = nombre(2);
+    const paquete = {
+      archivo: vigente,
+      tamano_bytes: 10_000,
+      sha256: 'a'.repeat(64),
+      zoom_max: 15,
+      region_sha256: regionDe(zona('z1')).sha256,
+      actualizado_en: '2026-01-01T00:00:00Z',
+      anteriores: [{ archivo: vencido, desde: '2026-09-01T00:00:00Z' }],
+    };
+    const zonas = [zona('z1', { paquete_mapa: structuredClone(paquete) }), zona('z2')];
+    const { llamadas, storage } = storageDeMentira(({ metodo, url }) => {
+      if (metodo === 'HEAD') return new Response('', { status: 429 });
+      // Con más de 7 días de antigüedad los dos: si se los trata de «sin dueño», se borran.
+      if (url.includes('/object/list/')) {
+        return new Response(JSON.stringify([vigente, vencido].map((r) => ({ id: r, name: r.slice(6), updated_at: '2026-01-01T00:00:00Z' }))), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    const log = [];
+    const { promesa, repo } = correr({ zonas, storage, tmp, archivoNuevo: () => nombre(9), log: (m) => log.push(m) });
+    const resultado = await promesa;
+
+    assert.deepEqual(resultado.fallas.map((f) => f.id), ['z1'], 'la zona que no se pudo comprobar queda como falla');
+    assert.match(resultado.fallas[0].error, /falló: 429/);
+    assert.deepEqual(resultado.publicadas, ['z2'], 'la otra zona siguió');
+    assert.deepEqual(zonas[0].paquete_mapa, paquete, 'el enlace de la zona que falló quedó como estaba');
+    assert.deepEqual(repo.guardados.map((g) => g.id), ['z2']);
+    assert.deepEqual(resultado.borrados, [], 'ni el vigente ni el que sale de anteriores se borran: la próxima corrida lo vuelve a mirar');
+    assert.ok(!llamadas.some((l) => l.metodo === 'DELETE'), 'ningún borrado llegó a Storage');
+    assert.ok(!llamadas.some((l) => l.metodo === 'POST' && l.url.includes(vigente.slice(6))), 'no se volvió a subir el vigente');
+    assert.doesNotMatch(log.join('\n'), LLAVE_EN_TEXTO);
+  }));
+
+test('si al podar el enlace no se pudo guardar (la zona cambió: 0 filas), los archivos vencidos no se borran; la corrida siguiente los borra', () =>
+  conTmp(async (tmp) => {
+    const vigente = nombre(1);
+    const vencido = nombre(2);
+    const reciente = nombre(3);
+    const zonas = [
+      zona('z1', {
+        paquete_mapa: {
+          archivo: vigente,
+          tamano_bytes: 10_000,
+          sha256: 'a'.repeat(64),
+          zoom_max: 15,
+          region_sha256: regionDe(zona('z1')).sha256,
+          actualizado_en: '2026-10-01T00:00:00Z',
+          anteriores: [{ archivo: vencido, desde: '2026-09-29T00:00:00Z' }, { archivo: reciente, desde: '2026-10-05T00:00:00Z' }],
+        },
+      }),
+    ];
+    const storage = bucketFalso({ previo: { [vigente]: 'v', [vencido]: 'x', [reciente]: 'y' } });
+    const conConflicto = repoFalso(zonas);
+    conConflicto.guardarPaquete = async () => null; // PATCH condicionado por sync_version: no tocó ninguna fila
+
+    const primera = await correr({ zonas, storage, repo: conConflicto, tmp }).promesa;
+    assert.deepEqual(primera.conflictos, ['z1']);
+    assert.deepEqual(primera.borrados, []);
+    assert.deepEqual(storage.borrados, [], 'no llegó ningún borrado a Storage');
+    assert.ok([vigente, vencido, reciente].every((r) => storage.objetos.has(r)), 'los tres archivos siguen');
+    assert.equal(zonas[0].paquete_mapa.anteriores.length, 2, 'el enlace sigue recordando al vencido');
+
+    const segunda = await correr({ zonas, storage, tmp }).promesa;
+    assert.deepEqual(segunda.borrados, [vencido], 'ahora que el enlace se pudo guardar, se borra');
+    assert.ok(storage.objetos.has(vigente) && storage.objetos.has(reciente) && !storage.objetos.has(vencido));
   }));
 
 test('--zona publica solo esa; las demás no se miran', () =>
@@ -592,4 +756,10 @@ test('clienteZonas dice qué falló, con el estado HTTP, y nunca la clave', asyn
   };
   const repoSinRed = clienteZonas({ url: 'https://p.supabase.co', clave: 'CLAVE-DE-SERVICIO', fetchImpl: sinRed });
   await assert.rejects(repoSinRed.leer(), (e) => /ECONNREFUSED/.test(e.message) && !e.message.includes('CLAVE-DE-SERVICIO'));
+
+  // PostgREST repite la fila que no pudo escribir, con el nombre del archivo del mapa de la zona: no sale.
+  const repiteLaFila = async () =>
+    new Response(JSON.stringify({ message: 'new row violates check constraint', details: `Failing row contains ({"archivo": "${nombre(5)}"})` }), { status: 400 });
+  const repoQueRepite = clienteZonas({ url: 'https://p.supabase.co', clave: 'CLAVE-DE-SERVICIO', fetchImpl: repiteLaFila });
+  await assert.rejects(repoQueRepite.guardarPaquete('z1', 1, { archivo: nombre(5) }), (e) => /falló: 400 .*check constraint/.test(e.message) && !LLAVE_EN_TEXTO.test(e.message));
 });

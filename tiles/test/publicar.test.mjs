@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -471,6 +472,89 @@ test('una ciudad ya publicada que perdió su rectángulo o se dio de baja se con
     await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [], ciudadesEnBase: [], ahora: '2026-10-09T12:00:00Z', log: (m) => otros.push(m) }));
     assert.ok(otros.some((m) => m.includes('ya no está en public.ciudad o está dada de baja')), otros.join('\n'));
   }));
+
+const SIN_RECTANGULO = [{ id: AMBITO, nombre: 'Montevideo', bbox_oeste: null, bbox_sur: null, bbox_este: null, bbox_norte: null }];
+
+test('--quitar saca una ciudad del catálogo a propósito: sus archivos quedan con su gracia de 7 días y no se avisa más', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    const archivo = v1.paquetes[0].partes[0].archivo;
+
+    const mensajes = [];
+    const { catalogo: v2, borrados } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [],
+        ciudadesEnBase: SIN_RECTANGULO,
+        quitarIds: ['ciudad-montevideo'],
+        ahora: '2026-10-08T12:00:00Z',
+        log: (m) => mensajes.push(m),
+      }),
+    );
+    assert.deepEqual(v2.paquetes, [], 'el paquete ya no está en el catálogo');
+    assert.deepEqual(v2.retirados, [{ archivo, desde: '2026-10-08T12:00:00Z' }], 'el archivo queda retirado, con su gracia');
+    assert.deepEqual(borrados, []);
+    assert.ok(storage.objetos.has(archivo), 'el archivo sigue en el bucket: los teléfonos que ya tenían el catálogo viejo lo pueden bajar');
+    assert.deepEqual(validar(v2), []);
+    assert.ok(mensajes.some((m) => m.startsWith('ciudad-montevideo: se saca del catálogo a pedido')), mensajes.join('\n'));
+    assert.ok(!mensajes.some((m) => m.startsWith('aviso:')), `lo que se saca a propósito no se avisa:\n${mensajes.join('\n')}`);
+
+    // A los 7 días, la corrida siguiente borra el archivo.
+    const { borrados: despues } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, { ciudades: [], ciudadesEnBase: SIN_RECTANGULO, ahora: '2026-10-16T12:00:00Z' }),
+    );
+    assert.deepEqual(despues, [archivo]);
+    assert.ok(!storage.objetos.has(archivo));
+  }));
+
+test('--quitar de un paquete que el catálogo no tiene, o de una ciudad que se sigue publicando, se rechaza antes de subir nada', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    const subidas = storage.subidas.length;
+    const antes = storage.objetos.get(RUTA_CATALOGO).toString();
+
+    await assert.rejects(
+      publicarCiudades(opciones(storage, recorteFalso(), tmp, { quitarIds: ['ciudad-salto'] })),
+      /no tiene un paquete de ciudad «ciudad-salto» \(los que tiene: ciudad-montevideo\)\. No se subió nada/,
+    );
+    await assert.rejects(
+      publicarCiudades(opciones(storage, recorteFalso(), tmp, { quitarIds: ['ciudad-montevideo'] })),
+      /ciudad-montevideo se sigue publicando: su ciudad tiene rectángulo en public\.ciudad.*No se subió nada/,
+    );
+    assert.equal(storage.subidas.length, subidas, 'no se subió ni un archivo');
+    assert.equal(storage.objetos.get(RUTA_CATALOGO).toString(), antes, 'el catálogo quedó como estaba');
+  }));
+
+test('--quitar saca a una sola ciudad y deja a las demás; si se quita en el mismo pedido que se renombra otra, valen las dos cosas', () =>
+  conTmp(async (tmp) => {
+    const salto = { slug: 'salto', nombre: 'Salto', ciudad_id: '09990000-0000-7000-8003-000000000009', bbox: [-58.1, -31.5, -57.9, -31.3] };
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [MONTEVIDEO, salto] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, { ciudades: [salto], quitarIds: ['ciudad-montevideo'], ahora: '2026-10-08T12:00:00Z' }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['ciudad-salto']);
+    assert.equal(catalogo.retirados.length, 1, 'solo los archivos de la ciudad que se quitó');
+    assert.match(catalogo.retirados[0].archivo, /ciudad-montevideo|montevideo/);
+  }));
+
+for (const [que, args, mensaje] of [
+  ['sin --solo ciudades', ['publicar', '--solo', 'estilo', '--quitar', 'ciudad-montevideo'], /--quitar .* va con --solo ciudades/],
+  ['con --solo zonas', ['publicar', '--solo', 'zonas', '--quitar', 'ciudad-montevideo'], /--quitar .* va con --solo ciudades/],
+  ['junto con --ciudad', ['publicar', '--solo', 'ciudades', '--ciudad', 'salto', '--quitar', 'ciudad-montevideo'], /--quitar no se combina con --ciudad/],
+]) {
+  test(`el CLI rechaza --quitar ${que}, sin conectarse a nada`, async () => {
+    const cli = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
+    const { codigo, salida } = await new Promise((resolver) => {
+      execFile(process.execPath, [cli, ...args], { env: { ...process.env, SUPABASE_URL: 'http://127.0.0.1:9', SUPABASE_SERVICE_ROLE_KEY: 'x' }, timeout: 20_000 }, (error, stdout, stderr) => {
+        resolver({ codigo: error ? (error.code ?? 1) : 0, salida: `${stdout}\n${stderr}` });
+      });
+    });
+    assert.equal(codigo, 1, salida);
+    assert.match(salida, mensaje);
+  });
+}
 
 test('publica el estilo con sus glyphs y sprites, cada uno con su tipo de contenido', () =>
   conTmp(async () => {

@@ -3,7 +3,7 @@
 //
 //   node src/cli.mjs estilo    [--url-base URL] [--salida DIR]
 //   node src/cli.mjs publicar  [--solo estilo|ciudades|zonas] [--ciudad SLUG]... [--zona ID]... [--regenerar]
-//                              [--build AAAAMMDD] [--dry-run]
+//                              [--quitar ID]... [--build AAAAMMDD] [--dry-run]
 //   node src/cli.mjs verificar [--url URL]
 //
 // Variables de entorno:
@@ -30,13 +30,14 @@ import {
 } from './publicar.mjs';
 import { FUENTE_PROTOMAPS, asegurarPmtiles, buscarBuild, extraer } from './recorte.mjs';
 import { ocultar } from './secretos.mjs';
-import { clienteStorage } from './storage.mjs';
+import { clienteStorage, tapar } from './storage.mjs';
 import { verificar } from './verificar.mjs';
 import { clienteZonas, publicarZonas } from './zonas.mjs';
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url));
 const secretos = () => [process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_ACCESS_TOKEN];
-const log = (mensaje) => console.log(ocultar(mensaje, ...secretos()));
+// Nada de lo que imprime este programa lleva la clave ni el nombre del archivo del mapa de una zona (`tapar`).
+const log = (mensaje) => console.log(tapar(ocultar(mensaje, ...secretos())));
 
 function entorno(nombre) {
   const valor = process.env[nombre];
@@ -70,6 +71,9 @@ async function comandoPublicar(opciones) {
   if (!['todo', 'estilo', 'ciudades', 'zonas'].includes(solo)) throw new Error('--solo es estilo, ciudades o zonas');
   const conCiudades = solo === 'todo' || solo === 'ciudades';
   const conZonas = solo === 'todo' || solo === 'zonas';
+  const quitarIds = opciones.quitar ?? [];
+  if (quitarIds.length > 0 && !conCiudades) throw new Error('--quitar saca un paquete de ciudad del catálogo: va con --solo ciudades (o sin --solo)');
+  if (quitarIds.length > 0 && opciones.ciudad?.length) throw new Error('--quitar no se combina con --ciudad: una publica una ciudad, la otra saca otra');
 
   const supabaseUrl = entorno('SUPABASE_URL');
   const clave = dryRun ? process.env.SUPABASE_SERVICE_ROLE_KEY : entorno('SUPABASE_SERVICE_ROLE_KEY');
@@ -140,6 +144,7 @@ async function comandoPublicar(opciones) {
         storage,
         ciudades: elegidas,
         ciudadesEnBase: opciones.ciudad?.length ? undefined : ciudadesEnBase,
+        quitarIds,
         extraer: async ({ bbox, zoomMax, destino }) => {
           const { pmtiles, url } = await preparar(opciones.build);
           return extraer({ pmtiles, fuente: url, destino, bbox, zoomMax });
@@ -198,6 +203,7 @@ async function main() {
       solo: { type: 'string' },
       ciudad: { type: 'string', multiple: true },
       zona: { type: 'string', multiple: true },
+      quitar: { type: 'string', multiple: true },
       regenerar: { type: 'boolean' },
       build: { type: 'string' },
       url: { type: 'string' },
@@ -216,6 +222,6 @@ async function main() {
 
 main().catch((error) => {
   const causa = error.cause ? ` (${error.cause.code ?? error.cause.message})` : '';
-  console.error(`ERROR: ${ocultar(`${error.message}${causa}`, ...secretos())}`);
+  console.error(`ERROR: ${tapar(ocultar(`${error.message}${causa}`, ...secretos()))}`);
   process.exitCode = 1;
 });
