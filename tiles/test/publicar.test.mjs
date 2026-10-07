@@ -235,7 +235,7 @@ test('cambiar el nombre o el ámbito de una ciudad llega al catálogo aunque los
     assert.equal(v1.paquetes[0].ambito_id, AMBITO);
     const cantidad = storage.subidas.length;
 
-    // Se recarga la ciudad en la base (otro id) y se la renombra: ciudades.json y public.ciudad mandan.
+    // Se recarga la ciudad en la base (otro id) y se la renombra: lo que dice public.ciudad manda.
     const mensajes = [];
     const { catalogo: v2 } = await publicarCiudades(
       opciones(storage, recorteFalso(), tmp, {
@@ -380,17 +380,18 @@ test('con --dry-run recorta y mide, pero no escribe en el bucket', () =>
     assert.ok(mensajes.some((m) => m.includes('[dry-run]')));
   }));
 
-test('los otros paquetes del catálogo (por ejemplo, de zona) no se pierden al republicar una ciudad', () =>
+test('los otros paquetes del catálogo (otra ciudad) no se pierden al republicar una ciudad', () =>
   conTmp(async (tmp) => {
-    const zona = {
-      id: 'zona-z1',
-      nivel: 'zona',
-      ambito_id: 'z1',
+    const salto = {
+      id: 'ciudad-salto',
+      nivel: 'ciudad',
+      ambito_id: '09990000-0000-7000-8003-000000000009',
+      nombre: 'Salto',
       zoom_min: 0,
       zoom_max: 15,
       tamano_bytes: 5,
       version: 'a'.repeat(64),
-      partes: [{ archivo: 'paquetes/zona/z1.aaaaaaaaaaaa.pmtiles', tamano_bytes: 5, sha256: 'a'.repeat(64) }],
+      partes: [{ archivo: 'paquetes/ciudad/salto.aaaaaaaaaaaa.pmtiles', tamano_bytes: 5, sha256: 'a'.repeat(64) }],
       fuente_build: '20261001',
       actualizado_en: '2026-10-01T00:00:00Z',
     };
@@ -398,18 +399,77 @@ test('los otros paquetes del catálogo (por ejemplo, de zona) no se pierden al r
       version: 1,
       generado_en: '2026-10-01T00:00:00Z',
       estilo: { url: RUTA_ESTILO, fuente_de_tiles: 'protomaps' },
-      paquetes: [zona],
+      paquetes: [salto],
     };
     const storage = bucketFalso({
       previo: {
         [RUTA_CATALOGO]: Buffer.from(JSON.stringify(previo)),
-        'paquetes/zona/z1.aaaaaaaaaaaa.pmtiles': Buffer.from('zzzzz'),
+        'paquetes/ciudad/salto.aaaaaaaaaaaa.pmtiles': Buffer.from('zzzzz'),
       },
     });
     const { catalogo, borrados } = await publicarCiudades(opciones(storage, recorteFalso(), tmp));
-    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['zona-z1', 'ciudad-montevideo']);
+    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['ciudad-montevideo', 'ciudad-salto']);
     assert.deepEqual(borrados, []);
-    assert.ok(storage.objetos.has('paquetes/zona/z1.aaaaaaaaaaaa.pmtiles'));
+    assert.ok(storage.objetos.has('paquetes/ciudad/salto.aaaaaaaaaaaa.pmtiles'));
+  }));
+
+test('el catálogo no toca lo que hay en zonas/: los paquetes de zona no son suyos y nunca los lista ni los borra', () =>
+  conTmp(async (tmp) => {
+    const archivoDeZona = `zonas/${'0123456789abcdef'.repeat(2)}.pmtiles`;
+    const storage = bucketFalso({ previo: { [archivoDeZona]: Buffer.from('zona') }, fechas: { [archivoDeZona]: '2026-01-01T00:00:00Z' } });
+    const pedidos = [];
+    const listarOriginal = storage.listar;
+    storage.listar = async (prefijo) => {
+      pedidos.push(prefijo);
+      return listarOriginal(prefijo);
+    };
+    const { catalogo, borrados } = await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ahora: '2026-10-21T12:00:00Z' }));
+    assert.deepEqual(pedidos, ['paquetes/ciudad'], 'solo lista lo suyo');
+    assert.deepEqual(borrados, []);
+    assert.ok(storage.objetos.has(archivoDeZona), 'aunque sea viejo (de enero) y ningún catálogo lo nombre');
+    assert.ok(!JSON.stringify(catalogo).includes('zonas/'), 'y el catálogo público no lo menciona');
+  }));
+
+test('una ciudad que cambia de nombre cambia de paquete: el nuevo reemplaza al viejo (el mismo ámbito no va en dos) y el viejo se retira', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    const archivoViejo = v1.paquetes[0].partes[0].archivo;
+
+    const { catalogo: v2 } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [{ ...MONTEVIDEO, slug: 'montevideo-capital', nombre: 'Montevideo Capital' }],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(v2.paquetes.map((p) => p.id), ['ciudad-montevideo-capital'], 'un solo paquete para ese ámbito');
+    assert.equal(v2.paquetes[0].ambito_id, AMBITO);
+    assert.notEqual(v2.paquetes[0].partes[0].archivo, archivoViejo, 'el archivo lleva el slug nuevo');
+    assert.deepEqual(v2.retirados, [{ archivo: archivoViejo, desde: '2026-10-08T12:00:00Z' }], 'el archivo viejo queda retirado, con su gracia');
+    assert.deepEqual(validar(v2), []);
+  }));
+
+test('una ciudad ya publicada que perdió su rectángulo o se dio de baja se conserva y se avisa: retirar un mapa es una decisión', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+
+    const mensajes = [];
+    const { catalogo, borrados } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [],
+        ciudadesEnBase: [{ id: AMBITO, nombre: 'Montevideo', bbox_oeste: null, bbox_sur: null, bbox_este: null, bbox_norte: null }],
+        ahora: '2026-10-08T12:00:00Z',
+        log: (m) => mensajes.push(m),
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['ciudad-montevideo'], 'el paquete sigue');
+    assert.deepEqual(borrados, []);
+    assert.ok(mensajes.some((m) => m.startsWith('aviso: ciudad-montevideo sigue en el catálogo') && m.includes('ya no tiene rectángulo')), mensajes.join('\n'));
+
+    const otros = [];
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [], ciudadesEnBase: [], ahora: '2026-10-09T12:00:00Z', log: (m) => otros.push(m) }));
+    assert.ok(otros.some((m) => m.includes('ya no está en public.ciudad o está dada de baja')), otros.join('\n'));
   }));
 
 test('publica el estilo con sus glyphs y sprites, cada uno con su tipo de contenido', () =>

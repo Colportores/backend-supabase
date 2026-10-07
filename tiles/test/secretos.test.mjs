@@ -41,6 +41,7 @@ for (const [nombre, args, estado] of [
   ['publicar (el bucket rechaza la clave)', ['publicar', '--solo', 'estilo'], 401],
   ['publicar (la lectura de public.ciudad falla)', ['publicar', '--solo', 'ciudades', '--ciudad', 'montevideo'], 403],
   ['publicar con simulacro', ['publicar', '--solo', 'ciudades', '--dry-run'], 403],
+  ['publicar zonas con simulacro (la lectura de public.zona falla)', ['publicar', '--solo', 'zonas', '--dry-run'], 403],
 ]) {
   test(`${nombre}: la clave no sale en la consola aunque el servidor repita los encabezados`, async () => {
     const servidor = await servidorQueRepiteLosEncabezados(estado);
