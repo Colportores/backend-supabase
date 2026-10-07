@@ -84,8 +84,10 @@ values ('Uruguay', 'UY');
 ### 2. `ciudad`
 
 ```sql
-insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, zoom_inicial)
-values ('<nombre real>', '<id de pais>', <lat>, <lon>, 13);
+insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, zoom_inicial,
+                           bbox_oeste, bbox_sur, bbox_este, bbox_norte)
+values ('<nombre real>', '<id de pais>', <lat>, <lon>, 13,
+        <oeste>, <sur>, <este>, <norte>);
 ```
 
 - `pais_id` tiene que ser el `id` real de la fila de `pais` (buscalo con
@@ -95,6 +97,81 @@ values ('<nombre real>', '<id de pais>', <lat>, <lon>, 13);
   — igual cargá coordenadas reales, son el centro del mapa de esa ciudad.
 - `zoom_inicial` es opcional (default 13) pero si lo mandás tiene que estar
   entre 1 y 22.
+- **El rectángulo** (`bbox_oeste`, `bbox_sur`, `bbox_este`, `bbox_norte`; desde la
+  migración `0031`, decisión de Cristian del 06/10) es la parte del planeta que
+  se recorta para el mapa de la ciudad. Va en grados (WGS84) y **en este orden**:
+  oeste (longitud mínima), sur (latitud mínima), este (longitud máxima), norte
+  (latitud máxima). Ojo: Google Maps da las coordenadas como *latitud, longitud*,
+  al revés de este orden.
+  - **El publicador de mapas publica las ciudades que lo tienen.** Una ciudad sin
+    rectángulo no tiene mapa propio: el publicador la lista y la saltea, no
+    inventa uno. No hay ninguna lista de ciudades en el repo.
+  - Es opcional, pero **los cuatro vienen juntos o ninguno** (`ciudad_bbox_completo_check`),
+    cada longitud entre -180 y 180 y cada latitud entre -90 y 90
+    (`ciudad_bbox_rango_check`), con el oeste antes que el este y el sur antes que el
+    norte (`ciudad_bbox_orden_check`), y **el centro de la ciudad tiene que caer
+    adentro** (`ciudad_bbox_contiene_centro_check`: así un lat/lon cargado al revés no
+    pasa). Si algo no cierra, el `insert` falla con el nombre de esa restricción.
+  - Cuánto abarcar: la ciudad y los barrios de alrededor donde se trabaja. Cuanto
+    más grande, más pesa el mapa: el de Montevideo (el rectángulo de abajo) son ~11 MB.
+    Si un rectángulo pasa de 50 MB, el publicador baja el zoom y, si no alcanza, parte
+    la ciudad ([`docs/mapas-tiles.md`](mapas-tiles.md) § «Tamaño»).
+  - Para cambiarlo después, un solo `update` con los cuatro valores juntos
+    (el mapa se vuelve a cortar en la próxima publicación, y los teléfonos bajan el
+    rectángulo nuevo por el sync):
+    ```sql
+    update public.ciudad
+       set bbox_oeste = <oeste>, bbox_sur = <sur>, bbox_este = <este>, bbox_norte = <norte>
+     where id = '<id de ciudad>';
+    ```
+
+#### Montevideo, lista para pegar (la primera ciudad con mapa)
+
+Sirve en cualquier estado de la base y se puede correr más de una vez sin duplicar
+nada: si Montevideo ya está cargada le pone el rectángulo (solo si no tenía uno); si no
+está, la carga. No toca ninguna otra ciudad. Pegalo entero en el SQL Editor del proyecto
+(necesita que el país `UY` ya esté cargado, [§ 1](#1-pais-normalmente-ya-existe--v1-es-solo-uruguay)):
+
+```sql
+-- 1. Si Montevideo ya estaba (viva, de Uruguay) sin rectángulo, se lo ponemos.
+update public.ciudad c
+   set bbox_oeste = -56.433, bbox_sur = -34.945, bbox_este = -55.948, bbox_norte = -34.701
+  from public.pais p
+ where p.id = c.pais_id and p.iso_code = 'UY'
+   and c.nombre = 'Montevideo' and c.deleted_at is null
+   and c.bbox_oeste is null;
+
+-- 2. Si no había ninguna Montevideo viva, se carga (con el mismo rectángulo).
+insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, zoom_inicial,
+                           bbox_oeste, bbox_sur, bbox_este, bbox_norte)
+select 'Montevideo', p.id, -34.9011, -56.1645, 13,
+       -56.433, -34.945, -55.948, -34.701
+  from public.pais p
+ where p.iso_code = 'UY'
+   and not exists (select 1 from public.ciudad c
+                    where c.pais_id = p.id and c.nombre = 'Montevideo' and c.deleted_at is null);
+
+-- 3. Revisá: tiene que salir UNA fila, con los cuatro valores cargados.
+select c.id, c.nombre, p.iso_code, c.lat_centro, c.lon_centro,
+       c.bbox_oeste, c.bbox_sur, c.bbox_este, c.bbox_norte
+  from public.ciudad c join public.pais p on p.id = c.pais_id
+ where p.iso_code = 'UY' and c.nombre = 'Montevideo' and c.deleted_at is null;
+```
+
+- **Este bloque no lleva `begin`/`commit` a propósito**: cada sentencia es atómica, el bloque se
+  puede repetir sin duplicar nada y el SQL Editor corre todo junto, así que la revisión
+  (el `select` final) se mira después y, si algo no cierra, se corrige repitiendo el bloque.
+- Qué tiene que salir: **una sola fila** con los cuatro `bbox_*` cargados. Si salen cero filas,
+  falta el país `UY` (cargalo con la [§ 1](#1-pais-normalmente-ya-existe--v1-es-solo-uruguay) y
+  repetí el bloque). Si salen dos, había dos Montevideo vivas: no sigas, avisá a quien administra
+  la base (el publicador se detiene cuando dos ciudades tienen el mismo nombre).
+
+- El centro (`-34.9011, -56.1645`) y el rectángulo son los de siempre del mapa de
+  Montevideo; el `update` no cambia el centro de una Montevideo que ya estaba cargada
+  (y si ese centro cae fuera del rectángulo, el esquema lo rechaza y no se guarda nada).
+- Desde la migración `0031`, una base que ya tenía exactamente una Montevideo viva y
+  sin rectángulo la recibe sola al aplicarla: en ese caso el bloque no hace nada (y la
+  revisión del paso 3 muestra el rectángulo igual).
 
 ### 3. `campania`
 
@@ -224,3 +301,8 @@ values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_
 campañas, catálogo y precios (por ciudad de la campaña) para levantar el entorno local sin cargar nada a
 mano. Se aplica con `scripts/db-seed.sh` (ver README §Desarrollo) — no se usa
 en `staging`/`production`.
+
+La excepción es **Montevideo**: el seed la carga con su centro y su rectángulo reales (los mismos
+del bloque de [§ 2](#montevideo-lista-para-pegar-la-primera-ciudad-con-mapa)), para que el publicador
+de mapas tenga algo que publicar contra una base local. Las dos «Ciudad Ejemplo» no traen rectángulo,
+y el publicador las lista como ciudades sin mapa.

@@ -86,7 +86,7 @@ scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / 
 ## CI/CD
 
 - `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
-- `tiles.yml` (manual, `workflow_dispatch`): publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo) en el bucket público `mapas` del environment y lo verifica. No lleva secretos nuevos. [`docs/mapas-tiles.md`](./docs/mapas-tiles.md). El job **tiles** de `ci.yml` corre las pruebas del publicador (`npm ci && npm test` en `tiles/`).
+- `tiles.yml` (a mano, `workflow_dispatch`, y cada hora para los mapas de las zonas, solo en los environments con su variable `MAPAS_ZONAS_<ENV>` en `true`): publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo; las ciudades salen de `public.ciudad`) en el bucket público `mapas` del environment y lo verifica. No lleva secretos nuevos. [`docs/mapas-tiles.md`](./docs/mapas-tiles.md). El job **tiles** de `ci.yml` corre las pruebas del publicador (`npm ci && npm test` en `tiles/`).
 - `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment*. **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
 ### Cuándo aplica cada rama

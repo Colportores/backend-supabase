@@ -5,9 +5,14 @@ de Supabase Storage**, un solo estilo MapLibre compartido y un catálogo que dic
 de mapas aparte, sin claves de API y sin login para leer. Decisión de Cristian del 06/10
 ([comentario en backend-supabase#42](https://github.com/Colportores/backend-supabase/issues/42#issuecomment-6018730476)).
 
-Esta guía cubre la **etapa 1**: bucket, CORS y Range, estilo, glyphs y sprites, catálogo y una ciudad
-(Montevideo) medida y publicable. Las demás ciudades y los paquetes por zona son la etapa 2
-([§ Qué falta](#qué-falta-etapa-2)). Departamento y Uruguay quedan fuera: backend-supabase#68, con el plan Pro.
+Esta guía cubre las dos etapas de backend-supabase#42:
+
+- **Etapa 1**: bucket, CORS y Range, estilo, glyphs y sprites, catálogo y la primera ciudad (Montevideo).
+- **Etapa 2**: **las ciudades salen de `public.ciudad`** (cada una guarda su rectángulo; el publicador publica las que
+  lo tienen, sin ninguna lista en el repo) y **los paquetes de las zonas** se publican **fuera del catálogo público**,
+  cada uno con su enlace en `public.zona.paquete_mapa` ([§ Mapas de las zonas](#mapas-de-las-zonas)).
+
+Departamento y Uruguay quedan fuera: backend-supabase#68, con el plan Pro.
 
 ## Qué hay en el bucket
 
@@ -21,13 +26,15 @@ mapas/
 │   ├── colportores.json                  ← EL estilo MapLibre (app y panel)
 │   ├── glyphs/NotoSans-Regular/0-255.pbf …   ← tipografías
 │   └── sprites/grayscale{,@2x}.{json,png}    ← íconos
-└── paquetes/
-    ├── ciudad/montevideo.<sha12>.pmtiles       ← una ciudad entera
-    ├── ciudad/<slug>.parte1de2.<sha12>.pmtiles ← si no entra en 50 MB: dos archivos
-    └── zona/<id-de-zona>.<sha12>.pmtiles       ← (etapa 2) una zona
+├── paquetes/
+│   ├── ciudad/montevideo.<sha12>.pmtiles       ← una ciudad entera
+│   └── ciudad/<slug>.parte1de2.<sha12>.pmtiles ← si no entra en 50 MB: dos archivos
+└── zonas/
+    └── <32 caracteres al azar>.pmtiles         ← el mapa de UNA zona; NO está en el catálogo
 ```
 
-El nombre de un paquete lleva los primeros 12 caracteres de su SHA-256: **un archivo publicado nunca se pisa**.
+El nombre de un paquete de ciudad lleva los primeros 12 caracteres de su SHA-256: **un archivo publicado nunca se pisa**
+(el de una zona es un nombre al azar, nuevo en cada versión: lo mismo).
 Un mapa nuevo es un archivo nuevo, y el catálogo —que se sube al final— pasa a apuntarle. El archivo viejo
 no se borra enseguida: queda en el bucket **7 días contados desde que el catálogo dejó de nombrarlo**
 ([§ Qué se borra y cuándo](#qué-se-borra-y-cuándo)). Por eso un teléfono que estaba bajando el mapa viejo, o que
@@ -40,9 +47,9 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    que trae (`estilo.url`, `partes[].archivo`) son **relativas a la URL del catálogo**. El campo `retirados` es
    del publicador (cuenta los 7 días de gracia): la app y el panel lo ignoran.
 2. **Elegir el paquete de la ciudad por `ambito_id`**: es el id de la ciudad en `public.ciudad`, el mismo que la
-   app ya tiene en su réplica local (`nivel: "ciudad"`). **Siempre viene**: el publicador lo lee de la base de ese
-   proyecto (por nombre, en Uruguay) y se detiene sin subir nada si la ciudad no está o si hay más de una con ese
-   nombre. `id` (`ciudad-montevideo`) es solo el identificador del paquete dentro del catálogo.
+   app ya tiene en su réplica local (`nivel: "ciudad"`). **Siempre viene**: el publicador lo lee de la fila de la
+   ciudad (el paquete existe porque la ciudad tiene su rectángulo cargado). `id` (`ciudad-montevideo`, su nombre
+   sin tildes y con guiones) es solo el identificador del paquete dentro del catálogo.
 3. **Descargar** cada `partes[].archivo` y comprobar `tamano_bytes` y `sha256`. La descarga se puede reanudar con
    `Range`. Un paquete cabe en el plan Free, así que cada parte pesa menos de 50 MB.
 4. **El estilo** es uno solo: `estilo/colportores.json`. Su fuente de tiles viene con un valor a completar:
@@ -64,6 +71,13 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    que la app guardó, vuelve a pedir el estilo (~240 KB); si es igual, no lo pide. Cambia cuando se publica la
    paleta nueva (`publicar --solo estilo`, que sube el estilo **y el catálogo**).
 6. **Atribución visible**: «© OpenStreetMap» (ODbL). Viene en `sources.protomaps.attribution` y en `fuente` del catálogo.
+7. **El mapa de la zona del colportor** no está en el catálogo: el enlace viene **con la zona**, en su columna
+   `paquete_mapa`, por el sync (el pull serializa todas las columnas de `zona`; el contrato lo documenta un PR de
+   docs aparte, [§ Qué falta](#qué-falta)). Se descarga `<SUPABASE_URL>/storage/v1/object/public/mapas/<archivo>`,
+   se comprueba `tamano_bytes` y `sha256`, y se reanuda con `Range`, como un paquete de ciudad. Un mapa nuevo es un
+   `sha256` distinto. `anteriores` es del publicador (cuenta los 7 días de gracia): la app lo ignora. Si
+   `paquete_mapa` es `null` (todavía no se publicó, o la zona ya no está activa), la zona se ve con el paquete de su
+   ciudad. [§ Mapas de las zonas](#mapas-de-las-zonas).
 
 El panel (navegador) lee lo mismo directo del bucket: por eso el CORS ([§ CORS y Range](#cors-y-range)).
 
@@ -107,8 +121,8 @@ El panel (navegador) lee lo mismo directo del bucket: por eso el CORS ([§ CORS 
 | `version` (raíz) | versión del **formato** del catálogo (hoy 1); un cambio incompatible la sube |
 | `generado_en` | cuándo se publicó el catálogo (ISO 8601, UTC) |
 | `estilo.version` | SHA-256 del `estilo/colportores.json` publicado; si cambia, la app vuelve a pedir el estilo |
-| `paquetes[].nivel` | `zona` < `ciudad` < `departamento` < `uruguay` (como `NivelCobertura` de la app) |
-| `paquetes[].ambito_id` | id de la ciudad (`public.ciudad`) o de la zona en la base; **obligatorio en las ciudades**, la app elige el paquete por él |
+| `paquetes[].nivel` | `ciudad` < `departamento` < `uruguay` (como `NivelCobertura` de la app). **`zona` no va**: el validador lo rechaza ([§ Privacidad](#privacidad)) |
+| `paquetes[].ambito_id` | id de la ciudad en `public.ciudad`; **obligatorio en las ciudades**, la app elige el paquete por él |
 | `paquetes[].zoom_min/zoom_max` | zooms que trae el archivo; más allá, MapLibre amplía el último |
 | `paquetes[].tamano_bytes` | suma de las partes |
 | `paquetes[].version` | qué cambió: SHA-256 de la parte única, o de los SHA-256 de las partes unidos con `\n` |
@@ -116,13 +130,6 @@ El panel (navegador) lee lo mismo directo del bucket: por eso el CORS ([§ CORS 
 | `fuente_build` | build de Protomaps del que se cortó (`AAAAMMDD`) |
 | `actualizado_en` | cuándo se cortó ese paquete |
 | `retirados[]` | **solo para el publicador.** Archivos que el catálogo dejó de nombrar y todavía no se borraron: `archivo` y `desde` (cuándo salieron). De ahí se cuentan los 7 días de gracia. La app y el panel lo ignoran |
-
-**Privacidad**: el catálogo es público. Los paquetes de zona **no llevan `nombre`, `bbox` ni `partes[].bbox`**; la app
-ya conoce sus zonas por la réplica local y le alcanza con el id. Pero eso **no** esconde dónde trabaja cada equipo:
-el archivo `.pmtiles` de una zona, que está en el bucket público, lleva su rectángulo en el encabezado y en los
-tiles que trae, y cualquiera que lo baje lo ve. **Por eso no se publica ningún paquete de zona** hasta que Cristian
-conteste la pregunta «Zona pública» (quién puede ver dónde están las zonas; pendiente `backend-42-zona-publica`).
-Las ciudades no tienen este problema: son públicas.
 
 Lo valida `tiles/src/catalogo.mjs` (`validar`) antes de subirlo: versión, ids únicos, rutas relativas, tamaños,
 SHA-256, que `version` coincida con las partes, que el estilo traiga su `estilo.version` (un SHA-256), que cada
@@ -133,6 +140,23 @@ El publicador **lee el catálogo anterior y pregunta si un paquete ya está por 
 (`/storage/v1/object/authenticated/…`, con la clave de servicio), no por la URL pública: así decide con lo que
 hay en el bucket y no con una copia que el CDN guardó hasta 60 s (el catálogo se sirve con `max-age=60`). Sin
 clave (`--dry-run`) lee por la URL pública.
+
+### Privacidad
+
+El catálogo y el bucket son públicos, y el archivo `.pmtiles` de una zona lleva **su rectángulo en el encabezado y
+en los tiles**: quien lo baje ve dónde trabaja ese equipo. Decisión de Cristian del 06/10 («Zona pública»):
+
+- **los paquetes de zona no están en el catálogo** (`validar` rechaza uno), y sus archivos viven bajo `zonas/` con
+  un nombre de **128 bits al azar** que no deriva del id de la zona ni de su contenido;
+- el bucket **no se puede listar** sin la clave de servicio (no hay ninguna política sobre `storage.objects`), así
+  que el nombre no figura en ningún lado público;
+- el enlace está en `public.zona.paquete_mapa`, y le llega **solo al colportor que ve esa zona** (la política de
+  lectura de `zona` y el sync);
+- el publicador **no imprime ese nombre** en ningún mensaje (la consola de GitHub Actions queda como la de cualquier
+  otra corrida).
+
+Lo que esto da es «no adivinable y sin listado», no un secreto fuerte: quien tenga el enlace lo baja, y el enlace
+está en el teléfono de cada colportor de la zona. Las ciudades no tienen el problema: son públicas.
 
 ## El estilo
 
@@ -204,7 +228,11 @@ de Supabase y no se resuelve desde este repo.
   `storage.objects`, salvo el que hace la propia API de Storage. Una política `for delete` demasiado abierta solo
   sería explotable por la API; aun así pgTAP 0036 activa `storage.allow_delete_query` para que el test vigile las
   políticas y no dependa de ese trigger.
-- Nada de lo publicado es sensible: mapa de OpenStreetMap, una paleta y los ids de las zonas.
+- Lo único sensible es dónde trabaja cada equipo, y por eso los mapas de las zonas van fuera del catálogo, con
+  nombre al azar y sin listado ([§ Privacidad](#privacidad)): lo vigilan `tiles/test/zonas.test.mjs` (el nombre no sale
+  en el log), `tiles/test/catalogo.test.mjs` (el catálogo rechaza una zona) y `tiles/prueba-storage/zona-publicada.mjs`
+  (la clave anónima no lista `zonas/` ni sube a esa carpeta). Todo lo demás es público: un mapa de OpenStreetMap, una
+  paleta y los ids de las ciudades.
 - El bucket solo acepta `application/json`, `application/octet-stream`, `application/x-protobuf`, `image/png`
   y `text/plain`, y archivos de hasta 50 MiB.
 
@@ -214,33 +242,85 @@ El código está en [`tiles/`](../tiles) (Node 22; las dependencias son `@protom
 `@maplibre/maplibre-gl-style-spec`). Usa el CLI de Protomaps
 [`go-pmtiles`](https://github.com/protomaps/go-pmtiles) **1.31.2** (se baja solo, con SHA-256 verificado), que lee por
 `Range` solo la zona pedida de `https://build.protomaps.com/AAAAMMDD.pmtiles` (el planeta entero pesa ~138 GB: no se
-descarga). Cada ciudad se corta con su `bbox` de `tiles/ciudades.json`.
+descarga).
+
+**Qué se publica lo dice la base, no el repo.** Cada ciudad guarda su rectángulo en `public.ciudad`
+(`bbox_oeste`, `bbox_sur`, `bbox_este`, `bbox_norte`, migración 0031; se carga como dice
+[`guia-carga-manual.md` § 2](guia-carga-manual.md#2-ciudad)) y el publicador publica **las ciudades que lo tienen**. Una
+ciudad sin rectángulo no tiene mapa propio: el publicador la lista («ciudades sin rectángulo …») y sigue. Cada zona
+se corta por su polígono (`public.zona.poligono_geojson`).
 
 ```
 node src/cli.mjs estilo     [--url-base URL] [--salida DIR]      # solo escribe el estilo en un archivo
-node src/cli.mjs publicar   [--solo estilo|ciudades] [--ciudad SLUG] [--build AAAAMMDD] [--dry-run]
+node src/cli.mjs publicar   [--solo estilo|ciudades|zonas] [--ciudad SLUG] [--zona ID] [--regenerar]
+                            [--build AAAAMMDD] [--dry-run]
 node src/cli.mjs verificar  [--url URL]
 ```
 
-`publicar`, en este orden, para que el catálogo **nunca apunte a algo que todavía no está**:
-1. lee de `public.ciudad` (PostgREST, con la clave de servicio) el id de cada ciudad a publicar. Si una no está, o
-   hay más de una con ese nombre, **se detiene antes de subir nada** y dice cuál es: nunca publica un `ambito_id`
-   nulo en una ciudad;
+`publicar` (sin `--solo`: todo), en este orden, para que el catálogo **nunca apunte a algo que todavía no está**:
+1. lee de `public.ciudad` (PostgREST, con la clave de servicio) las ciudades de Uruguay con rectángulo. Si dos dan el
+   mismo nombre de paquete, o una tiene un nombre sin letras, **se detiene antes de subir nada** y dice cuáles;
 2. crea o ajusta el bucket `mapas` (público, 50 MiB, tipos permitidos);
 3. sube el estilo, glyphs y sprites;
 4. corta cada ciudad según la política de tamaño y sube sus partes **solo si ese SHA-256 todavía no está**;
 5. valida y sube el catálogo, **último**; los archivos que el catálogo nuevo ya no nombra quedan anotados en
    `retirados`, con la fecha de esta corrida;
-6. borra los archivos retirados hace más de **7 días** ([§ Qué se borra y cuándo](#qué-se-borra-y-cuándo)).
+6. borra los archivos retirados hace más de **7 días** ([§ Qué se borra y cuándo](#qué-se-borra-y-cuándo));
+7. **las zonas**, después de las ciudades ([§ Mapas de las zonas](#mapas-de-las-zonas)): una zona con falla no deshace
+   lo ya publicado y la corrida termina con error al final.
 
 Repetir `publicar` con los mismos datos no sube nada nuevo («sin cambios»). Si los mapas no cambiaron pero sí
-el nombre de la ciudad, su `bbox` o su `ambito_id`, el paquete conserva sus archivos y su `version` y el catálogo
-se actualiza («datos del catálogo actualizados»). `--dry-run` hace todo menos escribir; sin clave de servicio no
-puede leer la base, lo avisa y sigue sin `ambito_id` (solo el simulacro lo permite).
+el nombre de la ciudad, su rectángulo o su `ambito_id`, el paquete conserva sus archivos y su `version` y el catálogo
+se actualiza («datos del catálogo actualizados»). Si una ciudad **cambia de nombre**, su paquete nuevo reemplaza al
+viejo en el catálogo (el mismo `ambito_id` no puede estar en dos) y el archivo viejo se retira con su gracia. Una
+ciudad ya publicada que **perdió su rectángulo o se dio de baja se conserva** y el publicador avisa («aviso: … sigue
+en el catálogo, pero …»): retirar un mapa a los teléfonos es una decisión de producto, no un efecto de editar una fila.
+`--dry-run` hace todo menos escribir; sin clave de servicio no puede leer la base, lo avisa y no simula ciudades ni zonas.
 
-`--solo estilo` sube el estilo **y también el catálogo**, con la `estilo.version` nueva y los paquetes como
-estaban: así los teléfonos se enteran de que el estilo cambió. `--solo ciudades` exige que el catálogo ya tenga
-`estilo.version` (o sea, que el estilo ya se haya publicado): la primera vez, `publicar` sin `--solo`.
+`--ciudad <slug>` publica solo esa ciudad (el slug es su nombre en minúsculas, sin tildes y con guiones: `montevideo`,
+`san-jose`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
+también el catálogo**, con la `estilo.version` nueva y los paquetes como estaban: así los teléfonos se enteran de que el
+estilo cambió. `--solo ciudades` exige que el catálogo ya tenga `estilo.version` (o sea, que el estilo ya se haya
+publicado). `--solo zonas` solo hace lo de las zonas.
+
+### Mapas de las zonas
+
+Cada zona activa tiene **su** mapa: el polígono de la zona, a zoom 15 (14 si no entra en 50 MB), cortado del mismo
+build de Protomaps. El publicador (`tiles/src/zonas.mjs`) lee todas las zonas de `public.zona` y, por cada una:
+
+- **activa** = viva, de una campaña y una ciudad de campaña vivas, y la campaña **no terminó hace más de 15 días**
+  (las escrituras tienen 15 días de gracia, migración 0020; una campaña sin fecha de fin no termina);
+- **cuándo se vuelve a cortar**: cuando cambia su polígono (`region_sha256`), cuando no tiene paquete, o cuando el
+  archivo que nombra ya no está en el bucket. **No** cuando Protomaps saca un build nuevo (a diario): igual que con las
+  ciudades, un mapa nuevo solo porque cambió la fecha de la fuente le haría bajar el mapa de nuevo a cada teléfono.
+  `--regenerar` (o la casilla del workflow) fuerza el corte;
+- **el orden**: corta, sube a `zonas/<al azar>.pmtiles` y **recién después** guarda el enlace en la zona (el teléfono
+  nunca recibe un enlace a algo que todavía no está). La escritura es optimista (`sync_version`): si un coordinador
+  editó la zona mientras se cortaba, no se la pisa y queda para la próxima corrida («en conflicto»);
+- **el enlace**, `public.zona.paquete_mapa`:
+
+  ```json
+  { "archivo": "zonas/3f9c0a…e1.pmtiles", "tamano_bytes": 4812345, "sha256": "…", "zoom_max": 15,
+    "region_sha256": "…", "actualizado_en": "2026-10-08T12:00:00Z",
+    "anteriores": [ { "archivo": "zonas/…", "desde": "2026-10-01T12:00:00Z" } ] }
+  ```
+
+  Al guardarse sube `sync_version` de la zona, así que el teléfono lo baja por **delta**, sin esperar un sync completo;
+- **el mapa anterior** pasa a `anteriores`, con la fecha, y se borra **a los 7 días** (un teléfono que lo estaba
+  bajando lo termina; la gracia es la del catálogo). Si la zona **deja de estar activa** (se da de baja o termina su
+  campaña + 15 días), su archivo pasa a `anteriores` y `paquete_mapa` queda sin archivo vigente;
+- **huérfanos**: un archivo de `zonas/` que ninguna zona nombra y se subió hace más de 7 días se borra (solo si el
+  nombre es de los que pone el publicador, y nunca si la lectura de zonas vino vacía);
+- **una zona que no entra en 50 MB** ni a zoom 14 **falla** (no se parte en dos como una ciudad: una zona es un
+  barrio) y la corrida sigue con las demás.
+
+Qué dice cada resultado en el log: `publicadas`, `sin cambios`, `retiradas`, `en conflicto`, `con falla`. El log no
+lleva nunca el nombre del archivo ([§ Privacidad](#privacidad)).
+
+Demora: hasta una hora desde que el coordinador guarda la zona hasta que el mapa nuevo está en el bucket (el
+`schedule` de [§ Con GitHub Actions](#con-github-actions)). Mientras tanto el colportor no se queda sin mapa: el paquete
+de su ciudad cubre su zona. La alternativa más rápida (un webhook de la base, con `pg_net`, que dispare el workflow al
+guardar una zona) **implica un token de GitHub en Vault**: se descartó para no sumar un secreto.
 
 ### Qué se borra y cuándo
 
@@ -264,10 +344,19 @@ en la misma corrida del 06/11, sin gracia alguna; lo reproduce y lo vigila la pr
 
 ### Con GitHub Actions
 
-Workflow **Mapas** (`.github/workflows/tiles.yml`, `workflow_dispatch`): elegir environment (`develop`,
-`staging`, `production`), qué publicar, y opcionalmente una ciudad y un build. Corre las pruebas, publica y
-después `verificar`. Un solo publicador por environment a la vez (`concurrency`), porque todos reescriben el
-mismo `catalogo.json`.
+Workflow **Mapas** (`.github/workflows/tiles.yml`). Dos disparos:
+
+- **A mano** (`workflow_dispatch`): elegir environment (`develop`, `staging`, `production`), qué publicar (`todo`,
+  `estilo`, `ciudades`, `zonas`), y opcionalmente una ciudad, una zona, un build, forzar el corte de las zonas
+  (`regenerar`) o simular (`simulacro`). Corre las pruebas, publica y después `verificar`.
+- **Cada hora** (`schedule`, minuto 17): `publicar --solo zonas`, para que una zona nueva o movida tenga su mapa en
+  la hora siguiente, sin que nadie lo pida. **Una corrida programada no tiene quién elija el environment**: publica
+  solo en los que tienen su variable de repo en `true` (Settings → Variables → Actions): `MAPAS_ZONAS_DEVELOP`,
+  `MAPAS_ZONAS_STAGING`, `MAPAS_ZONAS_PRODUCTION`, como `DEPLOY_DEVELOP` en `deploy.yml`. Sin la variable, esa corrida
+  no publica en ese environment (hoy ninguna está puesta: el `schedule` no hace nada hasta que Cristian la cree).
+
+Un solo publicador por environment a la vez (`concurrency`): todos reescriben el mismo `catalogo.json` y las mismas
+zonas, y una corrida programada que llega con otra en curso espera su turno.
 
 No pide secretos nuevos: usa `SUPABASE_PROJECT_ID` (de ahí sale `https://<id>.supabase.co`) y
 `SUPABASE_ACCESS_TOKEN`, los de `deploy.yml`, y con el token el CLI de Supabase pide la clave de servicio, que
@@ -276,27 +365,29 @@ environment define `SUPABASE_SERVICE_ROLE_KEY` o `SUPABASE_URL` (por ejemplo, un
 esos. Los secretos llegan solo al paso «Publicar»; `npm ci`, `npm test` y la verificación no los ven (la
 verificación solo recibe la dirección del proyecto, que no es secreta).
 
-Como cualquier `workflow_dispatch`, aparece en Actions cuando el archivo está en la rama por defecto
-(`production`). Hasta entonces: a mano.
-
-**Etapa 2:** cuando el workflow tenga un `schedule` (cada hora, para los paquetes de zona), correrá desde
-`production`, y ahí no hay quién elija el environment. Cada corrida tiene que decir **a qué environment publica**:
-una variable de repo por environment (como `DEPLOY_DEVELOP`) que lo encienda; sin ella, esa corrida no publica en
-ese environment. Hoy el workflow es solo manual.
+Como cualquier `workflow_dispatch` o `schedule`, corre desde el archivo de la rama por defecto (`production`): hasta
+que esto llegue ahí, no aparece en Actions ni corre solo. Hasta entonces: a mano, desde una máquina.
 
 ### Publicar a mano
 
 Es la primera publicación (decisión del 06/10): la hace Cristian a mano el jueves 08/10, desde PowerShell, en un
 checkout de `develop`. Necesita `SUPABASE_URL` y la clave de servicio (`SUPABASE_SERVICE_ROLE_KEY`, de Project
-Settings → API). **Nunca** a un archivo del repo, ni escrita en el comando, ni en el historial de la consola: son
-tres líneas.
+Settings → API). **Nunca** a un archivo del repo, ni escrita en el comando, ni en el historial de la consola.
+
+**Paso 0, antes de nada: Montevideo con su rectángulo en `public.ciudad` del proyecto de la demo.** Con la migración
+0031 ya aplicada ([§ Antes de publicar](#antes-de-publicar)), pegá en el SQL Editor el bloque
+[«Montevideo, lista para pegar»](guia-carga-manual.md#montevideo-lista-para-pegar-la-primera-ciudad-con-mapa) de la guía
+de carga manual. Sirve en cualquier estado de la base y se puede repetir sin duplicar nada. Tiene que terminar mostrando
+**una fila** con los cuatro valores del rectángulo.
+
+**Paso 1: el estilo y las ciudades.** Son tres líneas de PowerShell:
 
 ```powershell
 # 1. Con la clave de servicio copiada al portapapeles:
 $env:SUPABASE_SERVICE_ROLE_KEY = Get-Clipboard
 
 # 2. El comando de Docker, con -e SUPABASE_SERVICE_ROLE_KEY SIN valor (Docker toma el de la sesión):
-docker run --rm -v "${PWD}/tiles:/app" -w /app -e SUPABASE_URL=https://<proyecto>.supabase.co -e SUPABASE_SERVICE_ROLE_KEY node:22-bookworm sh -c "npm ci && node src/cli.mjs publicar && node src/cli.mjs verificar"
+docker run --rm -v "${PWD}/tiles:/app" -w /app -e SUPABASE_URL=https://<proyecto>.supabase.co -e SUPABASE_SERVICE_ROLE_KEY node:22-bookworm sh -c "npm ci && node src/cli.mjs publicar --solo estilo && node src/cli.mjs publicar --solo ciudades && node src/cli.mjs verificar"
 
 # 3. Al terminar, que la clave no quede en la sesión:
 Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
@@ -304,11 +395,23 @@ Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 
 (`node:22-bookworm` y no `-slim`: `pmtiles` necesita los certificados de la imagen completa.)
 
-Antes de publicar:
-- el PR #73 mergeado (con el período de gracia contado desde el retiro y el `ambito_id` leído de la base);
-- **Montevideo cargada en `public.ciudad` del proyecto de la demo**, y la campaña de la demo con Montevideo (los
-  seeds traen ciudades ficticias): sin ella el publicador se detiene sin subir nada;
-- la migración 0029 en el proyecto (`db push`), o el publicador crea el bucket solo.
+Tiene que terminar con «Todo bien» (el `verificar`). Si dice **«ciudades sin rectángulo: Montevideo»** o «no hay
+ciudades con rectángulo», faltó el paso 0 o se cargó en otro proyecto. Si se detiene con «dos ciudades … el mismo
+paquete», hay dos Montevideo vivas: dejá una.
+
+**Paso 2 (aparte; no hace falta para el Hito 1): las zonas.** Las mismas tres líneas, con esto dentro del `sh -c`:
+`npm ci && node src/cli.mjs publicar --solo zonas`. Publica el mapa de cada zona activa y guarda su enlace en la zona.
+Va aparte para que una zona con problemas nunca tape el resultado de las ciudades; el `schedule`
+([§ Con GitHub Actions](#con-github-actions)) lo hace solo cuando esté prendido.
+
+#### Antes de publicar
+
+- la **migración 0031** en el proyecto (`public.ciudad` con `bbox_*` y `public.zona` con `paquete_mapa`): la aplica el
+  deploy de `develop` o `supabase db push`. Sin ella el publicador falla al leer `public.ciudad`. Si la base ya tenía
+  **una sola** Montevideo viva y sin rectángulo, la migración se lo pone sola;
+- el paso 0 (Montevideo con su rectángulo) y, para las zonas, la campaña de la demo con sus ciudades y zonas (los seeds
+  traen ciudades ficticias, sin rectángulo: no se publican);
+- la migración 0029 (el bucket), con `db push`, o el publicador lo crea solo.
 
 Después, el `verificar` del mismo comando confirma CORS, `Range` y el *preflight* contra el proyecto real, que es
 lo que no se pudo probar sin credenciales. Más adelante, el workflow «Mapas», cuando llegue a `production`.
@@ -324,35 +427,18 @@ Un «aviso» no es un error: hoy es que el gateway no expone `Content-Range` al 
 |---|---|---|
 | un build nuevo de Protomaps (diario) | **nada** por defecto. Re-cortar cada vez le haría bajar a todos ~11 MB de mapa casi idéntico. Se publica a mano cuando el mapa de OSM cambió lo que importa (calles nuevas, un barrio) | un `version` nuevo en el paquete → «hay actualización» |
 | la paleta | editar `tiles/paleta.json`, probar, y publicar con `--solo estilo` (sube el estilo y el catálogo) | un `estilo.version` nuevo → la app vuelve a pedir el estilo |
-| una ciudad nueva | que exista en `public.ciudad`, agregarla a `tiles/ciudades.json` (`slug`, `nombre`, `bbox`) y publicar con `--ciudad <slug>` ([§ Qué falta](#qué-falta-etapa-2): dónde se guarda su `bbox` está pendiente) | una entrada nueva en el catálogo |
+| una ciudad nueva | cargarla en `public.ciudad` **con su rectángulo** ([guía de carga manual § 2](guia-carga-manual.md#2-ciudad)) y publicar (`publicar --solo ciudades`). No se toca ningún archivo del repo | una entrada nueva en el catálogo |
+| el rectángulo de una ciudad | `UPDATE` de los cuatro `bbox_*` a la vez y publicar: sale un mapa nuevo | un `version` nuevo en el paquete |
 | una ciudad que no entra en 50 MB | nada: la política baja el zoom o la parte en dos | `partes` con dos archivos |
-| quitar una ciudad | sacarla de `ciudades.json` y del catálogo (a mano: `fusionar` con `quitar`); sus archivos se borran a los 7 días de haber salido del catálogo | desaparece del catálogo |
+| quitar una ciudad | **no se quita sola** (ni al darla de baja ni al sacarle el rectángulo: el publicador avisa). Hay que sacarla del catálogo a propósito (`fusionar` con `quitar`); sus archivos se borran a los 7 días de haber salido | desaparece del catálogo |
+| una zona nueva, o movida | nada: el `schedule` ([§ Con GitHub Actions](#con-github-actions)) o `publicar --solo zonas` | `paquete_mapa` nuevo en la zona, por delta |
+| el mapa de una zona, aunque no se haya movido | `publicar --solo zonas --zona <id> --regenerar` | `paquete_mapa` con otro `sha256` |
 
 ### Cuando un coordinador edita una zona
 
-**Propuesta (sin proveedor nuevo; no está implementada: es la etapa 2).** Los paquetes de zona se regeneran
-a partir de lo que ya hay: la base de Supabase, el workflow de GitHub y el bucket.
-
-1. **Qué cambió**: el publicador lee las zonas de la base (PostgREST con la clave de servicio, la misma del
-   workflow) y calcula, de cada una, el SHA-256 de su geometría (`region_sha256`). El catálogo guarda el de cada
-   paquete de zona; **solo se regeneran las zonas cuyo hash difiere**, las que no están en el catálogo se crean y las
-   que ya no están en la base se sacan. No depende de relojes ni de que alguien avise.
-2. **Cuándo corre**: un `schedule` del mismo workflow (cada hora), detrás de una variable de repo —igual que
-   `DEPLOY_DEVELOP`— para apagarlo sin tocar código, más el disparo manual. El repo es público: los minutos de
-   Actions no se pagan. Una corrida sin cambios lee la base, compara hashes y termina sin cortar nada.
-3. **Qué corta**: el `bbox` del polígono más un margen, a zoom 15 (una zona pesa un puñado de MB), con la misma
-   política de tamaño, y lo publica como cualquier otro paquete (archivo nuevo, catálogo al final).
-4. **Qué ve la app**: el `version` de ese paquete cambia, así que `hayActualizacion` da verdadero y baja solo
-   esa zona. El catálogo no publica su nombre ni su `bbox`.
-
-**Decidido el 06/10** (opción del `schedule`, sin webhook ni token en Vault): lo anterior se implementa en la etapa 2,
-con dos condiciones: cada corrida dice a qué environment publica ([§ Con GitHub Actions](#con-github-actions)) y **no se
-publica ningún paquete de zona** hasta que Cristian conteste «Zona pública» ([§ Privacidad](#el-catálogo)). Mientras
-tanto el colportor no se queda sin mapa: el paquete de su ciudad cubre su zona.
-
-Demora: hasta una hora desde que el coordinador guarda hasta que el paquete nuevo está en el bucket.
-La alternativa más rápida (un webhook de la base, con `pg_net`, que dispare el workflow al guardar una zona) **implica
-un token de GitHub en Vault**: se descartó para no sumar un secreto.
+Si cambia el polígono (o crea la zona), el `region_sha256` guardado ya no coincide, y la próxima corrida del `schedule`
+vuelve a cortar esa zona y guarda su enlace nuevo ([§ Mapas de las zonas](#mapas-de-las-zonas)). La app ve la zona con su
+`paquete_mapa` nuevo en el siguiente delta y baja solo ese archivo.
 
 ## Probar contra un Storage real
 
@@ -365,13 +451,18 @@ bash tiles/prueba-storage/correr.sh
 ```
 
 Levanta la base de `compose.dev.yml`, el `storage-api` oficial, un PostgREST y un gateway que imita el CORS de
-Supabase; aplica las migraciones (la 0029 crea el bucket), corre pgTAP 0036 completo, carga Montevideo en
-`public.ciudad`, comprueba que **sin esa ciudad el publicador se detiene y no sube nada**, publica el estilo y
-Montevideo (recorte real, necesita red), comprueba que el `ambito_id` del catálogo es el de la base y que
-`estilo.version` es el SHA-256 del estilo publicado (`tiles/prueba-storage/ambito-del-catalogo.mjs`), corre
-`verificar`, comprueba que el publicador lee por la API autenticada (`tiles/prueba-storage/lectura-autenticada.mjs`),
-publica de nuevo (tiene que dar «sin cambios») y comprueba que con la clave anónima no se escribe. Con `SOLO_BASE=1` se detiene después de pgTAP 0036 (sin red ni recorte). Baja
-imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
+Supabase; aplica las migraciones (la 0029 crea el bucket), corre pgTAP 0036 completo, **carga Montevideo con el bloque
+de la guía de carga manual** (lo extrae de `docs/guia-carga-manual.md`, sin copia: el que pega Cristian) y lo repite,
+comprueba que **sin su rectángulo el publicador no publica nada ni sube nada**, publica el estilo y las ciudades con los
+mismos dos comandos de «Publicar a mano» (recorte real, necesita red), comprueba que el `ambito_id` del catálogo es el
+de la base y que `estilo.version` es el SHA-256 del estilo publicado (`tiles/prueba-storage/ambito-del-catalogo.mjs`),
+corre `verificar`, comprueba que el publicador lee por la API autenticada (`tiles/prueba-storage/lectura-autenticada.mjs`),
+publica de nuevo (tiene que dar «sin cambios») y comprueba que con la clave anónima no se escribe ni se lista, tampoco
+`zonas/`. Después **crea una zona** en una campaña vigente, publica su paquete (recorte real por su polígono),
+comprueba que el enlace quedó en `public.zona.paquete_mapa` con el mismo tamaño y SHA-256 del archivo del bucket, que el
+catálogo público no lo nombra y que la consola no imprimió su nombre (`tiles/prueba-storage/zona-publicada.mjs`), y que
+publicar las zonas otra vez no cambia nada (ni `sync_version`). Con `SOLO_BASE=1` se detiene después de pgTAP 0036 (sin
+red ni recorte). Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
 
 **CI no ejercita nada de esto.** Sus jobs usan un Postgres sin el servicio Storage: la 0029 y pgTAP 0036 se saltean
 (el job de migraciones las corre y las marca como salteadas) y el job **tiles** (`npm ci && npm test`) prueba el
@@ -380,28 +471,24 @@ publicador contra un Storage de mentira. Sumar un job con un Storage real a CI e
 migración que toque `storage.objects`**; hasta entonces, `correr.sh` se corre a mano cuando se toca la 0029, la 0036
 o el publicador.
 
-## Qué falta (etapa 2)
+## Qué falta
 
-- **Las demás ciudades** (lista y `bbox` en `tiles/ciudades.json`; hoy solo Montevideo), medidas una por una.
-- **Paquetes por zona** y su regeneración (propuesta arriba): leer las zonas, `region_sha256`, y sacar `partes[].bbox`
-  del catálogo público para ellas. **No se publican hasta la respuesta a «Zona pública»** (pendiente
-  `backend-42-zona-publica`): el archivo de una zona muestra su rectángulo a quien lo baje.
-- **Dónde se guarda el rectángulo (`bbox`) de cada ciudad.** Hoy está en `tiles/ciudades.json`, y solo el de
-  Montevideo; `public.ciudad` guarda el centro y el zoom inicial, no un rectángulo, y HU-ADM-005 dice que cada ciudad
-  lo trae. Hasta que Cristian conteste «Área ciudad» (pendiente `backend-42-area-ciudad`) no se suman ciudades ni
-  columnas.
+- **Las demás ciudades**: cargarlas en `public.ciudad` con su rectángulo (guía de carga manual § 2) y medir cuánto
+  pesa cada una; la política de tamaño se ocupa del resto.
+- **El contrato del sync**: `zona.paquete_mapa` (y `ciudad.bbox_*`) ya viajan en el pull, porque el pull serializa todas
+  las columnas, pero **no están en `docs-organizacion/contrato`**. Entran en un PR de docs aparte, que revisa Bruno
+  (decisión de Cristian): hasta entonces la app puede leerlas pero el contrato no las promete.
 - Que front-colportores-mobile#189 soporte paquetes de **varias partes** (una fuente por parte) si alguna ciudad lo
-  necesita.
+  necesita, y que baje el mapa de la zona desde `paquete_mapa` (el motor de sync es de otro issue).
+- Un mapa de zona que no entra en 50 MB no se parte: si una zona real es tan grande, hay que decidir qué hacer.
 
-## Pendientes de decisión
+## Decisiones tomadas el 06/10
 
-Quedan escritos con su opción conservadora en el PR de backend-supabase#73 (marcados «Cristian §3» o «mapa §2»).
-Los que esta guía nombra:
-
-- **Área ciudad** (`backend-42-area-ciudad`): dónde se guarda el rectángulo de cada ciudad. Conservadora: solo
-  Montevideo, con `tiles/ciudades.json`; su `ambito_id` sale de `public.ciudad`.
-- **Zona pública** (`backend-42-zona-publica`): quién puede ver dónde están las zonas. Conservadora: no se publican
-  paquetes de zona.
+- **Área ciudad** (`backend-42-area-ciudad`): cada ciudad guarda su rectángulo en `public.ciudad` (migración 0031); el
+  publicador publica las que lo tienen. No hay ninguna lista en el repo.
+- **Zona pública** (`backend-42-zona-publica`): los paquetes de zona **no** van en el catálogo público; cada zona guarda
+  el enlace a su paquete y le llega al colportor con su zona por el sync, con un nombre de archivo que no se puede adivinar.
+- **Contrato**: `zona.paquete_mapa` entra al contrato en un PR de docs aparte, que revisa Bruno.
 
 ## Licencias y atribución
 
