@@ -28,8 +28,10 @@
 --     Más las columnas de sync que llevan todas las tablas del repo (id, created_at, updated_at,
 --     created_by, deleted_at, sync_version, xmin_w). `id` es un uuid como el de toda entidad: el
 --     motor identifica cada fila por una columna uuid (`sync.entidad.columna_pk`), y la tabla local
---     tiene hoy como clave el par. Qué id manda el teléfono y cómo lo guarda es del contrato con el
---     motor (ver «Para otros repos»): el servidor acepta el que venga y, si no viene, lo genera.
+--     tiene hoy como clave el par. Por `sync.push` el `id` TIENE que venir en el payload: sin él, el
+--     job vuelve `invalid` con PK_FALTANTE. El default `uuid_generate_v7()` solo vale para un INSERT
+--     directo (service_role, pruebas). Qué id manda el teléfono y cómo lo guarda es del contrato con
+--     el motor (ver «Para otros repos»).
 --     No hay columna `motivo`: ni el esquema local ni esquema-datos.md la tienen.
 --
 --   · RLS, SIN columna de dueño (ADR-012: la RLS es la autoridad también en el push). El dueño de la
@@ -90,6 +92,9 @@
 --     mismo par con otro id, 23514 si el par llega desordenado o la decisión no es una de las dos, y
 --     23503 si una ubicación no existe. (3) La fila viaja entera en el pull: id, par, decision,
 --     decidido_en, created_at, updated_at, created_by, deleted_at y sync_version (xmin_w no).
+--     Para un mismo colportor y par el pull puede bajar una fila viva y varias dadas de baja con otros
+--     ids (baja y alta nueva: el índice parcial lo permite). La clave local (a, b) tiene que
+--     colapsarlas sin que la baja de un id viejo borre la decisión viva.
 --   · backend-supabase#69 (redirigir B a A): las decisiones sobre B se reapuntan a A («si ya está en
 --     el backend»: desde esta migración lo está; la regla entra con #69 y no se hizo acá, que no toca
 --     marcar_como_duplicado). Tres cruces para ese issue: (1) el par (A, B) mismo queda (A, A) y

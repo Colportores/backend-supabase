@@ -3,7 +3,8 @@
 -- siguientes (decidir de nuevo, dar de baja) llegan por el delta; y nadie baja las de otro.
 --
 -- Como 0004, 0014 y 0017, NO va en una transacción: el delta solo sirve filas commiteadas (en
--- producción el push y el pull son dos requests). Limpia al final.
+-- producción el push y el pull son dos requests). Limpia al final, y también al empezar: si una
+-- corrida se cortó antes de la limpieza, la siguiente no choca con lo que dejó.
 
 select * from no_plan();
 
@@ -21,13 +22,28 @@ begin
   perform set_config('request.jwt.claim.sub', '', false);
 end $$;
 
--- Ids: usuarios 42b1.., ubicaciones 42a1.., decisiones 42d1.., client_op_id 43xx.
+-- Ids (prefijo 41, el número del archivo): usuarios 41b1.., ubicaciones 41a1.., decisiones 41d1..; los
+-- client_op_id, 41 y dos dígitos (los otros llevan una letra, no se pisan).
 create or replace function pg_temp.u(p text) returns uuid language sql as $$
-  select ('01920000-0000-7000-8000-000000004' || '2' || p)::uuid;
+  select ('01920000-0000-7000-8000-00000000' || '41' || p)::uuid;
 $$;
 create or replace function pg_temp.op(p text) returns uuid language sql as $$
-  select ('01920000-0000-7000-8000-000000004' || '3' || p)::uuid;
+  select ('01920000-0000-7000-8000-00000000' || '41' || p)::uuid;
 $$;
+
+-- Borra todo lo de este archivo (como postgres). Las decisiones primero: borrar al usuario con ellas
+-- puestas daría 23503 (tg_auditoria_update deshace el ON DELETE SET NULL).
+create or replace function pg_temp.limpiar() returns void language plpgsql as $$
+begin
+  delete from public.ubicacion_par_decidido
+   where created_by in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'))
+      or ubicacion_a_id in (select id from public.ubicacion where ciudad_id = pg_temp.u('f1'));
+  delete from public.ubicacion where ciudad_id = pg_temp.u('f1');
+  delete from public.ciudad where id = pg_temp.u('f1');
+  delete from public.pais where id = pg_temp.u('f0');
+  delete from public.usuario_rol where usuario_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+  delete from auth.users where id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+end $$;
 
 -- Un job de push de la entidad; devuelve el resultado.
 create or replace function pg_temp.push1(p_op uuid, p_tipo text, p_payload jsonb, p_version bigint default null)
@@ -54,8 +70,9 @@ create or replace function pg_temp.ids(p_delta jsonb) returns text[] language sq
 $$;
 
 -- ---------------------------------------------------------------------------
--- Fixtures (como postgres). b1 y b2 colportores, ad ADMIN; tres ubicaciones.
+-- Fixtures (como postgres). b1 y b2 colportores, ad ADMIN; cuatro ubicaciones.
 -- ---------------------------------------------------------------------------
+select pg_temp.limpiar();
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'par41-' || s || '@example.com', 'x', now(), now(), now()
@@ -176,11 +193,6 @@ select is((pg_temp.col(sync.pull(array['ubicacion_par_decidido'], '{}'::jsonb, 1
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
 drop table pull_b1, pull_b2, pag1, pull_b1_cambio, pull_b1_baja;
-delete from public.ubicacion_par_decidido where id in (pg_temp.u('d1'), pg_temp.u('d2'), pg_temp.u('d3'), pg_temp.u('d4'));
-delete from public.ubicacion where ciudad_id = pg_temp.u('f1');
-delete from public.ciudad where id = pg_temp.u('f1');
-delete from public.pais where id = pg_temp.u('f0');
-delete from public.usuario_rol where usuario_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
-delete from auth.users where id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+select pg_temp.limpiar();
 
 select * from finish();

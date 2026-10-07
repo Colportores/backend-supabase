@@ -35,12 +35,13 @@ begin
   perform set_config('role', 'anon', true);
 end $$;
 
--- Ids: usuarios 40b1.., ubicaciones 40a1.., decisiones 40d1.., client_op_id 41xx.
+-- Ids (prefijo 40, el número del archivo): usuarios 40b1.., ubicaciones 40a1.., decisiones 40d1..; los
+-- client_op_id, 40 y dos dígitos (los otros llevan una letra, no se pisan).
 create or replace function pg_temp.u(p text) returns uuid language sql as $$
   select ('01920000-0000-7000-8000-000000004' || '0' || p)::uuid;
 $$;
 create or replace function pg_temp.op(p text) returns uuid language sql as $$
-  select ('01920000-0000-7000-8000-000000004' || '1' || p)::uuid;
+  select ('01920000-0000-7000-8000-00000000' || '40' || p)::uuid;
 $$;
 
 -- «sqlstate restricción», u «ok», de lo que hace una sentencia (la excepción no deja la transacción rota).
@@ -62,6 +63,23 @@ begin
   return 'ok';
 exception when others then
   return sqlerrm;
+end $$;
+
+-- Cuántas filas tocaría una sentencia de escritura («ok N»), o su SQLSTATE si falla; no deja nada hecho.
+create or replace function pg_temp.probar(p_sql text) returns text language plpgsql as $$
+declare
+  v_n integer;
+begin
+  begin
+    execute p_sql;
+    get diagnostics v_n = row_count;
+    raise exception 'deshacer';
+  exception when others then
+    if sqlerrm = 'deshacer' then
+      return 'ok ' || v_n;
+    end if;
+    return sqlstate;
+  end;
 end $$;
 
 -- Cuántas filas tocó una sentencia de escritura.
@@ -167,13 +185,19 @@ select is(
         'ubicacion_par_decidido_select_propio SELECT {authenticated}',
         'ubicacion_par_decidido_update_propio UPDATE {authenticated}'],
   'tres políticas, solo para authenticated, y ninguna de DELETE');
-select ok((select coalesce(p.with_check, '') like '%created_by%' from pg_policies p
+-- USING = lo que ve; WITH CHECK = lo que escribe (0021). Cada una se mira por separado contra el dueño.
+select ok((select coalesce(p.qual, '') like '%created_by%auth.uid()%' from pg_policies p
+            where p.policyname = 'ubicacion_par_decidido_select_propio'),
+          'SELECT: lo que ve (USING) se mide contra el dueño');
+select ok((select coalesce(p.qual, '') like '%created_by%auth.uid()%' from pg_policies p
             where p.policyname = 'ubicacion_par_decidido_update_propio'),
-          'el UPDATE tiene WITH CHECK sobre el dueño: no se pasa una decisión a otro');
-select ok(not exists (select 1 from pg_policies p
-                       where p.tablename = 'ubicacion_par_decidido'
-                         and (coalesce(p.qual, '') || coalesce(p.with_check, '')) !~ 'created_by'),
-          'todas las políticas se miden contra created_by');
+          'UPDATE: lo que ve (USING) se mide contra el dueño: no toca lo de otro');
+select ok((select coalesce(p.with_check, '') like '%created_by%auth.uid()%' from pg_policies p
+            where p.policyname = 'ubicacion_par_decidido_update_propio'),
+          'UPDATE: lo que escribe (WITH CHECK) se mide contra el dueño: no se pasa una decisión a otro');
+select ok((select coalesce(p.with_check, '') like '%created_by%auth.uid()%' from pg_policies p
+            where p.policyname = 'ubicacion_par_decidido_insert_propio'),
+          'INSERT: lo que escribe (WITH CHECK) se mide contra el dueño');
 
 select table_privs_are('public', 'ubicacion_par_decidido', 'authenticated', array['SELECT', 'INSERT', 'UPDATE'],
                        'authenticated lee, inserta y modifica; no borra');
@@ -245,6 +269,11 @@ select is(pg_temp.filas($$ update public.ubicacion_par_decidido set deleted_at =
           'ni la da de baja');
 select is(pg_temp.error_de($$ delete from public.ubicacion_par_decidido where id = pg_temp.u('d4') $$), '42501 ',
           'nadie borra: ni lo propio (una baja es deleted_at)');
+-- Sin WHERE Postgres no aplica la política de SELECT a lo que busca: lo que frena es el USING del UPDATE.
+select is(pg_temp.probar($$ update public.ubicacion_par_decidido set decision = 'IGNORAR' $$), 'ok 2',
+          'un UPDATE sin WHERE de b2 toca solo sus dos (d4, d5), sin error: lo de b1 ni se mira');
+select is(pg_temp.probar($$ update public.ubicacion_par_decidido set decidido_en = now() where id = pg_temp.u('d1') $$), 'ok 0',
+          'y apuntando a la d1 de b1, ninguna');
 -- Pasar una fila propia a otro: el dueño no cambia (tg_auditoria_update lo deja como estaba).
 select is(pg_temp.error_de($$ update public.ubicacion_par_decidido set created_by = pg_temp.u('b1') where id = pg_temp.u('d4') $$),
           'ok', 'b2 intenta pasarle su d4 a b1: la sentencia no rompe');
@@ -266,6 +295,20 @@ select is(pg_temp.filas($$ update public.ubicacion_par_decidido set deleted_at =
 select is(pg_temp.error_de($$ insert into public.ubicacion_par_decidido (id, ubicacion_a_id, ubicacion_b_id, decision, decidido_en)
                               values (pg_temp.u('d6'), pg_temp.u('a2'), pg_temp.u('a3'), 'IGNORAR', now()) $$),
           'ok', 'y ese par se puede decidir de nuevo con otra fila: la baja no estorba');
+
+-- Las bajas también son de su dueño: con la baja (d3) de b1 en la tabla, nadie más la ve.
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is((select array_agg(right(id::text, 2) order by id) from public.ubicacion_par_decidido), array['d4', 'd5'],
+          'b2 sigue viendo solo las suyas: ni la baja (d3) ni la nueva (d6) de b1');
+select pg_temp.actuar_como(pg_temp.u('b3'));
+select is((select count(*)::int from public.ubicacion_par_decidido), 0, 'b3 no ve ni las bajas de nadie');
+select pg_temp.actuar_como(pg_temp.u('c1'));
+select is((select count(*)::int from public.ubicacion_par_decidido), 0, 'el coordinador tampoco');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is((select count(*)::int from public.ubicacion_par_decidido), 0, 'ni el ADMIN');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select array_agg(right(id::text, 2) order by id) from public.ubicacion_par_decidido), array['d1', 'd2', 'd3', 'd6'],
+          'b1 sí ve las suyas, la baja incluida (el teléfono la baja como tombstone)');
 
 -- Las restricciones, con el SQLSTATE que el motor devuelve como `invalid`.
 select is(pg_temp.error_de($$ insert into public.ubicacion_par_decidido (ubicacion_a_id, ubicacion_b_id, decision, decidido_en)
