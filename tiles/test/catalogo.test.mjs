@@ -98,8 +98,9 @@ test('un paquete de ciudad lleva nivel, ámbito, tamaño, SHA-256 y partes', () 
   assert.equal(p.partes[0].sha256, sha('a'));
 });
 
-test('un paquete de zona no publica nombre ni bbox: el catálogo es público', () => {
-  const p = armarPaquete({
+test('un paquete de zona no puede estar en el catálogo: es público y el archivo de una zona muestra su rectángulo', () => {
+  // Decisión de Cristian del 06/10, «Zona pública»: el enlace de cada zona va en public.zona.paquete_mapa.
+  const zona = armarPaquete({
     nivel: 'zona',
     clave: '09990000-0000-7000-8003-000000000001',
     ambitoId: '09990000-0000-7000-8003-000000000001',
@@ -108,8 +109,10 @@ test('un paquete de zona no publica nombre ni bbox: el catálogo es público', (
     build: '20261006',
     ahora: AHORA,
   });
-  assert.equal('nombre' in p, false);
-  assert.equal('bbox' in p, false);
+  const errores = validar(fusionar(null, [paquete(), zona], { ahora: AHORA }));
+  assert.equal(errores.length, 1);
+  assert.match(errores[0], /paquete zona-09990000.*los paquetes de zona no van en el catálogo público.*public\.zona\.paquete_mapa/);
+  assert.deepEqual(validar(fusionar(null, [paquete()], { ahora: AHORA })), [], 'y uno de ciudad sigue siendo válido');
 });
 
 test('el tamaño de un paquete es la suma de sus partes', () => {
@@ -120,19 +123,19 @@ test('el tamaño de un paquete es la suma de sus partes', () => {
 
 test('fusionar reemplaza al paquete de su mismo id, conserva el resto y ordena por nivel', () => {
   const previo = fusionar(null, [paquete(), paquete({ clave: 'salto', nombre: 'Salto' })], { ahora: AHORA });
-  const zona = armarPaquete({
-    nivel: 'zona',
-    clave: 'z1',
-    ambitoId: 'z1',
-    zoomMax: 15,
-    partes: [parte('d', 1_000_000, 'zona', 'z1')],
+  const departamento = armarPaquete({
+    nivel: 'departamento',
+    clave: 'montevideo',
+    ambitoId: 'd1',
+    zoomMax: 12,
+    partes: [parte('d', 1_000_000, 'departamento', 'montevideo')],
     build: '20261006',
     ahora: AHORA,
   });
-  const nuevo = fusionar(previo, [zona, paquete({ partes: [parte('e')] })], { ahora: '2026-10-08T00:00:00Z' });
+  const nuevo = fusionar(previo, [departamento, paquete({ partes: [parte('e')] })], { ahora: '2026-10-08T00:00:00Z' });
   assert.deepEqual(
     nuevo.paquetes.map((p) => p.id),
-    ['zona-z1', 'ciudad-montevideo', 'ciudad-salto'],
+    ['ciudad-montevideo', 'ciudad-salto', 'departamento-montevideo'],
   );
   assert.equal(nuevo.paquetes.find((p) => p.id === 'ciudad-montevideo').version, sha('e'));
   assert.equal(nuevo.generado_en, '2026-10-08T00:00:00Z');

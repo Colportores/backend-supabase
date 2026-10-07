@@ -4,12 +4,16 @@
 #
 #   1. levanta la base de compose.dev.yml + el storage-api oficial + PostgREST + un gateway que imita a Kong;
 #   2. aplica las migraciones (la 0029 crea el bucket) y corre pgTAP 0036, con las aserciones completas;
-#   3. carga Montevideo en public.ciudad; comprueba que sin esa ciudad el publicador se detiene sin subir
-#      nada; publica el estilo y Montevideo (recorte REAL del build más nuevo de Protomaps: necesita red) y
-#      comprueba que el ambito_id del catálogo es el id de la ciudad en la base;
+#   3. carga Montevideo en public.ciudad con el bloque de docs/guia-carga-manual.md (el mismo que pega
+#      Cristian: lo extrae de la guía, no tiene copia); comprueba que sin su rectángulo el publicador no
+#      publica nada ni sube nada; publica el estilo y Montevideo (recorte REAL del build más nuevo de
+#      Protomaps: necesita red) y comprueba que el ambito_id del catálogo es el id de la ciudad en la base;
 #   4. verifica el bucket (cli verificar), comprueba que el publicador lee por el endpoint autenticado,
 #      publica de nuevo (tiene que dar «sin cambios») y comprueba que con la clave anónima no se puede
-#      escribir.
+#      escribir ni listar;
+#   5. crea una zona (en una campaña vigente), publica su paquete (recorte REAL por su polígono), comprueba
+#      que el enlace queda en public.zona.paquete_mapa, que el archivo está en el bucket con el mismo SHA-256,
+#      que el catálogo público no lo nombra y que publicar otra vez no cambia nada.
 #
 # Uso, desde la raíz del repo:   bash tiles/prueba-storage/correr.sh
 # Variables: PROYECTO (compose, por defecto tiles-storage), DB_PORT (55452), CIUDAD (montevideo),
@@ -90,14 +94,29 @@ paso "migraciones (la 0029 crea el bucket) y pgTAP 0036"
 "${C[@]}" run --rm cli bash -c \
   'psql "$DB_URL" -q -c "create extension if not exists pgtap with schema extensions;" && pg_prove --ext .sql --verbose supabase/tests/0036_bucket_mapas_test.sql'
 
-# Lo que el proyecto real ya tiene antes de la primera publicación: Montevideo en public.ciudad (el
-# publicador lee de ahí el ambito_id; sin la ciudad, se detiene sin subir nada).
+# Lo que el proyecto real ya tiene antes de la primera publicación: el país UY (§ 1 de la guía de carga manual).
+# Montevideo, con su rectángulo, se carga después con el bloque de la guía (§ 2).
 psql_db() { "${C[@]}" exec -T db psql -U supabase_admin -d postgres -At -v ON_ERROR_STOP=1 "$@"; }
 psql_db -c "insert into public.pais (nombre, iso_code) select 'Uruguay', 'UY' where not exists (select 1 from public.pais where iso_code = 'UY')" >/dev/null
-psql_db -c "insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro)
-            select 'Montevideo', id, -34.9011, -56.1645 from public.pais where iso_code = 'UY'
-            and not exists (select 1 from public.ciudad where nombre = 'Montevideo')" >/dev/null
-AMBITO_ESPERADO="$(psql_db -c "select c.id from public.ciudad c join public.pais p on p.id = c.pais_id where p.iso_code = 'UY' and c.nombre = 'Montevideo'")"
+
+# El bloque de Montevideo de la guía: el primer ```sql que sigue a su título (sin copia, para que no se desfasen).
+bloque_de_la_guia() {
+  awk '/^#### Montevideo, lista para pegar/ { buscando = 1; next }
+       buscando && /^```sql/ { dentro = 1; next }
+       dentro && /^```/ { exit }
+       dentro { sub(/\r$/, ""); print }' docs/guia-carga-manual.md
+}
+BLOQUE="$(bloque_de_la_guia)"
+[ -n "$BLOQUE" ] || { echo "FALLO: no encuentro el bloque de Montevideo en docs/guia-carga-manual.md"; exit 1; }
+paso "Montevideo con su rectángulo, con el bloque de la guía de carga manual"
+for vez in 1 2; do
+  printf '%s\n' "$BLOQUE" | "${C[@]}" exec -T db psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -At >/dev/null
+  echo "bloque aplicado (vez $vez)"
+done
+[ "$(psql_db -c "select count(*) from public.ciudad where nombre = 'Montevideo' and deleted_at is null")" = "1" ] \
+  || { echo "FALLO: repetir el bloque tiene que dejar UNA sola Montevideo"; exit 1; }
+AMBITO_ESPERADO="$(psql_db -c "select c.id from public.ciudad c join public.pais p on p.id = c.pais_id where p.iso_code = 'UY' and c.nombre = 'Montevideo' and c.bbox_oeste is not null")"
+[ -n "$AMBITO_ESPERADO" ] || { echo "FALLO: Montevideo quedó sin rectángulo"; exit 1; }
 echo "Montevideo en public.ciudad: $AMBITO_ESPERADO"
 
 if [ "${SOLO_BASE:-0}" = "1" ]; then
@@ -107,7 +126,7 @@ fi
 
 NODO=(docker run --rm --network "$RED" -v "$RAIZ:/repo" -w /repo/tiles
   -e SUPABASE_URL="http://$P-gateway:8000" -e SUPABASE_SERVICE_ROLE_KEY="$SERVICIO" -e ANON_KEY="$ANON"
-  -e AMBITO_ESPERADO="$AMBITO_ESPERADO" -e HOME=/tmp)
+  -e AMBITO_ESPERADO="$AMBITO_ESPERADO" -e ZONA -e HOME=/tmp)
 if [ "$(uname -s)" = "Linux" ]; then NODO+=(--user "$(id -u):$(id -g)"); fi
 NODO+=("$NODE_IMAGEN")
 PUBLICA="http://$P-gateway:8000/storage/v1/object/public/mapas"
@@ -115,18 +134,21 @@ PUBLICA="http://$P-gateway:8000/storage/v1/object/public/mapas"
 paso "pruebas unitarias"
 "${NODO[@]}" bash -c 'npm ci --no-audit --no-fund >/dev/null && npm test' | grep -E "^# (tests|pass|fail)|^not ok"
 
-paso "sin la ciudad en public.ciudad el publicador se detiene y no sube nada"
-OCULTAS="$(psql_db -c "update public.ciudad set deleted_at = now() where nombre = 'Montevideo'" -c "select count(*) from public.ciudad where deleted_at is not null" | tail -n 1)"
-[ "$OCULTAS" = "1" ] || { echo "FALLO: no pude ocultar Montevideo"; exit 1; }
+paso "sin su rectángulo la ciudad no se publica y el publicador no sube nada"
+RECTANGULO="$(psql_db -c "select bbox_oeste || ',' || bbox_sur || ',' || bbox_este || ',' || bbox_norte from public.ciudad where id = '$AMBITO_ESPERADO'")"
+psql_db -c "update public.ciudad set bbox_oeste = null, bbox_sur = null, bbox_este = null, bbox_norte = null where id = '$AMBITO_ESPERADO'" >/dev/null
 SALIDA_SIN="$("${NODO[@]}" node src/cli.mjs publicar --ciudad "$CIUDAD" 2>&1 || true)"
 echo "$SALIDA_SIN"
-grep -q "no está en public.ciudad" <<<"$SALIDA_SIN" || { echo "FALLO: tenía que detenerse por la ciudad que falta"; exit 1; }
+grep -q "ciudades sin rectángulo.*Montevideo" <<<"$SALIDA_SIN" || { echo "FALLO: tenía que listar a Montevideo como ciudad sin rectángulo"; exit 1; }
+grep -q "Ninguna ciudad con rectángulo coincide" <<<"$SALIDA_SIN" || { echo "FALLO: tenía que detenerse por la ciudad que no tiene rectángulo"; exit 1; }
 SUBIDOS="$(psql_db -c "select count(*) from storage.objects where bucket_id = 'mapas'")"
 [ "$SUBIDOS" = "0" ] || { echo "FALLO: se subieron $SUBIDOS archivos antes de resolver la ciudad"; exit 1; }
-psql_db -c "update public.ciudad set deleted_at = null where nombre = 'Montevideo'" >/dev/null
+IFS=, read -r OESTE SUR ESTE NORTE <<<"$RECTANGULO"
+psql_db -c "update public.ciudad set bbox_oeste = $OESTE, bbox_sur = $SUR, bbox_este = $ESTE, bbox_norte = $NORTE where id = '$AMBITO_ESPERADO'" >/dev/null
 
-paso "publicar estilo y $CIUDAD"
-"${NODO[@]}" node src/cli.mjs publicar --ciudad "$CIUDAD"
+paso "publicar el estilo y las ciudades con rectángulo (los dos comandos de la guía «Publicar a mano»)"
+"${NODO[@]}" node src/cli.mjs publicar --solo estilo
+"${NODO[@]}" node src/cli.mjs publicar --solo ciudades
 
 paso "el catálogo trae el ambito_id de la ciudad en la base y la versión del estilo"
 "${NODO[@]}" node prueba-storage/ambito-del-catalogo.mjs "$PUBLICA"
@@ -144,5 +166,35 @@ grep -q "sin cambios" <<<"$SEGUNDA" || { echo "FALLO: la segunda publicación su
 
 paso "con la clave anónima no se escribe"
 "${NODO[@]}" node prueba-storage/acceso-anonimo.mjs "$PUBLICA"
+
+paso "una zona: su paquete se publica fuera del catálogo y su enlace queda en public.zona.paquete_mapa"
+# Una campaña vigente con Montevideo y una zona circular de 300 m en el centro (lo que el panel dibuja).
+ZONA="$(psql_db -q <<'SQL' | tail -n 1
+insert into public.campania (nombre, tipo, fecha_inicio, fecha_fin)
+  values ('Campaña de prueba del publicador', 'VERANO', public.hoy_montevideo() - 5, public.hoy_montevideo() + 30);
+insert into public.campania_ciudad (campania_id, ciudad_id)
+  select ca.id, ci.id from public.campania ca, public.ciudad ci
+   where ca.nombre = 'Campaña de prueba del publicador' and ci.nombre = 'Montevideo' and ci.deleted_at is null;
+insert into public.zona (nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m, color)
+  select 'Zona de prueba del publicador', cc.id, 'RADIAL', -34.9011, -56.1645, 300, '#3A7BD5'
+    from public.campania_ciudad cc join public.campania ca on ca.id = cc.campania_id
+   where ca.nombre = 'Campaña de prueba del publicador'
+returning id;
+SQL
+)"
+[ -n "$ZONA" ] || { echo "FALLO: no pude crear la zona de prueba"; exit 1; }
+echo "zona de prueba: $ZONA"
+SALIDA_ZONA="$("${NODO[@]}" node src/cli.mjs publicar --solo zonas)"
+echo "$SALIDA_ZONA"
+grep -q "zonas: 1 publicadas" <<<"$SALIDA_ZONA" || { echo "FALLO: tenía que publicar la zona"; exit 1; }
+grep -q "zonas/" <<<"$SALIDA_ZONA" && { echo "FALLO: el nombre del archivo de la zona salió por la consola"; exit 1; }
+ZONA="$ZONA" "${NODO[@]}" node prueba-storage/zona-publicada.mjs "$PUBLICA"
+
+paso "publicar las zonas otra vez: no cambia nada"
+VERSION_ANTES="$(psql_db -c "select sync_version from public.zona where id = '$ZONA'")"
+OTRA_VEZ="$("${NODO[@]}" node src/cli.mjs publicar --solo zonas)"
+echo "$OTRA_VEZ"
+grep -q "zonas: 0 publicadas, 1 sin cambios" <<<"$OTRA_VEZ" || { echo "FALLO: la segunda corrida tocó la zona"; exit 1; }
+[ "$(psql_db -c "select sync_version from public.zona where id = '$ZONA'")" = "$VERSION_ANTES" ]   || { echo "FALLO: la segunda corrida subió sync_version de la zona"; exit 1; }
 
 printf '\nTodo bien.\n'

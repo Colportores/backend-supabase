@@ -36,12 +36,13 @@ export function tipoDe(ruta) {
 
 /**
  * Cache-Control según qué tan mutable es el archivo:
- *   - paquetes: el nombre lleva el SHA-256, nunca cambian → 1 año, immutable;
+ *   - paquetes de ciudad: el nombre lleva el SHA-256, nunca cambian → 1 año, immutable;
+ *   - paquetes de zona (`zonas/<al azar>.pmtiles`): el nombre es nuevo con cada versión, nunca se reescribe → igual;
  *   - catálogo y estilo: cambian en cada publicación → 60 s (el CDN de Supabase los renueva solo);
  *   - glyphs y sprites: salen de una versión fija de Protomaps → 1 día.
  */
 export function cacheControlDe(ruta) {
-  if (ruta.startsWith('paquetes/')) return 'public, max-age=31536000, immutable';
+  if (ruta.startsWith('paquetes/') || ruta.startsWith('zonas/')) return 'public, max-age=31536000, immutable';
   if (ruta === 'catalogo.json' || ruta === 'estilo/colportores.json') return 'public, max-age=60';
   return 'public, max-age=86400';
 }

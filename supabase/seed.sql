@@ -8,7 +8,8 @@
 -- cualquier proyecto remoto linkeado, staging/producción incluidos.
 -- `scripts/db-seed.sh` es el único camino sancionado.
 --
--- TODOS los datos de acá son FICTICIOS Y OBVIOS a propósito: nombres de zona,
+-- Los datos de acá son FICTICIOS Y OBVIOS a propósito (la única excepción es la
+-- ciudad Montevideo de la sección 1, con su rectángulo real): nombres de zona,
 -- campaña, producto y precios no corresponden a ninguna campaña real. Sirven
 -- solo para tener algo con qué probar la app en desarrollo. Los datos reales
 -- se cargan a mano siguiendo docs/guia-carga-manual.md — este archivo no debe
@@ -43,6 +44,23 @@ on conflict do nothing;
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
   ('09990000-0000-7000-8002-000000000001', 'Ciudad Ejemplo Norte', '09990000-0000-7000-8001-000000000001', -33.0, -56.0, 13),
   ('09990000-0000-7000-8002-000000000002', 'Ciudad Ejemplo Sur',   '09990000-0000-7000-8001-000000000001', -34.0, -55.5, 13)
+on conflict do nothing;
+
+-- Montevideo, con su rectángulo (migración 0031, backend-supabase#42): es la ciudad del mapa propio de la
+-- demo del Hito 1 y la única que el publicador de mapas (tiles/) publica de este seed; las dos de ejemplo
+-- de arriba no tienen rectángulo y el publicador las avisa sin publicarlas. Es una ciudad REAL con datos
+-- reales (nombre, centro y rectángulo), a diferencia del resto de este archivo, y se pone acá solo para
+-- tener algo que publicar en la base local; en el proyecto hosteado se carga con docs/guia-carga-manual.md §2
+-- (el mismo bloque, idempotente). `where not exists`: si la base ya tiene una Montevideo viva en Uruguay
+-- (cargada a mano, con otro id) no se agrega una segunda.
+insert into public.ciudad
+  (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial, bbox_oeste, bbox_sur, bbox_este, bbox_norte)
+select '09990000-0000-7000-8002-000000000003', 'Montevideo', p.id, -34.9011, -56.1645, 13,
+       -56.433, -34.945, -55.948, -34.701
+  from public.pais p
+ where p.iso_code = 'UY'
+   and not exists (select 1 from public.ciudad c
+                    where c.pais_id = p.id and c.nombre = 'Montevideo' and c.deleted_at is null)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------

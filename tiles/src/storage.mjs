@@ -7,6 +7,12 @@
 
 const REINTENTOS = 3;
 
+// El nombre del archivo del mapa de una zona (`zonas/<32 hex>.pmtiles`) es la única llave de ese mapa
+// (docs/mapas-tiles.md § Privacidad): no puede salir en ningún mensaje, ni en el de un error. Todo lo que este
+// cliente dice de una ruta, de una URL o de lo que contestó el servidor pasa por `tapar`.
+const NOMBRE_DE_ZONA = /(?:zonas(?:\/|%2F))?[0-9a-f]{32}\.pmtiles/gi;
+export const tapar = (texto) => String(texto).replace(NOMBRE_DE_ZONA, 'zonas/<paquete de zona>');
+
 export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, esperaMs = 500 }) {
   if (!url) throw new Error('Falta SUPABASE_URL');
   const raiz = `${url.replace(/\/+$/, '')}/storage/v1`;
@@ -23,9 +29,10 @@ export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, 
       try {
         const respuesta = await fetchFn(destino, { method: metodo, headers, body });
         if (respuesta.status < 500) return respuesta;
-        ultimo = new Error(`${metodo} ${destino} → ${respuesta.status}`);
+        ultimo = new Error(`${metodo} ${tapar(destino)} → ${respuesta.status}`);
       } catch (error) {
-        ultimo = error;
+        const mensaje = tapar(error?.message ?? error);
+        ultimo = mensaje === error?.message ? error : new Error(mensaje, { cause: error?.cause && { code: error.cause.code } });
       }
       if (esperaMs > 0) await new Promise((r) => setTimeout(r, esperaMs * intento));
     }
@@ -35,7 +42,7 @@ export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, 
   async function exigir(respuesta, que) {
     if (respuesta.ok) return respuesta;
     const texto = await respuesta.text().catch(() => '');
-    throw new Error(`${que} falló: ${respuesta.status} ${texto.slice(0, 300)}`);
+    throw new Error(`${tapar(que)} falló: ${respuesta.status} ${tapar(texto.slice(0, 300))}`);
   }
 
   return {
@@ -109,10 +116,16 @@ export function clienteStorage({ url, clave, bucket = 'mapas', fetchFn = fetch, 
       return respuesta.json();
     },
 
-    /** Si el objeto existe. */
+    /**
+     * Si el objeto existe. Solo «no está» (404, o 400 como contesta Storage según la versión) vale como falso:
+     * cualquier otra respuesta (429, 401, 403…) es un error, no un «no está». Quien pregunta decide con esto si
+     * vuelve a subir algo o retira un mapa, y un límite de pedidos no puede hacerle creer que el archivo no existe.
+     */
     async existe(ruta) {
       const respuesta = await pedir('HEAD', urlDeLectura(ruta), { headers: autorizacion });
-      return respuesta.ok;
+      if (respuesta.ok) return true;
+      if (respuesta.status === 404 || respuesta.status === 400) return false;
+      throw new Error(`Comprobar ${tapar(ruta)} falló: ${respuesta.status}`);
     },
 
     /** Objetos bajo `prefijo` (un solo nivel): [{ ruta, actualizado_en }]. */

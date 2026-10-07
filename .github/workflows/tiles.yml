@@ -3,9 +3,16 @@ name: Mapas
 # Publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo) en el bucket público
 # `mapas` del proyecto Supabase del environment. Explicación completa: docs/mapas-tiles.md.
 #
-# Se dispara a mano, a propósito: los mapas cambian cuando alguien lo decide (una ciudad nueva, una
-# paleta nueva, un build más reciente de Protomaps), no con cada merge. Re-cortar cada vez que
-# Protomaps publica un build (a diario) le haría bajar a cada teléfono ~11 MB de mapa idéntico.
+# Se dispara a mano para lo que cambia cuando alguien lo decide (una ciudad nueva, una paleta nueva, un
+# build más reciente de Protomaps), no con cada merge. Re-cortar cada vez que Protomaps publica un build
+# (a diario) le haría bajar a cada teléfono ~11 MB de mapa idéntico.
+#
+# Y corre solo, cada hora, para los paquetes de las ZONAS (backend-supabase#42, etapa 2): una zona nueva o
+# movida tiene su mapa publicado en la hora siguiente, sin que nadie lo pida. Esa corrida programada hace
+# `publicar --solo zonas` y solo en los environments cuya variable de repo está en `true`:
+#   MAPAS_ZONAS_DEVELOP, MAPAS_ZONAS_STAGING, MAPAS_ZONAS_PRODUCTION   (Settings → Variables → Actions)
+# Sin la variable, esa corrida no publica en ese environment (como DEPLOY_DEVELOP en deploy.yml). Un
+# `schedule` solo corre desde la rama por defecto (`production`).
 #
 # NO necesita secretos nuevos. Usa los del environment de deploy.yml:
 #   SUPABASE_PROJECT_ID    → de ahí sale la URL del proyecto (https://<id>.supabase.co);
@@ -17,6 +24,8 @@ name: Mapas
 # defecto (`production`); mientras tanto, la misma publicación corre desde una máquina: ver
 # docs/mapas-tiles.md § «Publicar a mano».
 on:
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       environment:
@@ -29,11 +38,20 @@ on:
         required: true
         type: choice
         default: todo
-        options: [todo, estilo, ciudades]
+        options: [todo, estilo, ciudades, zonas]
       ciudad:
-        description: Solo esta ciudad (slug de tiles/ciudades.json, p. ej. montevideo). Vacío = todas
+        description: Solo esta ciudad (su nombre en minúsculas, sin tildes y con guiones, p. ej. montevideo). Vacío = todas las que tienen rectángulo en public.ciudad
         required: false
         type: string
+      zona:
+        description: Solo esta zona (su id en public.zona). Vacío = todas
+        required: false
+        type: string
+      regenerar:
+        description: Volver a cortar las zonas aunque su polígono no haya cambiado
+        required: false
+        type: boolean
+        default: false
       build:
         description: Build de Protomaps (AAAAMMDD). Vacío = el más reciente
         required: false
@@ -44,17 +62,54 @@ on:
         type: boolean
         default: false
 
-# Un solo publicador por environment a la vez: todos leen y reescriben el mismo catalogo.json.
-concurrency:
-  group: tiles-${{ inputs.environment }}
-  cancel-in-progress: false
-
 jobs:
+  # A qué environments se publica: el que se eligió a mano o, en la corrida programada, los que tienen su
+  # variable `MAPAS_ZONAS_<ENVIRONMENT>` en `true`.
+  elegir:
+    name: elegir environments
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      environments: ${{ steps.lista.outputs.environments }}
+    steps:
+      - id: lista
+        env:
+          DISPARO: ${{ github.event_name }}
+          ELEGIDO: ${{ inputs.environment }}
+          MAPAS_ZONAS_DEVELOP: ${{ vars.MAPAS_ZONAS_DEVELOP }}
+          MAPAS_ZONAS_STAGING: ${{ vars.MAPAS_ZONAS_STAGING }}
+          MAPAS_ZONAS_PRODUCTION: ${{ vars.MAPAS_ZONAS_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          elegidos=()
+          if [ "$DISPARO" = "workflow_dispatch" ]; then
+            elegidos+=("$ELEGIDO")
+          else
+            if [ "${MAPAS_ZONAS_DEVELOP:-}" = "true" ]; then elegidos+=(develop); fi
+            if [ "${MAPAS_ZONAS_STAGING:-}" = "true" ]; then elegidos+=(staging); fi
+            if [ "${MAPAS_ZONAS_PRODUCTION:-}" = "true" ]; then elegidos+=(production); fi
+          fi
+          lista="$(printf '%s\n' "${elegidos[@]:-}" | jq -R . | jq -sc 'map(select(. != ""))')"
+          echo "environments=$lista" >> "$GITHUB_OUTPUT"
+          echo "Se publica en: $lista"
+
   publicar:
-    name: publicar mapas (${{ inputs.environment }})
+    name: publicar mapas (${{ matrix.environment }})
+    needs: elegir
+    if: ${{ needs.elegir.outputs.environments != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: ${{ inputs.environment }}
+    environment: ${{ matrix.environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.elegir.outputs.environments) }}
+    # Un solo publicador por environment a la vez: todos leen y reescriben el mismo catalogo.json y las
+    # mismas zonas. Una corrida programada que llega con otra en curso espera su turno.
+    concurrency:
+      group: tiles-${{ matrix.environment }}
+      cancel-in-progress: false
     permissions:
       contents: read
     defaults:
@@ -89,8 +144,11 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SOLO: ${{ inputs.solo }}
+          # La corrida programada no tiene inputs: publica solo las zonas.
+          SOLO: ${{ inputs.solo || 'zonas' }}
           CIUDAD: ${{ inputs.ciudad }}
+          ZONA: ${{ inputs.zona }}
+          REGENERAR: ${{ inputs.regenerar }}
           BUILD: ${{ inputs.build }}
           SIMULACRO: ${{ inputs.simulacro }}
         run: |
@@ -112,6 +170,8 @@ jobs:
           args=(publicar)
           if [ "$SOLO" != "todo" ]; then args+=(--solo "$SOLO"); fi
           if [ -n "$CIUDAD" ]; then args+=(--ciudad "$CIUDAD"); fi
+          if [ -n "$ZONA" ]; then args+=(--zona "$ZONA"); fi
+          if [ "$REGENERAR" = "true" ]; then args+=(--regenerar); fi
           if [ -n "$BUILD" ]; then args+=(--build "$BUILD"); fi
           if [ "$SIMULACRO" = "true" ]; then args+=(--dry-run); fi
           node src/cli.mjs "${args[@]}"
@@ -119,5 +179,5 @@ jobs:
       # Lo que importa del bucket: se lee sin login, con CORS para localhost y GitHub Pages, y con Range.
       # Solo necesita la dirección del proyecto (SUPABASE_URL, que dejó el paso anterior), ningún secreto.
       - name: Verificar el bucket publicado
-        if: ${{ !inputs.simulacro }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.simulacro }}
         run: node src/cli.mjs verificar

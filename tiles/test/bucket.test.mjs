@@ -5,7 +5,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { BUCKET } from '../src/bucket.mjs';
+import { BUCKET, cacheControlDe, tipoDe } from '../src/bucket.mjs';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -44,4 +44,14 @@ test('la migración no agrega políticas sobre storage.objects: solo escribe la 
   const sql = (await migracion()).replace(/--.*$/gm, '');
   assert.doesNotMatch(sql, /create policy/i);
   assert.doesNotMatch(sql, /\bgrant\b/i);
+});
+
+test('los paquetes (de ciudad y de zona) se cachean un año; el catálogo y el estilo, un minuto', () => {
+  const unAnio = 'public, max-age=31536000, immutable';
+  assert.equal(cacheControlDe('paquetes/ciudad/montevideo.aaaaaaaaaaaa.pmtiles'), unAnio);
+  assert.equal(cacheControlDe(`zonas/${'0123456789abcdef'.repeat(2)}.pmtiles`), unAnio, 'el nombre de una zona es nuevo en cada versión: nunca se reescribe');
+  assert.equal(cacheControlDe('catalogo.json'), 'public, max-age=60');
+  assert.equal(cacheControlDe('estilo/colportores.json'), 'public, max-age=60');
+  assert.equal(cacheControlDe('estilo/glyphs/NotoSans-Regular/0-255.pbf'), 'public, max-age=86400');
+  assert.equal(tipoDe(`zonas/${'0123456789abcdef'.repeat(2)}.pmtiles`), 'application/octet-stream');
 });

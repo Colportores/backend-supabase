@@ -7,13 +7,19 @@ import { MAX_BYTES } from './politica.mjs';
 
 export const VERSION_CATALOGO = 1;
 
-/** Del más chico al más grande, como `NivelCobertura` de la app. Departamento y Uruguay: #68. */
+/**
+ * Del más chico al más grande, como `NivelCobertura` de la app. Departamento y Uruguay: #68.
+ * `zona` figura por orden, pero **el catálogo no lleva paquetes de zona**: el catálogo es público y el archivo
+ * de una zona muestra su rectángulo a quien lo baje (decisión de Cristian del 06/10, «Zona pública»). Cada
+ * zona guarda el enlace a su paquete en `public.zona.paquete_mapa` y le llega al colportor por el sync;
+ * `validar` rechaza un paquete de nivel `zona`.
+ */
 export const NIVELES = ['zona', 'ciudad', 'departamento', 'uruguay'];
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
-/** Dónde queda un archivo en el bucket. El nombre lleva el SHA-256: nunca se pisa un archivo. */
+/** Dónde queda un archivo de un paquete del catálogo. El nombre lleva el SHA-256: nunca se pisa un archivo. */
 export function rutaArchivo({ nivel, clave, parte = 1, total = 1, sha256 }) {
   const sufijo = total > 1 ? `.parte${parte}de${total}` : '';
   return `paquetes/${nivel}/${clave}${sufijo}.${sha256.slice(0, 12)}.pmtiles`;
@@ -29,10 +35,8 @@ export function versionDe(partes) {
 }
 
 /**
- * Arma la entrada de un paquete.
+ * Arma la entrada de un paquete del catálogo (hoy, de ciudad: los de zona no van al catálogo, ver NIVELES).
  * `partes`: [{ archivo, tamano_bytes, sha256, bbox }] (bbox de cada parte, opcional).
- * Los paquetes de zona no llevan nombre ni bbox: el catálogo es público y la app ya conoce sus
- * zonas por la réplica local; solo necesita el id.
  */
 export function armarPaquete({
   nivel,
@@ -45,7 +49,6 @@ export function armarPaquete({
   partes,
   build,
   ahora,
-  regionSha256 = null,
 }) {
   const paquete = {
     id: `${nivel}-${clave}`,
@@ -60,7 +63,6 @@ export function armarPaquete({
   paquete.version = versionDe(partes);
   paquete.partes = partes;
   paquete.fuente_build = build;
-  if (regionSha256 !== null) paquete.region_sha256 = regionSha256;
   paquete.actualizado_en = ahora;
   return paquete;
 }
@@ -168,6 +170,8 @@ export function validar(catalogo, { maxBytes = MAX_BYTES, exigirAmbito = true } 
     if (ids.has(p.id)) falla(`${donde}: id repetido`);
     ids.add(p.id);
     if (!NIVELES.includes(p.nivel)) falla(`${donde}: nivel inválido (${p.nivel})`);
+    // Privacidad: un paquete de zona publicado en el catálogo público muestra dónde trabaja cada equipo.
+    if (p.nivel === 'zona') falla(`${donde}: los paquetes de zona no van en el catálogo público (se enlazan desde public.zona.paquete_mapa)`);
     if (p.ambito_id !== null && typeof p.ambito_id !== 'string') falla(`${donde}: ambito_id`);
     // La app elige su paquete por ambito_id: una ciudad sin él no la encontraría nadie.
     if (exigirAmbito && p.nivel === 'ciudad' && !p.ambito_id) falla(`${donde}: ambito_id falta (el id de public.ciudad)`);
