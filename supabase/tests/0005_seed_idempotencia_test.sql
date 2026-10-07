@@ -23,7 +23,7 @@ select * from no_plan();
 \i supabase/seed.sql
 
 select is((select count(*) from public.pais),               1::bigint, 'primera pasada: 1 país');
-select is((select count(*) from public.ciudad),              2::bigint, 'primera pasada: 2 ciudades');
+select is((select count(*) from public.ciudad),              3::bigint, 'primera pasada: 3 ciudades (dos de ejemplo y Montevideo)');
 select is((select count(*) from public.campania),            2::bigint, 'primera pasada: 2 campañas');
 select is((select count(*) from public.zona),                4::bigint, 'primera pasada: 4 zonas');
 select is((select count(*) from public.campania_ciudad),     3::bigint, 'primera pasada: 3 ciudades de campaña');
@@ -33,11 +33,19 @@ select is((select count(*) from public.coleccion),           1::bigint, 'primera
 select is((select count(*) from public.producto_coleccion),  2::bigint, 'primera pasada: 2 vínculos producto-colección');
 select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'primera pasada: 6 precios');
 
+-- Montevideo trae su rectángulo (0031); las dos ciudades de ejemplo no.
+select is((select count(*) from public.ciudad where bbox_oeste is not null), 1::bigint,
+          'solo Montevideo trae rectángulo');
+select results_eq(
+  $$ select bbox_oeste, bbox_sur, bbox_este, bbox_norte from public.ciudad where nombre = 'Montevideo' $$,
+  $$ values (-56.433::float8, -34.945::float8, -55.948::float8, -34.701::float8) $$,
+  'Montevideo: su rectángulo (oeste, sur, este, norte), el de la guía de carga manual');
+
 -- Segunda pasada: mismo archivo, no debe duplicar ni fallar.
 \i supabase/seed.sql
 
 select is((select count(*) from public.pais),               1::bigint, 'segunda pasada: sigue en 1 país');
-select is((select count(*) from public.ciudad),              2::bigint, 'segunda pasada: sigue en 2 ciudades');
+select is((select count(*) from public.ciudad),              3::bigint, 'segunda pasada: sigue en 3 ciudades');
 select is((select count(*) from public.campania),            2::bigint, 'segunda pasada: sigue en 2 campañas');
 select is((select count(*) from public.zona),                4::bigint, 'segunda pasada: sigue en 4 zonas');
 select is((select count(*) from public.campania_ciudad),     3::bigint, 'segunda pasada: sigue en 3 ciudades de campaña');
