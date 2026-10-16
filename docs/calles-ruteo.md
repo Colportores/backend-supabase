@@ -82,8 +82,15 @@ DB_URL=postgresql://… bash scripts/db-importar-calles.sh <ciudad_id> calles-mo
 Es volver a bajar el archivo y volver a correr el script: OSM cambia todos los días y no hay una actualización automática.
 No hace falta ningún aviso: la próxima llamada del panel ya usa la red nueva.
 Se puede reimportar con el panel en uso: cada ciudad tiene un candado (`pg_advisory_xact_lock`): la recarga espera a que terminen las llamadas en
-curso de esa ciudad y las llamadas nuevas esperan a que la recarga confirme (unos segundos). Así ninguna llamada junta esquinas de la red
+curso de esa ciudad y las llamadas nuevas esperan a que la recarga confirme. Así ninguna llamada junta esquinas de la red
 vieja con un camino de la nueva, que daría un `CZ016` falso. Las otras ciudades no se enteran.
+
+La espera cuenta como parte de la consulta, y la API de Supabase corta las consultas del rol `authenticated` a los 8 segundos
+(`statement_timeout` por defecto). Si la recarga dura más que eso, la llamada que esperaba falla con **`57014`**
+(`canceling statement due to statement timeout`) en vez de contestar: no es un error de datos ni de permisos, la red nueva está bien, y
+repetir la llamada cuando la recarga terminó funciona. Para que casi nadie lo vea, conviene reimportar en un momento tranquilo
+(la recarga solo bloquea mientras corre `ruteo.cargar_red()`: el `analyze` posterior no espera a nadie). El script no pone tope de tiempo a la
+recarga (`statement_timeout = 0`): una ciudad grande puede tardar más de 8 segundos.
 
 ### Atribución
 

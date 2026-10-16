@@ -185,9 +185,9 @@ Una ciudad recién cargada **todavía no tiene calles**, y sin ellas las zonas p
 vista 24 no se pueden dibujar (las tres RPC contestan `CZ015`, «todavía no están cargadas las
 calles de esta ciudad»); las zonas radiales no las necesitan. Las calles de OpenStreetMap se cargan
 **a mano, una vez por ciudad**, en el mismo paso en que se carga la ciudad y se publica su mapa:
-con el archivo de calles del rectángulo de la ciudad, `bash scripts/db-importar-calles.sh
-<id de ciudad> calles.json`. Cómo conseguir el archivo, qué calles entran y cómo se actualizan:
-[`docs/calles-ruteo.md`](calles-ruteo.md).
+con el archivo de calles del rectángulo de la ciudad y la cadena de conexión de la base (la **directa**, puerto 5432):
+`DB_URL=postgresql://… bash scripts/db-importar-calles.sh <id de ciudad> calles.json`. Cómo conseguir el archivo,
+qué calles entran y cómo se actualizan: [`docs/calles-ruteo.md`](calles-ruteo.md).
 
 ### 3. `campania`
 
