@@ -229,14 +229,34 @@ select 'eco', jsonb_build_object('elements', jsonb_build_array(
   pg_temp.via(9222, 'arenal',   'residential', '[[-56.3503,-34.95],[-56.35,-34.95],[-56.3497,-34.95]]'::jsonb)))
   from (select pg_temp.r7(pg_temp.glon(1, 1) + 0.00004) as x, pg_temp.glat(1, 1) as y) e;
 
+-- cb «Franja»: el punto P (-56,0, -35,0) tiene al este un cruce a 100,3 m (0,0011° de longitud) y, al norte y
+-- al sur, 8 cruces a 111-114 m (0,00100-0,00104°). En grados los 8 parecen más cerca (la longitud vale menos
+-- metros que la latitud): un vecino más cercano plano con tope de candidatos deja afuera al verdadero.
+insert into osm_doc
+select 'franja', jsonb_build_object('elements',
+  jsonb_build_array(
+    pg_temp.via(9301, 'Este H', 'residential', '[[-55.9992,-35.0],[-55.9989,-35.0],[-55.9986,-35.0]]'::jsonb),
+    pg_temp.via(9302, 'Este V', 'residential', '[[-55.9989,-35.0003],[-55.9989,-35.0],[-55.9989,-34.9997]]'::jsonb),
+    pg_temp.via(9303, 'Norte', 'residential',
+                '[[-56.0005,-34.999],[-56.0003,-34.999],[-56.0001,-34.999],[-55.9999,-34.999],[-55.9997,-34.999],[-55.9995,-34.999]]'::jsonb),
+    pg_temp.via(9304, 'Sur', 'residential',
+                '[[-56.0005,-35.001],[-56.0003,-35.001],[-56.0001,-35.001],[-55.9999,-35.001],[-55.9997,-35.001],[-55.9995,-35.001]]'::jsonb))
+  || (select jsonb_agg(pg_temp.via(9310 + v.i, 'Norte V' || v.i, 'residential',
+                                    jsonb_build_array(jsonb_build_array(v.x, -34.9993), jsonb_build_array(v.x, -34.999), jsonb_build_array(v.x, -34.9987))) order by v.i)
+        from (values (1, -56.0003::numeric), (2, -56.0001), (3, -55.9999), (4, -55.9997)) v(i, x))
+  || (select jsonb_agg(pg_temp.via(9320 + v.i, 'Sur V' || v.i, 'residential',
+                                    jsonb_build_array(jsonb_build_array(v.x, -35.0013), jsonb_build_array(v.x, -35.001), jsonb_build_array(v.x, -35.0007))) order by v.i)
+        from (values (1, -56.0003::numeric), (2, -56.0001), (3, -55.9999), (4, -55.9997)) v(i, x)));
+
 -- --- fixtures del dominio ------------------------------------------------------------------------
 -- Staff: a1 coordinador de e1 (vigente), e3 (terminada), e4 y e5 (por empezar); a2 coordinador de e2; ad admin;
 --        a0 colportor; a3 sin ningún rol; a4 coordinador con el rol vencido.
 -- Ciudades: c1 Cuadrícula  c2 Ciudad L  c3 Continuas  c4 Rodeo  c5 Empate  c6 Sin calles  c7 Con red vacía de cruces
 --           c8 Atajos  c9 Eco (cruces de otra ciudad, empate exacto, nombres)  ca dada de baja
+--           cb Franja (8 cruces más cerca en grados que el más cerca en metros)
 -- Campañas: e1 Verano (vigente, a1)  e2 Otra (vigente, a2)  e3 Vieja (terminada, a1)  e4 Futura (a1)
 -- campania_ciudad: 71 e1/c1  72 e1/c2  73 e1/c3  74 e1/c4  75 e1/c5  76 e1/c6  77 e1/c7  78 e1/c1 de baja (e5)
---        79 e2/c1  7a e3/c1  7b e4/c1  7c e1/c8  7d e1/c9
+--        79 e2/c1  7a e3/c1  7b e4/c1  7c e1/c8  7d e1/c9  7e e1/cb
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000045' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'calles-' || s || '@example.com', 'x', now(), now(), now()
@@ -260,7 +280,8 @@ insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_ini
   ('01920000-0000-7000-8000-0000000045c7', 'Sin cruces q25',  '01920000-0000-7000-8000-0000000045c0', -32.00, -56.00, 15),
   ('01920000-0000-7000-8000-0000000045c8', 'Atajos q25',      '01920000-0000-7000-8000-0000000045c0', -34.50, -56.40, 15),
   ('01920000-0000-7000-8000-0000000045c9', 'Eco q25',         '01920000-0000-7000-8000-0000000045c0', -34.90, -56.30, 15),
-  ('01920000-0000-7000-8000-0000000045ca', 'Dada de baja q25', '01920000-0000-7000-8000-0000000045c0', -31.00, -56.00, 15);
+  ('01920000-0000-7000-8000-0000000045ca', 'Dada de baja q25', '01920000-0000-7000-8000-0000000045c0', -31.00, -56.00, 15),
+  ('01920000-0000-7000-8000-0000000045cb', 'Franja q25',      '01920000-0000-7000-8000-0000000045c0', -35.00, -56.00, 15);
 update public.ciudad set deleted_at = now() where id = '01920000-0000-7000-8000-0000000045ca';
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
@@ -282,7 +303,8 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id, deleted_at) valu
   ('01920000-0000-7000-8000-00000000457a', '01920000-0000-7000-8000-0000000045e3', '01920000-0000-7000-8000-0000000045c1', null),
   ('01920000-0000-7000-8000-00000000457b', '01920000-0000-7000-8000-0000000045e4', '01920000-0000-7000-8000-0000000045c1', null),
   ('01920000-0000-7000-8000-00000000457c', '01920000-0000-7000-8000-0000000045e1', '01920000-0000-7000-8000-0000000045c8', null),
-  ('01920000-0000-7000-8000-00000000457d', '01920000-0000-7000-8000-0000000045e1', '01920000-0000-7000-8000-0000000045c9', null);
+  ('01920000-0000-7000-8000-00000000457d', '01920000-0000-7000-8000-0000000045e1', '01920000-0000-7000-8000-0000000045c9', null),
+  ('01920000-0000-7000-8000-00000000457e', '01920000-0000-7000-8000-0000000045e1', '01920000-0000-7000-8000-0000000045cb', null);
 
 -- ---------------------------------------------------------------------------
 -- 1. El schema ruteo y los privilegios
@@ -370,6 +392,7 @@ insert into resumen select 'rodeo', pg_temp.cargar('c4', 'rodeo');
 insert into resumen select 'empate', pg_temp.cargar('c5', 'empate');
 insert into resumen select 'atajos', pg_temp.cargar('c8', 'atajos');
 insert into resumen select 'eco', pg_temp.cargar('c9', 'eco');
+insert into resumen select 'franja', pg_temp.cargar('cb', 'franja');
 
 select is((select r - 'ciudad_id' from resumen where k = 'grilla'),
           '{"vias_en_archivo": 17, "vias": 10, "vias_descartadas": 7, "nodos": 21, "cruces": 17, "tramos": 28}'::jsonb,
@@ -386,7 +409,7 @@ select is((select r - 'ciudad_id' from resumen where k = 'continuas'),
 select is((select row(cargada_en is not null, fuente, vias, nodos, cruces, tramos)::text from ruteo.red
             where ciudad_id = '01920000-0000-7000-8000-0000000045c1'),
           '(t,"pgTAP grilla",10,21,17,28)', 'ruteo.red guarda cuándo, la fuente y los conteos');
-select is((select count(*)::int from ruteo.red), 7, 'una fila de ruteo.red por ciudad cargada');
+select is((select count(*)::int from ruteo.red), 8, 'una fila de ruteo.red por ciudad cargada');
 
 -- Cada vía de la cuadrícula se parte en los cruces: una calle de 4 nodos son 3 tramos.
 select is((select count(*)::int from ruteo.tramo where ciudad_id = '01920000-0000-7000-8000-0000000045c1' and via_osm_id between 1000 and 1003), 12,
@@ -607,10 +630,58 @@ select is((select lon from public.esquina_mas_cercana('01920000-0000-7000-8000-0
 select is((select calle_a || '/' || calle_b from public.esquina_mas_cercana('01920000-0000-7000-8000-00000000457d', -56.35, -34.95)),
           'Zorrilla/arenal', 'calle_a y calle_b: orden por código de carácter, no el de la collation de la base');
 
+-- El más cercano en metros no se pierde entre muchos cruces que en grados parecen más cerca (cb «Franja»).
+select pg_temp.actuar_como_servidor();
+select is((select count(*)::int from ruteo.nodo n
+            where n.ciudad_id = '01920000-0000-7000-8000-0000000045cb' and n.es_cruce
+              and extensions.st_distance(n.geom, extensions.st_setsrid(extensions.st_makepoint(-56.0, -35.0), 4326)) < 0.0011), 8,
+          'precondición: 8 cruces están más cerca de P que el del este en grados');
+select ok((select extensions.st_distance(extensions.geography(n.geom), extensions.geography(extensions.st_setsrid(extensions.st_makepoint(-56.0, -35.0), 4326))) between 100 and 101
+             from ruteo.nodo n where n.ciudad_id = '01920000-0000-7000-8000-0000000045cb' and n.es_cruce and n.calle_a = 'Este H'),
+          'precondición: el cruce del este está a unos 100 m de P');
+select ok((select min(extensions.st_distance(extensions.geography(n.geom), extensions.geography(extensions.st_setsrid(extensions.st_makepoint(-56.0, -35.0), 4326)))) > 111
+             from ruteo.nodo n where n.ciudad_id = '01920000-0000-7000-8000-0000000045cb' and n.es_cruce and n.calle_a <> 'Este H'),
+          'precondición: los otros 8 están a más de 111 m');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000045a1');
+select results_eq(
+  $q$ select calle_a, calle_b, distancia_m between 100 and 101 from public.esquina_mas_cercana('01920000-0000-7000-8000-00000000457e', -56.0, -35.0) $q$,
+  $q$ values ('Este H'::text, 'Este V'::text, true) $q$,
+  'con 8 cruces más cerca en grados, engancha al más cercano en metros (Este H y Este V, a 100 m)');
+select is((select count(*)::int from public.tramo_por_calles('01920000-0000-7000-8000-00000000457e', -56.0, -35.0, -55.9989, -35.0)), 1,
+          'y tramo_por_calles() también: P y el cruce del este caen en el mismo cruce (un solo punto)');
+
 -- Una ciudad sin calles cargadas dice qué hacer.
 select throws_ok($$ select * from public.esquina_mas_cercana('01920000-0000-7000-8000-000000004576', -56, -33) $$,
                   'CZ015', 'Todavía no están cargadas las calles de esta ciudad. Pedile a un administrador que las cargue y volvé a intentar.',
                   'una ciudad sin calles cargadas: CZ015 con qué hacer');
+
+-- Recargar las calles mientras alguien dibuja: las RPC toman el lock compartido de la red de la ciudad
+-- (cargar_red() toma el exclusivo, la misma clave), después del permiso. Con dos conexiones: una recarga
+-- confirmada a mitad de una llamada daba un CZ016 falso «entre «<NULL>» y «<NULL>»».
+create or replace function pg_temp.lock_de_red(p_ciudad text, p_modo text) returns boolean language sql as $$
+  select exists (select 1 from pg_locks l
+                  where l.locktype = 'advisory' and l.pid = pg_backend_pid() and l.mode = p_modo and l.granted
+                    and ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('ruteo_red:' || p_ciudad, 0)) $$;
+select ok(pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c2', 'ExclusiveLock'),
+          'cargar_red() tomó el lock exclusivo de la red de c2 (la misma clave que toman las RPC)');
+select ok(not pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c2', 'ShareLock'), 'precondición: todavía ninguna llamada tocó la red de c2');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000045a0');
+select is(pg_temp.codigo($$ select * from public.poligono_por_calles('01920000-0000-7000-8000-000000004572', '[]'::jsonb) $$), '42501',
+          'un colportor no dibuja');
+select ok(not pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c2', 'ShareLock'), 'y el permiso va primero: ni siquiera toma el lock');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000045a1');
+select ok(not pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c8', 'ShareLock'), 'precondición: tampoco la de c8');
+select is(pg_temp.codigo($$ select * from public.esquina_mas_cercana('01920000-0000-7000-8000-00000000457c', -56.5, -34.5) $$), 'OK',
+          'esquina_mas_cercana() de c8');
+select ok(pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c8', 'ShareLock'), 'esquina_mas_cercana() toma el lock compartido de la red de la ciudad');
+select ok(not pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c4', 'ShareLock'), 'precondición: tampoco la de c4');
+select is(pg_temp.codigo($$ select * from public.tramo_por_calles('01920000-0000-7000-8000-000000004574', -56.3, -34.8, -56.2995, -34.8) $$), 'OK',
+          'tramo_por_calles() de c4');
+select ok(pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c4', 'ShareLock'), 'tramo_por_calles() toma el lock compartido');
+select is(pg_temp.codigo($$ select * from public.poligono_por_calles('01920000-0000-7000-8000-000000004572',
+                              '[{"lon": -56.1, "lat": -34.8}, {"lon": -56.097, "lat": -34.8}, {"lon": -56.099, "lat": -34.801}, {"lon": -56.1, "lat": -34.803}]'::jsonb) $$), 'OK',
+          'poligono_por_calles() de c2');
+select ok(pg_temp.lock_de_red('01920000-0000-7000-8000-0000000045c2', 'ShareLock'), 'poligono_por_calles() toma el lock compartido');
 
 -- Puntos que no sirven: CZ008 con qué hacer.
 select throws_ok($$ select * from public.esquina_mas_cercana('01920000-0000-7000-8000-000000004571', 181, -34.9) $$,

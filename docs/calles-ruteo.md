@@ -81,6 +81,9 @@ DB_URL=postgresql://… bash scripts/db-importar-calles.sh <ciudad_id> calles-mo
 
 Es volver a bajar el archivo y volver a correr el script: OSM cambia todos los días y no hay una actualización automática.
 No hace falta ningún aviso: la próxima llamada del panel ya usa la red nueva.
+Se puede reimportar con el panel en uso: cada ciudad tiene un candado (`pg_advisory_xact_lock`): la recarga espera a que terminen las llamadas en
+curso de esa ciudad y las llamadas nuevas esperan a que la recarga confirme (unos segundos). Así ninguna llamada junta esquinas de la red
+vieja con un camino de la nueva, que daría un `CZ016` falso. Las otras ciudades no se enteran.
 
 ### Atribución
 
@@ -180,4 +183,4 @@ del schema, solo para `service_role` (o el dueño, que es quien corre el script 
   no se tocan acá. Un barrio aislado de la red no tiene camino hacia el resto (`CZ016`).
 - **No hay `provincia`** en el catálogo de ciudades ni se usa acá.
 - **El aviso «Comparte la calle Heredia con Belvedere»** de la vista 24 necesita comparar el borde con el de las otras zonas de la ciudad, y no sale de estas
-  funciones (decisión pendiente, ver backend-supabase#25).
+  funciones. Decidido el 16/10: va a la vista previa de `guardar_zona()` (backend-supabase#87), que devolverá las calles compartidas con otras zonas.

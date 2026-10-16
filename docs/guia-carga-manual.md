@@ -179,6 +179,16 @@ select c.id, c.nombre, p.iso_code, c.lat_centro, c.lon_centro,
   sin rectángulo la recibe sola al aplicarla: en ese caso el bloque no hace nada (y la
   revisión del paso 3 muestra el rectángulo igual).
 
+#### Después de cargar la ciudad: sus calles
+
+Una ciudad recién cargada **todavía no tiene calles**, y sin ellas las zonas por esquinas de la
+vista 24 no se pueden dibujar (las tres RPC contestan `CZ015`, «todavía no están cargadas las
+calles de esta ciudad»); las zonas radiales no las necesitan. Las calles de OpenStreetMap se cargan
+**a mano, una vez por ciudad**, en el mismo paso en que se carga la ciudad y se publica su mapa:
+con el archivo de calles del rectángulo de la ciudad, `bash scripts/db-importar-calles.sh
+<id de ciudad> calles.json`. Cómo conseguir el archivo, qué calles entran y cómo se actualizan:
+[`docs/calles-ruteo.md`](calles-ruteo.md).
+
 ### 3. `campania`
 
 ```sql

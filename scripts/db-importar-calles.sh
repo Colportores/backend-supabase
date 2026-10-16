@@ -34,12 +34,21 @@ if ! [[ "$CIUDAD_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
   echo "ciudad_id no es un uuid: $CIUDAD_ID" >&2
   exit 2
 fi
+if [ ! -f "$ARCHIVO" ]; then
+  echo "No encontré el archivo de calles: $ARCHIVO (se busca desde $(pwd)). Pasá la ruta del JSON de Overpass; cómo conseguirlo: docs/calles-ruteo.md." >&2
+  exit 2
+fi
+if [ ! -r "$ARCHIVO" ]; then
+  echo "No tengo permiso para leer el archivo de calles: $ARCHIVO. Revisá sus permisos y volvé a correr el script." >&2
+  exit 2
+fi
 if [ ! -s "$ARCHIVO" ]; then
-  echo "No existe o está vacío: $ARCHIVO" >&2
+  echo "El archivo de calles está vacío: $ARCHIVO. Volvé a bajarlo (docs/calles-ruteo.md) y corré el script de nuevo." >&2
   exit 2
 fi
 
-cd "$(dirname "$0")/.."
+# La ruta, absoluta: psql la lee desde donde corre este script y el archivo puede ser relativo.
+ARCHIVO="$(cd "$(dirname "$ARCHIVO")" && pwd)/$(basename "$ARCHIVO")"
 
 # El archivo entra a psql como variable (:'osm'), leído por el shell: nada del archivo pasa por la
 # línea de comandos ni se interpreta como SQL.

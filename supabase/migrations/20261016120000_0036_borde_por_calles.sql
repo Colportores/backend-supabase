@@ -58,8 +58,11 @@
 --
 -- ## Cómo se calcula (pgRouting 3.4, pgr_dijkstra, no dirigido)
 --
--- Esquina: de los 8 nodos-cruce más cercanos por el índice GiST (distancia plana, rápida) se elige
--- el más cercano en METROS (geography). Un empate se desempata por id. Tramo: pgr_dijkstra sobre
+-- Esquina: el índice GiST (distancia plana en grados, rápida pero deformada: un grado de longitud
+-- mide menos metros que uno de latitud) da un primer candidato; su distancia en METROS (geography)
+-- acota la búsqueda a un radio en grados que cubre a cualquier cruce más cerca que él, y entre todos
+-- los que caen adentro (el índice también los encuentra) se elige el más cercano en metros. Un empate
+-- se desempata por id. Tramo: pgr_dijkstra sobre
 -- los tramos de la ciudad con costo = largo en metros y directed = false. Se busca primero dentro
 -- del rectángulo de los dos puntos agrandado en max(1000 m, distancia entre ellos): como cualquier
 -- camino que salga de ahí mide al menos el doble de ese margen, un resultado de hasta 2 × margen es
@@ -69,6 +72,14 @@
 -- pgRouting 3.4 llama a sus funciones internas sin calificar, así que NO se puede llamar con
 -- search_path vacío: lo hace ruteo.dijkstra(), una envoltura interna con search_path = extensions
 -- (schema de Supabase que solo escriben los administradores) que solo ejecuta pgr_dijkstra.
+--
+-- ## Recargar las calles mientras alguien dibuja
+--
+-- ruteo.cargar_red() toma un advisory lock EXCLUSIVO por ciudad y public.ciudad_para_dibujar() uno
+-- COMPARTIDO (la misma clave, después del permiso): una recarga espera a que terminen las llamadas en
+-- curso y las llamadas nuevas esperan a que la recarga confirme. Sin esto, una llamada que engancha
+-- las esquinas antes de la recarga y busca el camino después (los ids de nodo cambian al recargar)
+-- daría un CZ016 falso, «no hay camino entre «<NULL>» y «<NULL>»».
 --
 -- ## Modelo de permisos
 --
@@ -109,9 +120,11 @@
 --     por POST. El `ciudadId` del contrato del panel es el `campania_ciudad_id` de la pestaña. La
 --     forma de cada respuesta está en docs/calles-ruteo.md.
 --   · `distancia_m` de esquina_mas_cercana() es lo lejos que quedó el cruce del punto: sin tope, el
---     panel decide si un cruce a 800 m sigue siendo «la esquina de al lado» (pendiente, ver el PR).
+--     panel decide si un cruce a 800 m sigue siendo «la esquina de al lado» (decidido el 16/10: sin tope;
+--     el coordinador ve en el mapa dónde se enganchó la esquina antes de agregarla).
 --   · El aviso «Comparte la calle Heredia con Belvedere» (vista 24) NO sale de estas funciones: hace
---     falta comparar el borde nuevo con el de las otras zonas de la ciudad (pendiente, ver el PR).
+--     falta comparar el borde nuevo con el de las otras zonas de la ciudad. Decidido el 16/10: va a
+--     la vista previa de guardar_zona(), en un issue de seguimiento del backend (ver el PR).
 --   · No tocan el sync: no hay entidad nueva ni cambia ninguna firma que use la app móvil.
 --   · docs-organizacion: esquema-datos.md no menciona el schema `ruteo` (datos de referencia que no
 --     son una entidad del dominio); ADR-018 ya dice «guardar esa red en la base, con su tamaño».
@@ -453,9 +466,13 @@ begin
 end;
 $$;
 
--- El cruce de calles más cercano de la ciudad a un punto, en metros (geography). Los 8 más cercanos
--- por el índice GiST (distancia plana en grados, que deforma un poco) se reordenan por distancia
--- real; el empate lo desempata el id. Ninguna fila si la ciudad no tiene cruces.
+-- El cruce de calles más cercano de la ciudad a un punto, en metros (geography). El índice GiST
+-- (distancia plana en grados, que deforma: un grado de longitud mide menos metros que uno de
+-- latitud) da el primer candidato y su distancia en metros acota la búsqueda: cualquier cruce a esa
+-- distancia o menos está a menos de `grados` del punto (un grado de latitud mide al menos 110 574 m
+-- y uno de longitud 111 320 m × cos de la latitud más lejana; 5 % de aire). De todos los que caen
+-- adentro (st_dwithin también usa el índice) gana el más cercano en metros; el empate lo desempata
+-- el id. Ninguna fila si la ciudad no tiene cruces.
 create function ruteo.cruce_mas_cercano(p_ciudad_id uuid, p_lon double precision, p_lat double precision)
 returns table (nodo_id bigint, lon double precision, lat double precision,
                calle_a text, calle_b text, distancia_m double precision)
@@ -465,23 +482,38 @@ set search_path = ''
 as $$
   with punto as (
     select extensions.st_setsrid(extensions.st_makepoint(p_lon, p_lat), 4326) as g
+  ),
+  primero as (
+    select extensions.st_distance(extensions.geography(c.geom), extensions.geography(punto.g)) as d
+      from punto,
+           lateral (
+             select n.geom
+               from ruteo.nodo n
+              where n.ciudad_id = p_ciudad_id
+                and n.es_cruce
+              order by n.geom operator(extensions.<->) punto.g
+              limit 1
+           ) c
+  ),
+  radio as (
+    select punto.g,
+           primero.d * 1.05
+             / least(110574.0,
+                     111320.0 * cos(radians(least(abs(p_lat) + primero.d / 110574.0, 89.0)))) as grados
+      from punto, primero
   )
-  select c.id,
-         extensions.st_x(c.geom),
-         extensions.st_y(c.geom),
-         c.calle_a,
-         c.calle_b,
-         extensions.st_distance(extensions.geography(c.geom), extensions.geography(punto.g))
-    from punto,
-         lateral (
-           select n.id, n.geom, n.calle_a, n.calle_b
-             from ruteo.nodo n
-            where n.ciudad_id = p_ciudad_id
-              and n.es_cruce
-            order by n.geom operator(extensions.<->) punto.g
-            limit 8
-         ) c
-   order by 6, c.id
+  select n.id,
+         extensions.st_x(n.geom),
+         extensions.st_y(n.geom),
+         n.calle_a,
+         n.calle_b,
+         extensions.st_distance(extensions.geography(n.geom), extensions.geography(radio.g))
+    from radio
+    join ruteo.nodo n
+      on n.ciudad_id = p_ciudad_id
+     and n.es_cruce
+     and extensions.st_dwithin(n.geom, radio.g, radio.grados)
+   order by 6, n.id
    limit 1;
 $$;
 
@@ -610,6 +642,10 @@ begin
   if v_cc.deleted_at is not null then
     perform public.lanzar_motivo_mapa('CIUDAD_FUERA_DE_CAMPANIA');
   end if;
+
+  -- Una recarga de las calles en curso (cargar_red(), lock exclusivo) se espera; y mientras dura
+  -- esta llamada, una recarga espera a que termine: los ids de nodo no cambian a mitad de camino.
+  perform pg_advisory_xact_lock_shared(hashtextextended('ruteo_red:' || v_cc.ciudad_id::text, 0));
 
   if not exists (select 1 from ruteo.red r where r.ciudad_id = v_cc.ciudad_id) then
     raise exception 'Todavía no están cargadas las calles de esta ciudad. Pedile a un administrador que las cargue y volvé a intentar.'
