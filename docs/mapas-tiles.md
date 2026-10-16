@@ -463,7 +463,7 @@ vuelve a cortar esa zona y guarda su enlace nuevo ([§ Mapas de las zonas](#mapa
 
 ## Probar contra un Storage real
 
-La base de CI no trae el servicio Storage (el schema `storage` está vacío), así que **la migración
+La base del job `migraciones` de CI no trae el servicio Storage (el schema `storage` está vacío), así que **la migración
 `0029_bucket_mapas.sql` se saltea** ahí y **pgTAP 0036 también** (con un `skip` explícito). Para probarlas de
 verdad, y el publicador de punta a punta, sin credenciales ni proyecto en la nube:
 
@@ -483,14 +483,25 @@ publica de nuevo (tiene que dar «sin cambios») y comprueba que con la clave an
 comprueba que el enlace quedó en `public.zona.paquete_mapa` con el mismo tamaño y SHA-256 del archivo del bucket, que el
 catálogo público no lo nombra y que la consola no imprimió su nombre (`tiles/prueba-storage/zona-publicada.mjs`), y que
 publicar las zonas otra vez no cambia nada (ni `sync_version`). Con `SOLO_BASE=1` se detiene después de pgTAP 0036 (sin
-red ni recorte). Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
+red ni recorte): es lo que corre CI. Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
 
-**CI no ejercita nada de esto.** Sus jobs usan un Postgres sin el servicio Storage: la 0029 y pgTAP 0036 se saltean
-(el job de migraciones las corre y las marca como salteadas) y el job **tiles** (`npm ci && npm test`) prueba el
-publicador contra un Storage de mentira. Sumar un job con un Storage real a CI es el issue de seguimiento
-[backend-supabase#75](https://github.com/Colportores/backend-supabase/issues/75), **a hacer antes de cualquier otra
-migración que toque `storage.objects`**; hasta entonces, `correr.sh` se corre a mano cuando se toca la 0029, la 0036
-o el publicador.
+### Qué corre CI y qué no
+
+- **El job `storage`** (backend-supabase#75) corre `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh` en cada PR y push:
+  levanta la base y el `storage-api` oficial (de `ghcr.io`, el mismo digest que en ECR Public), espera a que Storage cree
+  sus tablas, aplica las migraciones, comprueba que **la 0029 creó el bucket `mapas`** y corre **pgTAP 0036 completo**.
+  **Falla si la 0029 o la 0036 se saltean**: pgTAP corre con `EXIGIR_STORAGE=1`, que convierte el `skip` de «la base no
+  tiene Storage» en una falla, y el script además falla si algún test sale como `SKIP`. Un cambio que rompa el bucket o las
+  políticas de `storage.objects` ya no pasa en verde. Tarda unos minutos, casi todo en bajar el `storage-api` (~1,4 GB).
+- **El job `migraciones`** sigue corriendo la 0029 y pgTAP 0036 contra un Postgres sin Storage: ahí se saltean (el `skip`
+  queda a la vista en el log) y está bien, porque quien las ejercita es el job `storage`. Lo que se prueba ahí es que la
+  migración no rompe el resto cuando falta el servicio.
+- **El job `tiles`** (`npm ci && npm test`) prueba el publicador contra un Storage de mentira.
+- **Lo que CI no corre**: lo que necesita red y recorte real (publicar el estilo y las ciudades, `verificar`, las zonas).
+  Eso sigue siendo `bash tiles/prueba-storage/correr.sh` entero, a mano, cuando se toca el publicador.
+- Para probar en la máquina lo mismo que CI: `docker compose -f compose.dev.yml build cli` (una sola vez) y
+  `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh`. Para ver el `skip` o la falla sin Storage:
+  `EXIGIR_STORAGE=1 bash scripts/db-test.sh` contra una base sin Storage falla en la 0036 (sin la variable, se saltea).
 
 ## Qué falta
 

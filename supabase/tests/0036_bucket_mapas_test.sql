@@ -3,12 +3,23 @@
 -- archivo que se publican; y NADIE más que la clave de servicio puede listar, subir, pisar ni borrar
 -- objetos (ni `anon` ni `authenticated`: no hay políticas sobre storage.objects que los habiliten).
 --
--- Las tablas de `storage` las crea el servicio Storage, no la imagen de Postgres: contra la base de
--- CI (solo `db`) no existen y las pruebas se saltean, a la vista (SKIP): el job `migraciones` de CI
--- NO ejercita esta prueba. Con Storage corriendo se ejecutan todas: `supabase start`, el proyecto
--- hosteado, o `bash tiles/prueba-storage/correr.sh` (levanta un storage-api real, con `SOLO_BASE=1`
--- se detiene después de esta prueba). psql decide con \if, porque un SELECT sobre una tabla que no
--- existe no llega ni a parsearse.
+-- Las tablas de `storage` las crea el servicio Storage, no la imagen de Postgres: contra la base del
+-- job `migraciones` de CI (solo `db`) no existen y las pruebas se saltean, a la vista (SKIP). Con Storage
+-- corriendo se ejecutan todas: `supabase start`, el proyecto hosteado, o `bash tiles/prueba-storage/correr.sh`
+-- (levanta un storage-api real; con `SOLO_BASE=1` se detiene después de esta prueba), que es lo que corre
+-- el job `storage` de CI (backend-supabase#75). psql decide con \if, porque un SELECT sobre una tabla que
+-- no existe no llega ni a parsearse.
+--
+-- EXIGIR_STORAGE=1 (variable de entorno; la ponen correr.sh y el job `storage`) vuelve la falta de Storage
+-- una FALLA en vez de un SKIP: así una prueba que tiene que correr contra un Storage real no pasa en
+-- verde sin haber probado nada. Necesita psql 15 o más (\getenv).
+\getenv exigir_storage EXIGIR_STORAGE
+\if :{?exigir_storage}
+select :'exigir_storage' = '1' as exigir \gset
+\else
+\set exigir false
+\endif
+
 begin;
 select * from no_plan();
 
@@ -134,7 +145,11 @@ reset storage.allow_delete_query;
 
 \else
 
+\if :exigir
+select fail('EXIGIR_STORAGE=1 y la base no tiene el servicio Storage (storage.buckets / storage.objects): la 0029 y esta prueba no se ejercitaron');
+\else
 select skip('la base no tiene el servicio Storage (storage.buckets / storage.objects): no hay bucket que probar', 1);
+\endif
 
 \endif
 
