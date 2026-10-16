@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Prueba el bucket `mapas` y el publicador contra un Storage DE VERDAD, en Docker, sin credenciales ni
-# proyecto en la nube. Es lo que CI no hace (la base de CI no trae el servicio Storage):
+# proyecto en la nube. La base del job `migraciones` de CI no trae el servicio Storage (la 0029 y pgTAP 0036 se
+# saltean ahí); por eso CI corre este script con SOLO_BASE=1 en su job `storage` (backend-supabase#75), y falla
+# si la 0029 o la 0036 se saltean. Entero, se corre a mano:
 #
 #   1. levanta la base de compose.dev.yml + el storage-api oficial + PostgREST + un gateway que imita a Kong;
-#   2. aplica las migraciones (la 0029 crea el bucket) y corre pgTAP 0036, con las aserciones completas;
+#   2. aplica las migraciones (la 0029 crea el bucket) y corre los pgTAP que dependen de Storage (hoy la 0036),
+#      con las aserciones completas;
 #   3. carga Montevideo en public.ciudad con el bloque de docs/guia-carga-manual.md (el mismo que pega
 #      Cristian: lo extrae de la guía, no tiene copia); comprueba que sin su rectángulo el publicador no
 #      publica nada ni sube nada; publica el estilo y Montevideo (recorte REAL del build más nuevo de
@@ -18,11 +21,17 @@
 # Uso, desde la raíz del repo:   bash tiles/prueba-storage/correr.sh
 # Variables: PROYECTO (compose, por defecto tiles-storage), DB_PORT (55452), CIUDAD (montevideo),
 #            DEJAR_ARRIBA=1 (no apagar al terminar, para mirar con curl; el gateway queda en :8000 dentro de la red),
-#            SOLO_BASE=1 (parar después del paso 2: la base, el Storage y pgTAP 0036; sin red ni recorte).
+#            SOLO_BASE=1 (parar después del paso 2: la base, el Storage y los pgTAP de Storage; sin red, sin recorte y sin
+#            cargar ciudades; es lo que corre el job `storage` de CI).
+# Si la 0029 no creó el bucket o algún pgTAP de Storage se saltea, el script FALLA (no es un aviso): pgTAP corre con
+# EXIGIR_STORAGE=1 (ver supabase/tests/0036_bucket_mapas_test.sql). Corre TODOS los pgTAP de supabase/tests que
+# nombran `hay_storage` o las tablas de storage (storage.buckets / storage.objects): una prueba nueva que dependa del
+# servicio entra sola, y se saltea (a la vista) en el job `migraciones`, que no tiene Storage.
 #
-# Baja, la primera vez: public.ecr.aws/supabase/storage-api (~1,4 GB) y node:22-bookworm (~1,6 GB; la
-# variante slim no trae los certificados que `pmtiles` necesita para leer build.protomaps.com).
-# Nunca construye imágenes.
+# Baja, la primera vez: storage-api (~1,4 GB) y node:22-bookworm (~1,6 GB; la variante slim no trae los
+# certificados que `pmtiles` necesita para leer build.protomaps.com; con SOLO_BASE=1 no hace falta). Nunca
+# construye imágenes: necesita la `backend-supabase-dev:latest` de compose.dev.yml (`docker compose -f compose.dev.yml
+# build cli`, lo que hace CI antes).
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -33,8 +42,10 @@ export DB_PORT="${DB_PORT:-55452}"
 P="${PROYECTO:-tiles-storage}"
 RED="${P}_default"
 CIUDAD="${CIUDAD:-montevideo}"
-STORAGE_IMAGEN="public.ecr.aws/supabase/storage-api:v1.61.10"
-REST_IMAGEN="public.ecr.aws/supabase/postgrest:v14.5"
+# ghcr.io y no public.ecr.aws: mismo tag y mismo digest (storage-api sha256:ff78c60e..., postgrest sha256:bb289d00...
+# en linux/amd64), pero sin el límite de pulls anónimos que rompía CI (#27; ver compose.dev.yml).
+STORAGE_IMAGEN="ghcr.io/supabase/storage-api:v1.61.10"
+REST_IMAGEN="ghcr.io/supabase/postgrest:v14.5"
 NODE_IMAGEN="node:22-bookworm"
 SECRETO="super-secret-jwt-token-with-at-least-32-characters-long"
 C=(docker compose -p "$P" -f compose.dev.yml)
@@ -51,11 +62,22 @@ paso() { printf '\n=== %s\n' "$1"; }
 
 paso "base de datos"
 "${C[@]}" up -d --wait db
+psql_db() { "${C[@]}" exec -T db psql -U supabase_admin -d postgres -At -v ON_ERROR_STOP=1 "$@"; }
 
 # La imagen de la base trae los roles de Storage y de PostgREST sin clave: sus servicios necesitan entrar con una.
 "${C[@]}" exec -T db psql -U supabase_admin -d postgres -q \
   -c "alter role supabase_storage_admin with login password 'postgres'" \
   -c "alter role authenticator with login password 'postgres'"
+
+paso "imágenes"
+# Un registro que contesta mal una vez (un TLS handshake timeout, por ejemplo) no tiene que tirar la prueba: 3 intentos.
+for imagen in "$STORAGE_IMAGEN" "$REST_IMAGEN" node:22-bookworm-slim; do
+  for intento in 1 2 3; do
+    docker pull -q "$imagen" >/dev/null && break
+    if [ "$intento" = 3 ]; then echo "FALLO: no pude bajar $imagen"; exit 1; fi
+    sleep 5
+  done
+done
 
 read -r ANON SERVICIO < <(docker run --rm -v "$PRUEBA:/p:ro" node:22-bookworm-slim node /p/jwt.mjs "$SECRETO")
 
@@ -89,14 +111,60 @@ for intento in $(seq 1 40); do
   sleep 3
 done
 
-paso "migraciones (la 0029 crea el bucket) y pgTAP 0036"
-"${C[@]}" run --rm cli bash scripts/db-migrate.sh | grep -E "0029|ERROR" || true
-"${C[@]}" run --rm cli bash -c \
-  'psql "$DB_URL" -q -c "create extension if not exists pgtap with schema extensions;" && pg_prove --ext .sql --verbose supabase/tests/0036_bucket_mapas_test.sql'
+# storage-api crea sus tablas (storage.buckets, storage.objects) al arrancar, y contesta /status antes o después de
+# terminar según la versión. La 0029 se saltea sin avisar si todavía no existen: se espera a que estén, y si no
+# aparecen se falla, en vez de migrar y dejar que el bucket falte.
+paso "las tablas de Storage"
+for intento in $(seq 1 40); do
+  if [ "$(psql_db -c "select to_regclass('storage.buckets') is not null and to_regclass('storage.objects') is not null")" = "t" ]; then
+    echo "storage.buckets y storage.objects existen (intento $intento)"
+    break
+  fi
+  if [ "$intento" = 40 ]; then docker logs --tail 40 "$P-storage"; echo "FALLO: storage-api no creó sus tablas en la base"; exit 1; fi
+  sleep 3
+done
+
+paso "migraciones (la 0029 crea el bucket) y pgTAP de Storage"
+if ! SALIDA_MIGRACIONES="$("${C[@]}" run --rm -T cli bash scripts/db-migrate.sh 2>&1)"; then
+  printf '%s\n' "$SALIDA_MIGRACIONES" | tail -40
+  echo "FALLO: las migraciones no se aplicaron"
+  exit 1
+fi
+printf '%s\n' "$SALIDA_MIGRACIONES" | grep -E "0029|ERROR" || true
+# El CLI no muestra los avisos de la 0029 (RAISE NOTICE): lo que dice si corrió es el bucket.
+[ "$(psql_db -c "select count(*) from storage.buckets where id = 'mapas'")" = "1" ] \
+  || { echo "FALLO: la 0029 no creó el bucket mapas (se salteó: la base no tenía las tablas de Storage al migrar)"; exit 1; }
+echo "la 0029 creó el bucket mapas"
+
+# Todos los pgTAP que dependen del servicio Storage: los que nombran `hay_storage` (el guard \if de la 0036) o las tablas
+# de storage. Una prueba nueva de este tipo entra acá sin tocar el script; en el job `migraciones` (sin Storage) se
+# saltea a la vista.
+TESTS_STORAGE="$(grep -lE 'hay_storage|storage\.(buckets|objects)' supabase/tests/*.sql | sort | tr '\n' ' ')"
+[ -n "${TESTS_STORAGE// /}" ] || { echo "FALLO: no encuentro ningún pgTAP de Storage en supabase/tests"; exit 1; }
+echo "pgTAP de Storage: $TESTS_STORAGE"
+# EXIGIR_STORAGE=1: sin Storage la prueba FALLA en vez de saltearse. Y si igual algún test sale como SKIP, también.
+# `-e` y no una variable puesta delante del comando: por Docker, esa no entra al contenedor.
+# shellcheck disable=SC2086  # la lista son rutas del repo, sin espacios
+if ! SALIDA_PGTAP="$("${C[@]}" run --rm -T -e EXIGIR_STORAGE=1 cli bash -c \
+  'psql "$DB_URL" -q -c "create extension if not exists pgtap with schema extensions;" && pg_prove --ext .sql --verbose "$@"' _ \
+  $TESTS_STORAGE 2>&1)"; then
+  printf '%s\n' "$SALIDA_PGTAP"
+  echo "FALLO: algún pgTAP de Storage no pasó"
+  exit 1
+fi
+printf '%s\n' "$SALIDA_PGTAP"
+if grep -qiE "# SKIP|skipped" <<<"$SALIDA_PGTAP"; then echo "FALLO: algún pgTAP de Storage se salteó pruebas contra un Storage real"; exit 1; fi
+[ "$(grep -cE '^ok [0-9]+ - ' <<<"$SALIDA_PGTAP")" -ge 1 ] || { echo "FALLO: los pgTAP de Storage no corrieron ninguna prueba"; exit 1; }
+
+# SOLO_BASE=1 para acá: la base, el Storage y los pgTAP de Storage (lo que corre el job `storage` de CI). Lo de abajo
+# necesita red y carga la ciudad.
+if [ "${SOLO_BASE:-0}" = "1" ]; then
+  echo "Base y Storage listos (SOLO_BASE=1): migraciones y pgTAP de Storage pasaron."
+  exit 0
+fi
 
 # Lo que el proyecto real ya tiene antes de la primera publicación: el país UY (§ 1 de la guía de carga manual).
 # Montevideo, con su rectángulo, se carga después con el bloque de la guía (§ 2).
-psql_db() { "${C[@]}" exec -T db psql -U supabase_admin -d postgres -At -v ON_ERROR_STOP=1 "$@"; }
 psql_db -c "insert into public.pais (nombre, iso_code) select 'Uruguay', 'UY' where not exists (select 1 from public.pais where iso_code = 'UY')" >/dev/null
 
 # El bloque de Montevideo de la guía: el primer ```sql que sigue a su título (sin copia, para que no se desfasen).
@@ -118,11 +186,6 @@ done
 AMBITO_ESPERADO="$(psql_db -c "select c.id from public.ciudad c join public.pais p on p.id = c.pais_id where p.iso_code = 'UY' and c.nombre = 'Montevideo' and c.bbox_oeste is not null")"
 [ -n "$AMBITO_ESPERADO" ] || { echo "FALLO: Montevideo quedó sin rectángulo"; exit 1; }
 echo "Montevideo en public.ciudad: $AMBITO_ESPERADO"
-
-if [ "${SOLO_BASE:-0}" = "1" ]; then
-  echo "Base y Storage listos (SOLO_BASE=1): migraciones y pgTAP 0036 pasaron."
-  exit 0
-fi
 
 NODO=(docker run --rm --network "$RED" -v "$RAIZ:/repo" -w /repo/tiles
   -e SUPABASE_URL="http://$P-gateway:8000" -e SUPABASE_SERVICE_ROLE_KEY="$SERVICIO" -e ANON_KEY="$ANON"
