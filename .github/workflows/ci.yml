@@ -37,8 +37,9 @@ jobs:
   # El bucket `mapas` contra un Storage de verdad (backend-supabase#75). La base del job `migraciones` no
   # trae el servicio Storage (el schema `storage` está vacío): ahí la migración 0029 y pgTAP 0036 se
   # saltean. Este job levanta el storage-api oficial (imagen de ghcr.io, sin credenciales), aplica las
-  # migraciones y corre pgTAP 0036 completo: es la parte de base de `tiles/prueba-storage/correr.sh`
-  # (`SOLO_BASE=1`, sin red ni recorte). FALLA si la 0029 no creó el bucket o si la 0036 se saltea
+  # migraciones y corre los pgTAP que dependen de Storage (hoy la 0036): es la parte de base de
+  # `tiles/prueba-storage/correr.sh` (`SOLO_BASE=1`: se detiene después de pgTAP, sin red, sin recorte y sin
+  # cargar ciudades). FALLA si la 0029 no creó el bucket o si algún pgTAP de Storage se saltea
   # (`EXIGIR_STORAGE=1`), para que un cambio que rompa el bucket o las políticas de `storage.objects`
   # no pase en verde. Pasos y variables: docs/mapas-tiles.md § «Probar contra un Storage real».
   storage:

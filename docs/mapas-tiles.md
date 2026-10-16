@@ -482,26 +482,34 @@ publica de nuevo (tiene que dar «sin cambios») y comprueba que con la clave an
 `zonas/`. Después **crea una zona** en una campaña vigente, publica su paquete (recorte real por su polígono),
 comprueba que el enlace quedó en `public.zona.paquete_mapa` con el mismo tamaño y SHA-256 del archivo del bucket, que el
 catálogo público no lo nombra y que la consola no imprimió su nombre (`tiles/prueba-storage/zona-publicada.mjs`), y que
-publicar las zonas otra vez no cambia nada (ni `sync_version`). Con `SOLO_BASE=1` se detiene después de pgTAP 0036 (sin
-red ni recorte): es lo que corre CI. Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
+publicar las zonas otra vez no cambia nada (ni `sync_version`). Con `SOLO_BASE=1` se detiene después de los pgTAP de
+Storage (hoy la 0036): sin red, sin recorte y sin cargar Montevideo. Es lo que corre CI. Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
 
 ### Qué corre CI y qué no
 
 - **El job `storage`** (backend-supabase#75) corre `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh` en cada PR y push:
   levanta la base y el `storage-api` oficial (de `ghcr.io`, el mismo digest que en ECR Public), espera a que Storage cree
-  sus tablas, aplica las migraciones, comprueba que **la 0029 creó el bucket `mapas`** y corre **pgTAP 0036 completo**.
-  **Falla si la 0029 o la 0036 se saltean**: pgTAP corre con `EXIGIR_STORAGE=1`, que convierte el `skip` de «la base no
-  tiene Storage» en una falla, y el script además falla si algún test sale como `SKIP`. Un cambio que rompa el bucket o las
-  políticas de `storage.objects` ya no pasa en verde. Tarda unos minutos, casi todo en bajar el `storage-api` (~1,4 GB).
+  sus tablas, aplica las migraciones, comprueba que **la 0029 creó el bucket `mapas`** y corre **todos los pgTAP que
+  dependen de Storage** (hoy, la 0036 completa). **Falla si la 0029 o alguno de esos tests se saltean**: pgTAP corre con
+  `EXIGIR_STORAGE=1`, que convierte el `skip` de «la base no tiene Storage» en una falla, y el script además falla si
+  algún test sale como `SKIP`. Un cambio que rompa el bucket o las políticas de `storage.objects` ya no pasa en verde.
+  Tarda unos minutos, casi todo en bajar el `storage-api` (~1,4 GB).
+- **Qué pgTAP corre ahí**: `correr.sh` toma todos los de `supabase/tests` que nombran `hay_storage` o las tablas de
+  storage (`storage.buckets`, `storage.objects`). Una prueba nueva que dependa del servicio sigue el patrón de la 0036
+  (`\if :hay_storage` … `\else` `skip`, y `fail()` cuando `EXIGIR_STORAGE=1`) y entra sola al job `storage`; en el job
+  `migraciones` se saltea a la vista.
 - **El job `migraciones`** sigue corriendo la 0029 y pgTAP 0036 contra un Postgres sin Storage: ahí se saltean (el `skip`
   queda a la vista en el log) y está bien, porque quien las ejercita es el job `storage`. Lo que se prueba ahí es que la
   migración no rompe el resto cuando falta el servicio.
 - **El job `tiles`** (`npm ci && npm test`) prueba el publicador contra un Storage de mentira.
-- **Lo que CI no corre**: lo que necesita red y recorte real (publicar el estilo y las ciudades, `verificar`, las zonas).
-  Eso sigue siendo `bash tiles/prueba-storage/correr.sh` entero, a mano, cuando se toca el publicador.
+- **Lo que CI no corre**: lo que necesita red y recorte real (publicar el estilo y las ciudades, `verificar`, las zonas)
+  y la carga de Montevideo con el bloque de `docs/guia-carga-manual.md` (dos veces, una sola ciudad). Eso sigue siendo
+  `bash tiles/prueba-storage/correr.sh` entero, a mano, cuando se toca el publicador o ese bloque de la guía.
 - Para probar en la máquina lo mismo que CI: `docker compose -f compose.dev.yml build cli` (una sola vez) y
-  `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh`. Para ver el `skip` o la falla sin Storage:
-  `EXIGIR_STORAGE=1 bash scripts/db-test.sh` contra una base sin Storage falla en la 0036 (sin la variable, se saltea).
+  `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh`. Para ver el `skip` o la falla sin Storage, contra una base sin él
+  (la de `compose.dev.yml`): `docker compose -f compose.dev.yml run --rm -e EXIGIR_STORAGE=1 cli bash scripts/db-test.sh`
+  falla en la 0036; sin la variable, se saltea. Con `-e`: una variable puesta delante de `docker compose` no entra al
+  contenedor y la 0036 daría `PASS` con el `skip`.
 
 ## Qué falta
 

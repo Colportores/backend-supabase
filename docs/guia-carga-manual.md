@@ -185,7 +185,11 @@ Una ciudad recién cargada **todavía no tiene calles**, y sin ellas las zonas p
 vista 24 no se pueden dibujar (las tres RPC contestan `CZ015`, «todavía no están cargadas las
 calles de esta ciudad»); las zonas radiales no las necesitan. Las calles de OpenStreetMap se cargan
 **a mano, una vez por ciudad**, en el mismo paso en que se carga la ciudad y se publica su mapa:
-con el archivo de calles del rectángulo de la ciudad y la cadena de conexión de la base (la **directa**, puerto 5432):
+con el archivo de calles del rectángulo de la ciudad y la cadena de conexión de la base (la **directa**, puerto 5432).
+Con Docker, como el resto del repo:
+`docker compose -f compose.dev.yml run --rm -e DB_URL=postgresql://… cli bash scripts/db-importar-calles.sh <id de ciudad> calles.json`
+(con `-e`: compose ya fija un `DB_URL`, el de la base local, y uno puesto delante del comando no entra al contenedor, así que
+la carga iría a la base local; el archivo tiene que estar dentro del repo, que el contenedor ve en `/work`). Sin Docker:
 `DB_URL=postgresql://… bash scripts/db-importar-calles.sh <id de ciudad> calles.json`. Cómo conseguir el archivo,
 qué calles entran y cómo se actualizan: [`docs/calles-ruteo.md`](calles-ruteo.md).
 
