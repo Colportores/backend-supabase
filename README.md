@@ -206,6 +206,23 @@ select public.quitar_zona(campania_id, usuario_id);                -- «Quitar»
 - **La inscripción en el celular.** `campania_colportor` baja por el pull (`0014`), solo con las inscripciones propias: `sync.entidad.columna_duenio` filtra por `usuario_id = auth.uid()` aunque la RLS le muestre más al coordinador o al ADMIN. Con eso la app sabe su campaña y su zona, y recibe el cambio cuando se la asignan, se la quitan o dan de baja la zona. La app no la escribe (`ENTIDAD_DE_SOLO_LECTURA`).
 - **Códigos.** `CZ008`..`CZ014`: ver los headers de las migraciones `0008` y `0012`. `CZ007` (superposición) y `CZ010` (baja con asignados) ya no se usan.
 
+### Lecturas del panel (sin BFF)
+
+Desde la migración `0033` (backend-supabase#54, [ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)) el panel de coordinadores lee con cuatro RPC y nunca con `.from()`. Lo que antes armaba `bff-coordinadores` con `select` es ahora esto (la forma de cada respuesta es el contrato del panel, `src/datos/shell/contrato.ts` y `src/datos/equipo/zonas/contrato.ts` en `front-coordinadores-web`):
+
+```sql
+select * from public.mi_perfil();                                    -- topbar: usuario_id, nombre, apellido
+select * from public.ciudades_de_campania(campania_id);              -- las pestañas de la vista 24
+select * from public.ciudades_del_catalogo(campania_id, texto);      -- el buscador de «+ Agregar ciudad»
+select * from public.zonas_de_ciudad(campania_id, campania_ciudad_id); -- las zonas de una pestaña
+```
+
+- **Quién.** Se llaman con el JWT del usuario. Sin sesión, un colportor, un usuario sin rol o con el rol vencido: `42501`. Las tres de campaña piden además ser el coordinador de esa campaña (o un ADMIN), con la misma comprobación que `asignar_zona()` (`exigir_lectura_de_campania()` → `motivo_campania_del_coordinador()`): el coordinador de otra campaña recibe `42501` (el permiso va antes que la existencia y la vigencia, así que no se averigua qué campañas hay); campaña inexistente o dada de baja, `CZ001`; no vigente (no empezó o ya terminó), `CZ002`. `zonas_de_ciudad()` exige además una ciudad viva de esa campaña: si no, `CZ012`, sea de otra campaña, inexistente o quitada.
+- **Qué devuelven.** `ciudades_de_campania()`: por ciudad viva, `campania_ciudad_id` (el id de la pestaña, el que recibe `guardar_zona()`), `ciudad_id` (el del catálogo, el que recibe `agregar_ciudad_a_campania()`), `nombre`, `lat_centro`, `lon_centro`, `zoom_inicial` y `cantidad_zonas` (las vivas). `ciudades_del_catalogo()`: las ciudades vivas del catálogo que no están en la campaña, las que contienen el texto sin distinguir mayúsculas ni tildes (primero las que empiezan con él, después A-Z; sin texto, todas; el texto es literal, `%` y `_` no son comodines). `zonas_de_ciudad()`: por zona viva, su forma (`tipo_forma`, `color`, `centro_lat`, `centro_lon`, `radio_m` si es RADIAL; `esquinas`, un jsonb `[{orden, lat, lon, calle_a, calle_b}]`, si es ESQUINAS), `poligono_geojson`, `colportores` (jsonb `[{usuario_id, nombre, apellido, suspendido}]` de las inscripciones vivas con esa zona) y `ubicaciones_registradas` (cuántas ubicaciones vivas de la ciudad caen adentro, la misma cuenta que «Incluye N ubicaciones»).
+- **Qué no devuelven.** Ni email, ni ubicaciones, ni espacios, ni personas, ni visitas, ni ventas: de las ubicaciones, un número. Ninguna escribe.
+- **Cómo.** `mi_perfil()` es `SECURITY INVOKER` (la RLS de `usuario` le deja leer la fila propia); las otras tres son `SECURITY DEFINER` con `search_path` vacío y columnas explícitas, porque el coordinador no lee `usuario` ajeno. `EXECUTE` solo para `authenticated`. Son `VOLATILE` (llaman a `lanzar_motivo_zona()`): `supabase-js` las manda por `POST`.
+- **Pendiente de decisión.** La `provincia` del catálogo (HU-CAM-006 la pide; `public.ciudad` no tiene esa columna) y cómo conoce el panel su `campania_id`: ver el header de la migración `0033`.
+
 ### Qué ubicaciones baja cada colportor
 
 Desde la migración `0011` (backend-supabase#32, decisión D2 del 29/09) la zona es una guía visual: **las ubicaciones no guardan zona ni campaña** (`ubicacion.zona_id` y `house_status.zona_id`, de `0010`, ya no existen). La zona decide qué casas bajan al teléfono, y eso se calcula al descargar (HU-SYNC-011).
