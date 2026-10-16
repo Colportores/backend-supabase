@@ -3,7 +3,7 @@
 -- Corre el seed de ejemplo dos veces dentro de la misma transacción y verifica
 -- que la segunda pasada no duplica filas ni lanza error: el `on conflict do
 -- nothing` sin conflict_target de cada insert cubre tanto el conflicto por id
--- fijo como el anti-solape de precio_por_ciudad (constraint distinta del id, que
+-- fijo como el anti-solape de precio_por_ciudad y de precio_general (constraint distinta del id, que
 -- un `on conflict (id)` NO habría cubierto).
 --
 -- Todo en un `begin ... rollback`, como 0001-0003: no deja datos de ejemplo
@@ -32,6 +32,7 @@ select is((select count(*) from public.producto),            5::bigint, 'primera
 select is((select count(*) from public.coleccion),           1::bigint, 'primera pasada: 1 colección');
 select is((select count(*) from public.producto_coleccion),  2::bigint, 'primera pasada: 2 vínculos producto-colección');
 select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'primera pasada: 6 precios');
+select is((select count(*) from public.precio_general),      6::bigint, 'primera pasada: 6 precios generales (5 productos y la colección)');
 
 -- Montevideo trae su rectángulo (0031); las dos ciudades de ejemplo no.
 select is((select count(*) from public.ciudad where bbox_oeste is not null), 1::bigint,
@@ -40,6 +41,24 @@ select results_eq(
   $$ select bbox_oeste, bbox_sur, bbox_este, bbox_norte from public.ciudad where nombre = 'Montevideo' $$,
   $$ values (-56.433::float8, -34.945::float8, -55.948::float8, -34.701::float8) $$,
   'Montevideo: su rectángulo (oeste, sur, este, norte), el de la guía de carga manual');
+
+-- El precio general (0034): ningún producto del seed queda sin uno, y public.precio_vigente() combina
+-- general y modificado como dice la decisión de Cristian del 06/10 (el modificado vigente gana; si no
+-- hay, rige el general). Libro A (producto 1) tiene precio propio en la ciudad de campaña 1 y no en la 3.
+select is((select count(*) from public.producto p
+            where not exists (select 1 from public.precio_general g
+                               where g.producto_id = p.id and g.deleted_at is null)),
+          0::bigint, 'todo producto del seed tiene precio general');
+select results_eq(
+  $$ select origen, precio_venta from public.precio_vigente(
+       '09990000-0000-7000-8009-000000000001', '09990000-0000-7000-8005-000000000001') $$,
+  $$ values ('MODIFICADO'::text, 25000) $$,
+  'Libro A en la primera ciudad de campaña: vale el modificado');
+select results_eq(
+  $$ select origen, precio_venta from public.precio_vigente(
+       '09990000-0000-7000-8009-000000000003', '09990000-0000-7000-8005-000000000001') $$,
+  $$ values ('GENERAL'::text, 24000) $$,
+  'Libro A en la tercera ciudad de campaña: sin modificado, vale el general');
 
 -- Segunda pasada: mismo archivo, no debe duplicar ni fallar.
 \i supabase/seed.sql
@@ -54,6 +73,7 @@ select is((select count(*) from public.producto),            5::bigint, 'segunda
 select is((select count(*) from public.coleccion),           1::bigint, 'segunda pasada: sigue en 1 colección');
 select is((select count(*) from public.producto_coleccion),  2::bigint, 'segunda pasada: sigue en 2 vínculos producto-colección');
 select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'segunda pasada: sigue en 6 precios');
+select is((select count(*) from public.precio_general),      6::bigint, 'segunda pasada: sigue en 6 precios generales');
 
 select * from finish();
 rollback;

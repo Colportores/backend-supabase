@@ -1,5 +1,5 @@
 -- ============================================================================
--- Seed de ejemplo · zonas, campañas, catálogo y precios (issue #16)
+-- Seed de ejemplo · zonas, campañas, catálogo, precio general y precios por ciudad (issue #16, #78)
 --
 -- Se aplica con `scripts/db-seed.sh` sobre una base con las migraciones ya
 -- aplicadas. `config.toml` lo registra en `db.seed.sql_paths` (convención del
@@ -147,9 +147,36 @@ insert into public.producto_coleccion (id, producto_id, coleccion_id) values
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
--- 5. Precios por ciudad de la campaña (migración 0027) — mismo producto, distinto
+-- 5. Precio general de venta (migración 0034, backend-supabase#78) — el que pone
+--    Administración para todo el país: uno por producto del seed y uno para la
+--    colección, en centavos, vigentes desde 2026-01-01 y sin fecha de fin. Rige
+--    donde la campaña de la ciudad no tiene precio propio (sección 6): Libro A
+--    tiene precio propio en las dos primeras ciudades de campaña y no en la
+--    tercera; Libro B, en ninguna. Se consulta con public.precio_vigente().
+-- ----------------------------------------------------------------------------
+
+insert into public.precio_general
+  (id, producto_id, coleccion_id, precio_venta, valido_desde, valido_hasta) values
+  ('09990000-0000-7000-800b-000000000001',
+    '09990000-0000-7000-8005-000000000001', null, 24000, '2026-01-01', null),
+  ('09990000-0000-7000-800b-000000000002',
+    '09990000-0000-7000-8005-000000000002', null, 26000, '2026-01-01', null),
+  ('09990000-0000-7000-800b-000000000003',
+    '09990000-0000-7000-8005-000000000003', null, 7500, '2026-01-01', null),
+  ('09990000-0000-7000-800b-000000000004',
+    '09990000-0000-7000-8005-000000000004', null, 14000, '2026-01-01', null),
+  -- Ejemplar misionero: se entrega, no se vende (precio 0).
+  ('09990000-0000-7000-800b-000000000005',
+    '09990000-0000-7000-8005-000000000005', null, 0, '2026-01-01', null),
+  ('09990000-0000-7000-800b-000000000006',
+    null, '09990000-0000-7000-8006-000000000001', 44000, '2026-01-01', null)
+on conflict do nothing;
+
+-- ----------------------------------------------------------------------------
+-- 6. Precios por ciudad de la campaña (migración 0027) — mismo producto, distinto
 --    precio según la ciudad; un precio de colección; y un ejemplar misionero a
---    precio 0 (se entrega, no se vende).
+--    precio 0 (se entrega, no se vende). Cuando existe, este precio gana al
+--    general de la sección 5 (migración 0034).
 -- ----------------------------------------------------------------------------
 
 insert into public.precio_por_ciudad

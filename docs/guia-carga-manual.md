@@ -19,7 +19,7 @@ Supabase y permiso para correr SQL.
   insertar — pero también que ninguna política de permisos te va a frenar si
   te equivocás. Los únicos frenos son las validaciones del esquema que lista
   cada sección de abajo (`not null`, `check`, FKs, y el anti-solape de
-  `precio_por_ciudad`).
+  `precio_general` y de `precio_por_ciudad`).
 - Envolvé cada carga en una transacción y revisá con `select` antes de hacer
   `commit`:
   ```sql
@@ -59,8 +59,13 @@ coleccion ───────────────────────�
    └→ producto_coleccion   (vínculo M:N producto↔colección; solo agrupa
                              para mostrar/vender junto, no es prerequisito
                              de un precio de colección)
+
+producto ──┬→ precio_general   (el precio de todo el país, de Administración: FK directa a
+coleccion ─┘                    producto O a coleccion; no cuelga de ninguna campaña ni ciudad)
 ```
 
+`precio_general` no cuelga de nada más que del producto o la colección: vale para
+todas las campañas del país (§ 8, desde la migración `0034`).
 `precio_por_ciudad` cuelga de la **ciudad de la campaña** (`campania_ciudad(id)`, desde
 la migración `0027`; antes colgaba de la zona), y tiene FKs **directas** a
 `producto(id)` y a `coleccion(id)` (`0001_esquema_inicial.sql` §4) —
@@ -68,8 +73,9 @@ la migración `0027`; antes colgaba de la zona), y tiene FKs **directas** a
 Podés cargar un precio de colección sin haber cargado `producto_coleccion`
 todavía. La tabla se llamaba `precio_por_zona`: la migración `0030` la renombró
 (decisión de Cristian del 06/10). Son los precios **por ciudad**, los casos
-específicos: el precio general todavía no existe en el modelo (espera una
-respuesta de Cristian), y un libro sin precio en una ciudad no se ofrece allí.
+específicos: modifican el precio general (§ 8), y vale el modificado vigente o,
+si no hay, el general. Un libro sin ninguno de los dos en una ciudad no se
+ofrece allí.
 
 ### 1. `pais` (normalmente ya existe — V1 es solo Uruguay)
 
@@ -243,9 +249,92 @@ values ('<id de producto>', '<id de coleccion>');
 - El par `(producto_id, coleccion_id)` es único: cargarlo dos veces lo
   rechaza.
 
-### 8. `precio_por_ciudad` (el precio de venta, por ciudad de la campaña)
+### 8. `precio_general` (el precio de venta de todo el país, de Administración)
 
-Antes de `0030` esta tabla se llamaba `precio_por_zona`.
+Desde la migración `0034` (decisión de Cristian del 06/10, «Precio gral.»):
+**Administración pone un precio general** por producto o por colección, que
+queda para todas las campañas, y la coordinadora puede **modificarlo para una
+ciudad de su campaña** (§ 9). No lleva ciudad ni campaña, ni país ni moneda
+(V1 es solo Uruguay). Hasta que exista la pantalla de Administración (después del
+20/11), el general se carga acá.
+
+```sql
+-- Precio general de un producto:
+insert into public.precio_general (producto_id, coleccion_id, precio_venta, valido_desde, valido_hasta)
+values ('<id de producto>', null, 24000, public.hoy_montevideo(), null);
+
+-- Precio general de una colección completa (excluyente con lo anterior):
+insert into public.precio_general (producto_id, coleccion_id, precio_venta, valido_desde, valido_hasta)
+values (null, '<id de coleccion>', 44000, public.hoy_montevideo(), null);
+```
+
+- **Exactamente uno** de `producto_id` / `coleccion_id` tiene que ir cargado y
+  el otro en `null` — mandar los dos o ninguno lo rechaza el `check`.
+- `precio_venta` en centavos, entero, `>= 0` (`0` es el ejemplar misionero, que
+  se entrega y no se vende).
+- `valido_desde` es obligatorio (si no lo mandás, toma el día de Montevideo,
+  `public.hoy_montevideo()`). `valido_hasta` en `null` significa "vigente hasta
+  nuevo aviso". Las dos fechas valen: el último día todavía cuenta.
+- **No puede haber dos generales vigentes a la vez para el mismo
+  producto/colección** (rango de fechas que se superpone): insertar uno nuevo
+  mientras hay otro abierto **falla** con un error de exclusión (23P01). Un
+  general dado de baja (`deleted_at`) no cuenta. Para cambiarlo se cierra el
+  viejo y se inserta el nuevo; cada tramo queda como una fila, que es el
+  historial:
+  ```sql
+  -- 1a. Cerrar ayer el precio que ya rige (empezó antes de hoy y no terminó):
+  update public.precio_general
+     set valido_hasta = public.hoy_montevideo() - 1
+   where producto_id = '<id de producto>' and deleted_at is null
+     and valido_desde < public.hoy_montevideo()
+     and (valido_hasta is null or valido_hasta >= public.hoy_montevideo());
+
+  -- 1b. Dar de baja el que empieza hoy o más adelante: uno cargado hoy no se puede cerrar
+  --     «ayer» (el rango quedaría al revés: 23514), y uno programado a futuro se superpondría
+  --     con el nuevo (23P01); el nuevo lo reemplaza.
+  update public.precio_general
+     set deleted_at = now()
+   where producto_id = '<id de producto>' and deleted_at is null
+     and valido_desde >= public.hoy_montevideo();
+
+  -- 2. Recién ahí insertar el nuevo:
+  insert into public.precio_general (producto_id, precio_venta, valido_desde)
+  values ('<id de producto>', 26000, public.hoy_montevideo());
+  ```
+  Para el general de una colección es lo mismo con `coleccion_id = '<id de coleccion>'`.
+  Cambiar el general **no toca las ventas anteriores**: cada ítem de venta
+  guarda el precio con el que se vendió (`venta_item.precio_unitario`).
+- Lo escribe solo el **ADMIN**; el coordinador y el colportor no. (Desde el SQL
+  Editor corrés como `postgres` y ningún permiso te frena.) Lo lee el ADMIN y
+  quien hoy lee los precios de una campaña: su coordinador y los colportores
+  inscriptos en una campaña que no terminó.
+- **Todavía no baja a los teléfonos**: el contrato de sync no lo incluye hasta
+  que lo apruebe el PR de docs correspondiente. Hasta entonces la app sigue
+  usando `precio_por_ciudad`.
+
+#### Qué precio rige: `precio_vigente()`
+
+```sql
+-- El de hoy, de un producto, en una ciudad de una campaña:
+select * from public.precio_vigente('<id de campania_ciudad>', '<id de producto>');
+-- El de una colección, en otra fecha:
+select * from public.precio_vigente('<id de campania_ciudad>', null, '<id de coleccion>', '2026-03-01');
+```
+
+Devuelve **una fila** con `origen` (`'MODIFICADO'`, el de `precio_por_ciudad`, o
+`'GENERAL'`), `precio_id`, `precio_venta`, `valido_desde` y `valido_hasta`, o
+**ninguna** si el producto no tiene ni modificado ni general vigente en esa
+fecha (no se ofrece en esa ciudad). Si hay modificado vigente, gana siempre al
+general; si no, rige el general. Sin fecha usa el día de Montevideo. Pasá el
+producto **o** la colección, nunca los dos (22023). Para quien llama, la ciudad
+de la campaña tiene que ser visible: con la API, un coordinador consulta las de
+su campaña.
+
+### 9. `precio_por_ciudad` (la modificación del general, por ciudad de la campaña)
+
+Antes de `0030` esta tabla se llamaba `precio_por_zona`. Es la excepción al
+precio general (§ 8): lo que la coordinadora cambia para una ciudad de su
+campaña. Si una ciudad no tiene fila vigente acá, rige el general.
 
 El precio es de la **ciudad de la campaña** (`campania_ciudad_id`), no de una
 zona: vale para todas las zonas de esa ciudad y dibujar o mover una zona no lo
@@ -276,11 +365,22 @@ values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_
   `campania_ciudad`), no cuenta. Un precio dado de baja (`deleted_at`) tampoco.
   Para cambiar un precio:
   ```sql
-  -- 1. Cerrar el precio viejo:
+  -- 1a. Cerrar ayer el precio que ya rige (empezó antes de hoy y no terminó):
   update public.precio_por_ciudad
      set valido_hasta = public.hoy_montevideo() - 1
    where producto_id = '<id de producto>' and campania_ciudad_id = '<id de campania_ciudad>'
-     and valido_hasta is null and deleted_at is null;
+     and deleted_at is null
+     and valido_desde < public.hoy_montevideo()
+     and (valido_hasta is null or valido_hasta >= public.hoy_montevideo());
+
+  -- 1b. Dar de baja el que empieza hoy o más adelante: uno cargado hoy no se puede cerrar
+  --     «ayer» (el rango quedaría al revés: 23514), y uno programado a futuro se superpondría
+  --     con el nuevo (23P01); el nuevo lo reemplaza.
+  update public.precio_por_ciudad
+     set deleted_at = now()
+   where producto_id = '<id de producto>' and campania_ciudad_id = '<id de campania_ciudad>'
+     and deleted_at is null
+     and valido_desde >= public.hoy_montevideo();
 
   -- 2. Recién ahí insertar el nuevo:
   insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde)
@@ -298,7 +398,7 @@ values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_
 ## Datos de ejemplo para desarrollo
 
 `supabase/seed.sql` trae un set fijo y **claramente ficticio** de zonas,
-campañas, catálogo y precios (por ciudad de la campaña) para levantar el entorno local sin cargar nada a
+campañas, catálogo, precio general y precios por ciudad de la campaña para levantar el entorno local sin cargar nada a
 mano. Se aplica con `scripts/db-seed.sh` (ver README §Desarrollo) — no se usa
 en `staging`/`production`.
 
