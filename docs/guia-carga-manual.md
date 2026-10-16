@@ -340,6 +340,23 @@ producto **o** la colección, nunca los dos (22023). Para quien llama, la ciudad
 de la campaña tiene que ser visible: con la API, un coordinador consulta las de
 su campaña.
 
+Para ver **todos** los precios de una ciudad de la campaña juntos (cada producto
+y cada colección con su general, su modificado y el que rige), `precios_de_la_ciudad()`
+(`0037`):
+
+```sql
+select tipo, nombre, precio_general, precio_modificado, precio_vigente, origen
+  from public.precios_de_la_ciudad('<id de campania_ciudad>');
+-- Los productos bonificables que no tienen precio en esa ciudad (no se ofrecen):
+select nombre from public.precios_de_la_ciudad('<id de campania_ciudad>')
+ where tipo = 'PRODUCTO' and es_bonificable and origen is null;
+```
+
+Es la lectura de la vista 27 del panel: pide una sesión (ADMIN o el coordinador
+de la campaña), así que en el SQL Editor, que corre como `postgres`, no tiene
+sesión y falla con `42501`; para mirar los precios desde ahí, usá
+`precio_vigente()` o leé las tablas.
+
 ### 9. `precio_por_ciudad` (la modificación del general, por ciudad de la campaña)
 
 Antes de `0030` esta tabla se llamaba `precio_por_zona`. Es la excepción al
