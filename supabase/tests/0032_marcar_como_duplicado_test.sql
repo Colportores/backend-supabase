@@ -1,11 +1,13 @@
 -- pgTAP · migración 0026 (backend-supabase#56; decisión de Cristian del 02/10 y del orquestador en
 -- docs-organizacion#31): «Marcar como duplicado» pasa todo de B a A y da de baja B, en una sola
--- transacción y de forma idempotente.
+-- transacción y de forma idempotente. Desde la 0035 (backend-supabase#69) además guarda la unión y
+-- redirige lo que llega después a A: lo que antes quedaba colgando de B y se barría al repetir la
+-- llamada ahora cae en A en el momento (el detalle de la redirección, en el 0044).
 --   1. dos casas con espacio único: se funde en el de A (personas en las dos, solo en B, dadas de
 --      baja) y pasan visitas, agendas, ventas y cobranzas, también las de otro colportor;
 --   2. edificios: los espacios pasan a A sin mezclarse; casa sin único en A; tipos distintos;
 --   3. errores (UB003, UB004, 42501, 22023, P0002), el servidor, y que nada queda a medias;
---   4. idempotencia, el par cruzado y lo que un teléfono sube tarde;
+--   4. idempotencia, el par cruzado (ya_unida) y lo que un teléfono sube tarde;
 --   5. las reglas de 0021: gracia (CG001) y sin campaña (42501);
 --   6. forma y privilegios.
 begin;
@@ -124,7 +126,8 @@ select throws_ok(format('update public.ubicacion set deleted_at = now() where id
 select is(pg_temp.dup('02', '01'),
           jsonb_build_object('duplicada_id', pg_temp.u('02'), 'conservada_id', pg_temp.u('01'), 'ya_unida', false,
                              'espacios_pasados', 0, 'espacios_unidos', 1,
-                             'personas', 3, 'visitas', 3, 'ventas', 3, 'cobranzas', 1),
+                             'personas', 3, 'visitas', 3, 'ventas', 3, 'cobranzas', 1,
+                             'destino_id', pg_temp.u('01'), 'tipo_conservada', 'CASA', 'paso_a_edificio', false),
           'b1 marca la 02 (de b2) como duplicado de la 01: se funde el único y la respuesta cuenta lo que pasó');
 
 select pg_temp.actuar_como_servidor();
@@ -181,41 +184,40 @@ create temp table foto_1 as select pg_temp.foto() f;
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.dup('02', '01'),
           jsonb_build_object('duplicada_id', pg_temp.u('02'), 'conservada_id', pg_temp.u('01'), 'ya_unida', true,
-                             'espacios_pasados', 0, 'espacios_unidos', 0, 'personas', 0, 'visitas', 0, 'ventas', 0, 'cobranzas', 0),
+                             'espacios_pasados', 0, 'espacios_unidos', 0, 'personas', 0, 'visitas', 0, 'ventas', 0, 'cobranzas', 0,
+                             'destino_id', pg_temp.u('01'), 'tipo_conservada', 'CASA', 'paso_a_edificio', false),
           'reintentar: B ya se había unido a A, responde éxito (ya_unida) sin contar nada');
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is((pg_temp.dup('02', '01') ->> 'ya_unida')::boolean, true, 'también si reintenta la otra persona (b2)');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.foto(), (select f from foto_1), 'y no se tocó ni una fila (ni siquiera la versión)');
 
--- El par cruzado: A ya no está viva para conservar a B.
+-- El par cruzado: la 02 ya se unió a la 01, así que pedir lo contrario (la 01 duplicada de la 02) es
+-- una unión que ya está hecha: ya_unida, sin tocar nada (antes de la 0035 daba UB003; la UB003 de «A
+-- dada de baja sin haberse unido» sigue en la sección 4).
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select throws_ok(format('select public.marcar_como_duplicado(%L, %L)', pg_temp.u('01'), pg_temp.u('02')),
-                 'UB003', 'La ubicación que ibas a conservar ya está dada de baja. Revisá el par de nuevo.',
-                 'conservar la 02 (ya de baja) y dar de baja la 01: UB003, con el texto de la HU');
+select is(pg_temp.dup('01', '02') ->> 'ya_unida', 'true', 'pedir lo contrario (la 01 duplicada de la 02): ya_unida');
+select is(pg_temp.dup('01', '02') ->> 'destino_id', pg_temp.u('01')::text, 'y el destino es la 01, a la que se unió la 02');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.foto(), (select f from foto_1), 'sin tocar nada');
+select is(pg_temp.foto(), (select f from foto_1), 'sin tocar nada: la 01 sigue viva con todo');
 
 -- Lo que un teléfono sube tarde: una venta al vínculo de B ya fundido y una persona nueva en el
--- único de B. Quedan colgando de B (dada de baja), y volver a llamar lo pasa a A.
+-- único de B. Desde la 0035 el servidor los redirige en el momento (lo que antes quedaba colgando de B
+-- y se barría al repetir la llamada): caen en A, y la llamada repetida ya no tiene nada que hacer.
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)
 values (pg_temp.u('56'), pg_temp.u('31'), 'T-56', 100000, now(), pg_temp.u('b2'), pg_temp.u('b2'));
 insert into public.espacio_persona (id, espacio_id, persona_id, created_by) values (pg_temp.u('28'), pg_temp.u('12'), pg_temp.u('a9'), pg_temp.u('b2'));
 insert into public.visita (id, espacio_persona_id, fecha, tipo_resultado, colportor_id, created_by)
 values (pg_temp.u('45'), pg_temp.u('28'), now(), 'RECHAZO', pg_temp.u('b2'), pg_temp.u('b2'));
-select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.dup('02', '01'),
-          jsonb_build_object('duplicada_id', pg_temp.u('02'), 'conservada_id', pg_temp.u('01'), 'ya_unida', false,
-                             'espacios_pasados', 0, 'espacios_unidos', 1,
-                             'personas', 1, 'visitas', 1, 'ventas', 1, 'cobranzas', 0),
-          'lo que subió tarde se detecta: la llamada repetida lo pasa a A');
-select pg_temp.actuar_como_servidor();
-select is((select espacio_persona_id from public.venta where id = pg_temp.u('56')), pg_temp.u('21'), 'la venta tardía pasó al vínculo de A');
-select is((select espacio_id from public.espacio_persona where id = pg_temp.u('28')), pg_temp.u('11'), 'la persona tardía, al único de A');
+select is((select espacio_persona_id from public.venta where id = pg_temp.u('56')), pg_temp.u('21'), 'la venta tardía quedó en el vínculo de A');
+select is((select espacio_id from public.espacio_persona where id = pg_temp.u('28')), pg_temp.u('11'), 'la persona tardía, en el único de A');
+select is((select espacio_persona_id from public.visita where id = pg_temp.u('45')), pg_temp.u('28'), 'y su visita, en su vínculo (que ya está en A)');
+select is((select count(*) from public.espacio_persona ep join public.espacio e on e.id = ep.espacio_id
+            where e.ubicacion_id = pg_temp.u('02') and ep.deleted_at is null), 0::bigint, 'no queda ningún vínculo vivo colgando de B');
 select isnt((select deleted_at from public.ubicacion where id = pg_temp.u('02')), null, 'B sigue dada de baja');
 create temp table foto_2 as select pg_temp.foto() f;
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is((pg_temp.dup('02', '01') ->> 'ya_unida')::boolean, true, 'y a la tercera ya no queda nada');
+select is((pg_temp.dup('02', '01') ->> 'ya_unida')::boolean, true, 'y volver a llamar ya no tiene nada que pasar: ya_unida');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.foto(), (select f from foto_2), 'sin tocar nada');
 
@@ -226,7 +228,8 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.dup('05', '04'),
           jsonb_build_object('duplicada_id', pg_temp.u('05'), 'conservada_id', pg_temp.u('04'), 'ya_unida', false,
                              'espacios_pasados', 2, 'espacios_unidos', 0,
-                             'personas', 1, 'visitas', 1, 'ventas', 1, 'cobranzas', 0),
+                             'personas', 1, 'visitas', 1, 'ventas', 1, 'cobranzas', 0,
+                             'destino_id', pg_temp.u('04'), 'tipo_conservada', 'EDIFICIO', 'paso_a_edificio', false),
           'edificios: los espacios de B pasan a A sin mezclarse (el depto 1 de B no se funde con el 1 de A)');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.espacio where ubicacion_id = pg_temp.u('04') and deleted_at is null), 4::bigint,
@@ -244,8 +247,9 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.dup('07', '06'),
           jsonb_build_object('duplicada_id', pg_temp.u('07'), 'conservada_id', pg_temp.u('06'), 'ya_unida', false,
                              'espacios_pasados', 1, 'espacios_unidos', 0,
-                             'personas', 1, 'visitas', 0, 'ventas', 1, 'cobranzas', 0),
-          'A es una casa sin espacio único: el de B pasa a serlo');
+                             'personas', 1, 'visitas', 0, 'ventas', 1, 'cobranzas', 0,
+                             'destino_id', pg_temp.u('06'), 'tipo_conservada', 'CASA', 'paso_a_edificio', false),
+          'A es una casa sin espacio único: el de B pasa a serlo (y sigue siendo CASA con un espacio)');
 select pg_temp.actuar_como_servidor();
 select is((select ubicacion_id from public.espacio where id = pg_temp.u('18')), pg_temp.u('06'), 'el único de B está en A');
 select is((select deleted_at from public.espacio where id = pg_temp.u('18')), null, 'y sigue vivo');
