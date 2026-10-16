@@ -76,7 +76,7 @@ supabase/
 └── functions/         ← Edge Functions Deno (llegan con ADR-014)
 tiles/                 ← mapas propios: publicador del bucket `mapas` (PMTiles, estilo, catálogo), Node 22; ver docs/mapas-tiles.md
 docs/                  ← documentación propia de este repo (ver docs-organizacion/convenciones-desarrollo.md §1.1)
-scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench
+scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / db-reset / db-seed / db-bench / db-importar-calles
 ```
 
 `0004_sync_delta_test.sql`, `0011_zonas_mapa_sync_test.sql` y `0014_alcance_del_pull_test.sql` son los únicos que **no** envuelven todo en una transacción: el delta sirve solo lo que está por debajo del horizonte de la transacción actual, así que un `begin` no puede entregar lo que él mismo escribió. Limpian sus filas al final.
@@ -238,6 +238,22 @@ select * from public.zonas_de_ciudad(campania_id, campania_ciudad_id); -- las zo
 - **Cómo.** `mi_perfil()` y `campanias_del_coordinador()` son `SECURITY INVOKER` y `STABLE` (la RLS de `usuario` deja leer la fila propia; `campania` es de lectura abierta y la función filtra por `coordinador_id = auth.uid()`); las otras tres son `SECURITY DEFINER` con `search_path` vacío y columnas explícitas, porque el coordinador no lee `usuario` ajeno. `EXECUTE` solo para `authenticated`. Las tres de campaña son `VOLATILE` (llaman a `lanzar_motivo_mapa()`): `supabase-js` las manda por `POST`.
 - **Las otras dos lecturas de la vista 24.** `colportores_de_campania()` y `zonas_asignables()` (de `0007`/`0015`) se recrean en la `0033` con el mismo criterio de lectura (`exigir_lectura_de_campania()`): una campaña en curso o **por empezar** contesta con su lista (en una por empezar los colportores son una lista vacía: inscribir exige que la campaña haya empezado), una **terminada** da `CZ011` (antes `CZ002`) e inexistente `CZ001`. `inscribir_colportor()` y `asignar_zona()` no cambian: siguen pidiendo una campaña vigente (`CZ002` en una por empezar).
 - **Pendiente de decisión.** La `provincia` del catálogo (HU-CAM-006 la pide; `public.ciudad` no tiene esa columna) y cómo conoce el panel su `campania_id`: ver el header de la migración `0033`.
+
+### Borde de las zonas por esquinas: las calles de OSM (sin BFF)
+
+Desde la migración `0036` (backend-supabase#25, [ADR-018](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-018-geometria-de-zonas-y-ruteo-en-postgres.md), decisión de Cristian del 29/09) el borde de una zona `ESQUINAS` lo calcula la base con **pgRouting** sobre las calles de OpenStreetMap de la ciudad. El panel (vista 24) llama a tres RPC, sin BFF ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)), y a `guardar_zona()` le manda lo que devuelve la última. Guía completa, con cómo conseguir y actualizar las calles: [`docs/calles-ruteo.md`](docs/calles-ruteo.md).
+
+```sql
+select * from public.esquina_mas_cercana(campania_ciudad_id, lon, lat);   -- lon, lat, calle_a, calle_b, distancia_m
+select * from public.tramo_por_calles(campania_ciudad_id, desde_lon, desde_lat, hasta_lon, hasta_lat);   -- orden, lon, lat
+select * from public.poligono_por_calles(campania_ciudad_id, esquinas);   -- poligono_geojson, esquinas (con la forma de p_vertices)
+```
+
+- **Qué hacen.** `esquina_mas_cercana()`: el cruce de calles (un nodo donde se juntan al menos dos calles de nombre distinto) más cercano en metros, con las dos calles y a cuántos metros quedó; **sin tope de distancia**, `distancia_m` deja al panel decidir. `tramo_por_calles()`: el camino más corto por las calles entre las esquinas más cercanas a dos puntos, **sin respetar sentidos de circulación**. `poligono_por_calles()`: de 3 a 100 esquinas en el orden en que se marcaron, engancha cada una y pega los tramos (de la última a la primera: se cierra en la esquina 1); devuelve el `poligono_geojson` y las esquinas enganchadas, listos para `guardar_zona()`, que no cambia. Un borde que se cruza o vuelve sobre una calle: `CZ008`.
+- **Quién.** Se llaman con el JWT del usuario y el permiso es lo primero, el mismo de `guardar_zona()`: sin sesión, un colportor, un usuario sin rol o con el rol vencido, o la campaña de otro coordinador: `42501`; la ciudad que no está en la campaña: `CZ012`; campaña inexistente `CZ001`, **terminada** `CZ011` (una **por empezar** sí, la vista 24 prepara el mapa antes del inicio). `SECURITY DEFINER` con `search_path` vacío, `VOLATILE`, `EXECUTE` solo para `authenticated`. Devuelven solo posiciones y nombres de calles.
+- **Las calles.** Schema `ruteo` (`red`, `nodo`, `tramo`): fuera de la API, sin grants para `anon` ni `authenticated`, con RLS y sin políticas, y fuera del sync. Son datos de OSM (ODbL), no una entidad del dominio. Se cargan **por ciudad** con `bash scripts/db-importar-calles.sh <ciudad_id> <archivo.json>` (el JSON de Overpass con geometría; el repo no descarga nada) y se actualizan reimportando: `ruteo.cargar_red()` reemplaza la red entera en una transacción, o falla sin tocar nada. Entran las vías `trunk` a `residential`, `living_street`, `pedestrian` y `road`; no `service` ni senderos. Las zonas ya guardadas no cambian al reimportar. Una ciudad sin calles cargadas contesta `CZ015`; dos esquinas en partes de la red que no se tocan, `CZ016`.
+- **pgRouting 3.4** viene en la imagen de Supabase (`create extension pgrouting with schema extensions`). No funciona con `search_path` vacío: solo `ruteo.dijkstra()` (una envoltura interna con `search_path = extensions`) lo necesita.
+- **Pendiente de decisión.** De dónde salen las calles para el script (Overpass u otro extracto), el aviso «Comparte la calle X con Y» de la vista 24 (necesita comparar con las otras zonas) y los criterios que se fijaron sin decisión previa (sin tope de distancia, tope de 100 esquinas, tipos de calle): ver el cuerpo del PR.
 
 ### Qué ubicaciones baja cada colportor
 
