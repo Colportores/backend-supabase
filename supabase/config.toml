@@ -64,7 +64,10 @@ schema_paths = []
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
-enabled = true
+# false a propósito: en true, `supabase db reset --linked` resembraría el catálogo ficticio
+# de ./seed.sql sobre cualquier proyecto remoto linkeado (staging/producción incluidos) y
+# rompería 0002_rls_test.sql. El único camino sancionado es scripts/db-seed.sh (issue #16).
+enabled = false
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
 sql_paths = ["./seed.sql"]
@@ -116,12 +119,13 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
-# Uncomment to configure local storage buckets
-# [storage.buckets.images]
-# public = false
-# file_size_limit = "50MiB"
-# allowed_mime_types = ["image/png", "image/jpeg"]
-# objects_path = "./images"
+# Buckets locales. El del proyecto hosteado NO sale de acá: lo crea la migración 0029 (`db push`
+# no manda este archivo). Tienen que decir lo mismo; docs/mapas-tiles.md § «Bucket».
+# `mapas`: los mapas propios (PMTiles, estilo, glyphs, sprites y catalogo.json), públicos, sin login.
+[storage.buckets.mapas]
+public = true
+file_size_limit = "50MiB"
+allowed_mime_types = ["application/json", "application/octet-stream", "application/x-protobuf", "image/png", "text/plain"]
 
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
@@ -178,9 +182,14 @@ enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = false
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
-minimum_password_length = 6
+# 8: el mismo mínimo que la app (HU-AUTH-001, S1), para que el servidor no acepte lo que la app
+# rechaza (backend-supabase#59). En el proyecto hosteado NO se aplica solo con el merge: va por
+# `supabase config push` o por el panel (Authentication, política de contraseñas).
+minimum_password_length = 8
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
+# Vacío a propósito: la mayúscula (cualquier letra mayúscula Unicode, también con tilde y Ñ) la
+# valida la app; las opciones de arriba no la cubren y rechazarían contraseñas que la app acepta.
 password_requirements = ""
 
 # Configure passkey sign-ins.

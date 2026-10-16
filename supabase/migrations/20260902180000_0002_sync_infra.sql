@@ -1,13 +1,13 @@
 -- ============================================================================
 -- 0002 · Infraestructura de sincronización (Sprint 3 · issue #9)
 --
--- Lo que ADR-017 §4 pone de este lado: RPC de ingesta batch, cache de
+-- Lo que ADR-008 pone de este lado: RPC de ingesta batch, cache de
 -- client_op_id (TTL 24 h) y delta pull. Adaptado desde el árbol del prototipo
 -- del PR #5 al esquema real del 0001.
 --
 -- Tres decisiones que separan esto de aquel árbol:
 --
---   1. LA RLS ES LA AUTORIDAD DE PERMISOS, TAMBIÉN EN EL PUSH (ADR-016, #6).
+--   1. LA RLS ES LA AUTORIDAD DE PERMISOS, TAMBIÉN EN EL PUSH (ADR-012, #6).
 --      Los RPC son SECURITY INVOKER y no reciben el usuario por parámetro: lo
 --      sacan de auth.uid(). El BFF reenvía el JWT y no decide nada.
 --
@@ -936,9 +936,11 @@ insert into sync.entidad (nombre, tabla, columna_pk, permite_push) values
   -- push + alsoPull (bidireccional, LWW)
   ('ubicacion',       'public.ubicacion'::regclass,       'id', true),
   ('espacio',         'public.espacio'::regclass,         'id', true),
-  -- El contrato §2 no la lista, pero visita.espacio_persona_id es NOT NULL con FK:
-  -- sin subir el vínculo primero, ninguna visita puede pushearse. Solo IDs — la
-  -- persona vive en el dispositivo (0001 §5).
+  -- espacio_persona es push SIN alsoPull (contrato §2, ADR-017): un solo escritor, la RLS
+  -- no deja que nadie más toque sus filas. Sube porque visita.espacio_persona_id es NOT
+  -- NULL con FK: sin subir el vínculo primero, ninguna visita puede pushearse. Solo IDs —
+  -- la persona vive en el dispositivo (0001 §5). Se registra junto a las bidireccionales
+  -- solo por orden de la tabla: sync.pull la baja en recover() (fase 3), no por alsoPull.
   ('espacio_persona', 'public.espacio_persona'::regclass, 'id', true),
   -- PK es ubicacion_id, no id (0001 §7).
   ('house_status',    'public.house_status'::regclass,    'ubicacion_id', true);

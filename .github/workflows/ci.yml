@@ -11,10 +11,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Pruebas del publicador de mapas (tiles/, backend-supabase#42): catálogo, estilo, política de
+  # tamaño, subida a Storage y verificación, todo contra un Storage de mentira. No necesita Docker
+  # ni credenciales. El bucket en sí no se prueba acá: la base de este CI no trae el servicio
+  # Storage, así que pgTAP 0036 se saltea. Lo comprueba `node src/cli.mjs verificar` después de
+  # cada publicación (workflow Mapas) y la prueba contra un storage-api real que se corre a mano.
+  tiles:
+    name: tiles · pruebas del publicador
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: tiles
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tiles/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   migraciones:
     name: migraciones desde cero · pgTAP
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +50,15 @@ jobs:
       # No necesita Docker — es git y grep.
       - name: SQL solo en supabase/
         run: bash scripts/check-sql-layout.sh
+
+      # El servidor exige al menos la contraseña mínima de la app (8). Tampoco necesita Docker.
+      - name: Contraseña mínima del servidor
+        run: bash scripts/check-config.sh
+
+      # La imagen de la DB sale de ghcr.io (mismo tag y digest que en ECR Public). Con el login
+      # el pull va autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
+      - name: Login a ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # Mismo entorno que el desarrollo local (compose.dev.yml): Postgres de Supabase + CLI + pg_prove.
       - name: Construir tooling
@@ -36,6 +72,11 @@ jobs:
 
       - name: Lint de funciones (plpgsql_check)
         run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-lint.sh
+
+      # Las migraciones que mueven datos, con datos: la base de arriba está vacía, así que ahí
+      # una migración de datos no mueve nada. Va al final porque limpia y rearma la base.
+      - name: Migraciones con datos (tests_migracion)
+        run: docker compose -f compose.dev.yml run --rm cli bash scripts/db-test-migracion.sh
 
       - name: Apagar
         if: always()

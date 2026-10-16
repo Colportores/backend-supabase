@@ -36,6 +36,8 @@ ANA=01920000-0000-7000-8000-0000000005a1
 BETO=01920000-0000-7000-8000-0000000005a2
 PAIS=01920000-0000-7000-8000-0000000005c0
 CIUDAD=01920000-0000-7000-8000-0000000005c1
+CAMPANIA=01920000-0000-7000-8000-0000000005c2
+CAMPANIA_CIUDAD=01920000-0000-7000-8000-0000000005c3
 ZONA=01920000-0000-7000-8000-0000000005d1
 CASA=01920000-0000-7000-8000-0000000005e1
 
@@ -131,7 +133,10 @@ borrar_fixtures() {
   consultar "
     delete from public.jornada   where colportor_id in ('$ANA', '$BETO');
     delete from public.ubicacion where id = '$CASA';
+    delete from public.campania_colportor where campania_id = '$CAMPANIA';
     delete from public.zona      where id = '$ZONA';
+    delete from public.campania_ciudad where id = '$CAMPANIA_CIUDAD';
+    delete from public.campania  where id = '$CAMPANIA';
     delete from public.ciudad    where id = '$CIUDAD';
     delete from public.pais      where id = '$PAIS';
     -- usuario, op_cache y log se van por cascade desde auth.users.
@@ -161,11 +166,17 @@ consultar "
   insert into public.pais (id, nombre, iso_code) values ('$PAIS', 'Uruguay', 'UY');
   insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
     values ('$CIUDAD', 'Montevideo', '$PAIS', -34.9, -56.16);
-  insert into public.zona (id, nombre, ciudad_id) values ('$ZONA', 'Zona compartida', '$CIUDAD');
-  -- Ana y Beto trabajan la misma zona: los dos pueden escribir sus casas.
-  update public.usuario set zona_id = '$ZONA' where id in ('$ANA', '$BETO');
-  insert into public.ubicacion (id, tipo, numero, lat, lon, ciudad_id, zona_id, created_by)
-    values ('$CASA', 'CASA', '1234', -34.9, -56.18, '$CIUDAD', '$ZONA', '$ANA');" >/dev/null
+  insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
+    values ('$CAMPANIA', 'Campaña concurrencia', 'VERANO', current_date - 10, current_date + 30);
+  insert into public.campania_ciudad (id, campania_id, ciudad_id) values ('$CAMPANIA_CIUDAD', '$CAMPANIA', '$CIUDAD');
+  insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m)
+    values ('$ZONA', 'Zona compartida', '$CAMPANIA_CIUDAD', 'RADIAL', -34.9, -56.18, 500);
+  -- Ana y Beto están inscriptos en la misma zona (la zona va en la inscripción desde 0009): los
+  -- dos pueden escribir sus casas.
+  insert into public.campania_colportor (campania_id, usuario_id, zona_id)
+    values ('$CAMPANIA', '$ANA', '$ZONA'), ('$CAMPANIA', '$BETO', '$ZONA');
+  insert into public.ubicacion (id, tipo, numero, lat, lon, ciudad_id, created_by)
+    values ('$CASA', 'CASA', '1234', -34.9, -56.18, '$CIUDAD', '$ANA');" >/dev/null
 
 # ---------------------------------------------------------------------------
 # 1. Reintento en vuelo: el mismo client_op_id, dos veces a la vez

@@ -48,20 +48,22 @@ select col_not_null('public', 'venta', 'xmin_w', 'xmin_w es not null');
 -- 3. El registro es el espejo del contrato §2
 -- ---------------------------------------------------------------------------
 
-select is((select count(*)::integer from sync.entidad), 19, 'hay 19 entidades registradas');
+select is((select count(*)::integer from sync.entidad), 23, 'hay 23 entidades registradas');
 
+-- 0008 suma campania_ciudad y zona_vertice (el mapa de la campaña); 0014, campania_colportor; 0032,
+-- ubicacion_par_decidido (push, como espacio_persona).
 select is(
   (select array_agg(nombre order by nombre) from sync.entidad where not permite_push),
-  array['campania','ciudad','coleccion','pais','precio_por_zona','producto',
-        'producto_coleccion','zona'],
+  array['campania','campania_ciudad','campania_colportor','ciudad','coleccion','pais','precio_por_ciudad',
+        'producto','producto_coleccion','zona','zona_vertice'],
   'las entidades pull están marcadas de solo lectura (contrato §2)'
 );
 
 select is(
   (select array_agg(nombre order by nombre) from sync.entidad where permite_push),
   array['agenda','cobranza','entrega','espacio','espacio_persona','house_status',
-        'jornada','ubicacion','venta','venta_item','visita'],
-  'las entidades push son las del contrato §2 más espacio_persona'
+        'jornada','ubicacion','ubicacion_par_decidido','venta','venta_item','visita'],
+  'las entidades push son las del contrato §2 (con espacio_persona y ubicacion_par_decidido)'
 );
 
 -- Ley 18.331: no es una omisión temporal, es la restricción de diseño.
@@ -116,7 +118,7 @@ select ok(
 -- 5. Seguridad de las funciones
 -- ---------------------------------------------------------------------------
 
--- La decisión de ADR-016 hecha código: si la ingesta corriera como su dueño, la
+-- La decisión de ADR-012 hecha código: si la ingesta corriera como su dueño, la
 -- RLS no la alcanzaría y la autorización pasaría a depender del BFF.
 select is(
   (select array_agg(p.proname::text order by p.proname)
@@ -150,7 +152,7 @@ select is(
 
 select ok(has_function_privilege('authenticated', 'sync.push(jsonb,uuid)', 'execute'),
           'authenticated puede llamar a sync.push');
-select ok(has_function_privilege('authenticated', 'sync.pull(text[],jsonb,integer,uuid)', 'execute'),
+select ok(has_function_privilege('authenticated', 'sync.pull(text[],jsonb,integer,uuid,text)', 'execute'),
           'authenticated puede llamar a sync.pull');
 select ok(not has_function_privilege('authenticated', 'sync.purgar_cache(interval)', 'execute'),
           'authenticated NO puede correr la purga (es SECURITY DEFINER, la corre pg_cron)');

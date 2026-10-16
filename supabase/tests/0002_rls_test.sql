@@ -11,12 +11,20 @@ insert into auth.users (id, instance_id, aud, role, email, encrypted_password, c
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000000c0', 'Uruguay', 'UY');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000000c1', 'Montevideo', '01920000-0000-7000-8000-0000000000c0', -34.9, -56.16);
-insert into public.zona (id, nombre, ciudad_id) values
-  ('01920000-0000-7000-8000-0000000000d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000000c1'),
-  ('01920000-0000-7000-8000-0000000000d2', 'Zona Beto', '01920000-0000-7000-8000-0000000000c1');
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d1' where id = '01920000-0000-7000-8000-0000000000a1';
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d2' where id = '01920000-0000-7000-8000-0000000000a2';
+  ('01920000-0000-7000-8000-0000000000c1', 'Montevideo', '01920000-0000-7000-8000-0000000000c0', -34.9, -56.16),
+  ('01920000-0000-7000-8000-0000000000c2', 'Canelones',  '01920000-0000-7000-8000-0000000000c0', -34.52, -56.28);
+-- Desde 0008 toda zona es de una ciudad de una campaña (campania_ciudad) y tiene forma.
+insert into public.campania (id, nombre, tipo, fecha_inicio) values
+  ('01920000-0000-7000-8000-0000000000b0', 'Campaña fixture', 'PERMANENTE', current_date - 30);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-0000000000b1', '01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000c1');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
+  ('01920000-0000-7000-8000-0000000000d1', 'Zona Ana',  '01920000-0000-7000-8000-0000000000b1', 'RADIAL', -34.90, -56.18, 300),
+  ('01920000-0000-7000-8000-0000000000d2', 'Zona Beto', '01920000-0000-7000-8000-0000000000b1', 'RADIAL', -34.90, -56.14, 300);
+-- Desde 0009 la zona de cada uno vive solo en su inscripción.
+insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+  ('01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000a1', '01920000-0000-7000-8000-0000000000d1'),
+  ('01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-0000000000d2');
 
 insert into public.producto (id, nombre, tipo) values ('01920000-0000-7000-8000-0000000000e1', 'Libro', 'LIBRO');
 
@@ -42,18 +50,19 @@ select is((select colportor_id from public.jornada where id = '01920000-0000-700
           '01920000-0000-7000-8000-0000000000a1'::uuid, 'colportor_id se rellena con auth.uid()');
 
 select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f2', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.18,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d1') $$,
+             '01920000-0000-7000-8000-0000000000c1') $$,
   'Ana crea una ubicación en su zona'
 );
 
-select throws_ok(
-  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
-     values ('01920000-0000-7000-8000-0000000000f3', 'CASA', 'Otra', '1', -34.9, -56.18,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
-  '42501', null,
-  'Ana NO puede crear una ubicación en la zona de Beto'
+-- Desde 0011 la ubicación no guarda zona: se registra en cualquier lado (R-CM04), también en
+-- una ciudad donde no trabaja.
+select lives_ok(
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
+     values ('01920000-0000-7000-8000-0000000000f3', 'CASA', 'Otra', '1', -34.52, -56.28,
+             '01920000-0000-7000-8000-0000000000c2') $$,
+  'Ana registra una casa en una ciudad donde no trabaja'
 );
 
 select throws_ok(
@@ -80,7 +89,11 @@ select throws_ok(
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a2');
 
 select is((select count(*) from public.jornada), 0::bigint, 'Beto no ve las jornadas de Ana');
-select is((select count(*) from public.ubicacion), 0::bigint, 'Beto no ve ubicaciones fuera de su zona');
+-- Desde 0011 la zona no es un permiso: Beto ve las casas de la ciudad donde trabaja (el pull
+-- elige cuáles bajan), pero no las de una ciudad donde no trabaja.
+select results_eq($$ select id from public.ubicacion order by id $$,
+                  $$ values ('01920000-0000-7000-8000-0000000000f2'::uuid) $$,
+                  'Beto ve la casa de Ana en su ciudad, y no la de una ciudad donde no trabaja');
 select is((select count(*) from public.usuario where id = '01920000-0000-7000-8000-0000000000a1'), 0::bigint,
           'Beto no ve el perfil de Ana');
 select is((select count(*) from public.usuario where id = '01920000-0000-7000-8000-0000000000a2'), 1::bigint,
@@ -95,40 +108,58 @@ select lives_ok(
 );
 select is((select count(*) from public.jornada), 1::bigint, 'Beto ve su propia jornada');
 
--- Sin calle ni numero: el alta por marcador manual sobre el mapa no los conoce (HU-UBI, ADR-018).
+-- Sin calle ni numero: el alta por marcador manual sobre el mapa no los conoce (HU-UBI, ADR-004).
 select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id, zona_id)
+  $$ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f6', 'CASA', -34.88, -56.15,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
+             '01920000-0000-7000-8000-0000000000c1') $$,
   'Beto crea una ubicación sin calle ni numero (alta por marcador manual)'
 );
-select is((select count(*) from public.ubicacion), 1::bigint, 'Beto ve su propia ubicación');
+select ok(exists (select 1 from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f6'),
+          'Beto ve su propia ubicación');
 
--- RF-UB08 es una advertencia del cliente, no un constraint: "crear igual con justificación" es una
--- salida deliberada de la HU y el cloud no puede rechazarla.
-select lives_ok(
-  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, zona_id)
+-- RF-UB08 con D1 (0017, backend-supabase#34): la misma dirección a menos de 100 m de otra viva se
+-- rechaza, aunque la otra sea de Ana; a 100 m o más se acepta (el resto del aviso de duplicado
+-- sigue siendo del cliente). Detalle en 0020_direccion_unica_test.
+select throws_ok(
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
      values ('01920000-0000-7000-8000-0000000000f7', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.18,
-             '01920000-0000-7000-8000-0000000000c1', '01920000-0000-7000-8000-0000000000d2') $$,
-  'una dirección duplicada se acepta (RF-UB08 se resuelve en el cliente)'
+             '01920000-0000-7000-8000-0000000000c1') $$,
+  '23505', null,
+  'la misma dirección que f2 en el mismo punto se rechaza (D1)'
+);
+select lives_ok(
+  $$ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
+     values ('01920000-0000-7000-8000-0000000000f7', 'CASA', 'Av. 18 de Julio', '1000', -34.9, -56.1785,
+             '01920000-0000-7000-8000-0000000000c1') $$,
+  'la misma dirección a ~137 m se acepta (D1: a 100 m o más)'
 );
 
 -- --- escalada de privilegios: las columnas que deciden qué filas se ven -------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
 
-update public.usuario set zona_id = '01920000-0000-7000-8000-0000000000d2'
-where id = '01920000-0000-7000-8000-0000000000a1';
-select is((select zona_id from public.usuario where id = '01920000-0000-7000-8000-0000000000a1'),
+-- Desde 0009 la zona vive en la inscripción: un colportor no tiene política UPDATE sobre
+-- campania_colportor, así que su UPDATE no toca ninguna fila.
+update public.campania_colportor set zona_id = '01920000-0000-7000-8000-0000000000d2'
+where usuario_id = '01920000-0000-7000-8000-0000000000a1';
+select set_config('role', 'postgres', true);
+select is((select zona_id from public.campania_colportor where usuario_id = '01920000-0000-7000-8000-0000000000a1'),
           '01920000-0000-7000-8000-0000000000d1'::uuid,
           'Ana NO puede auto-asignarse la zona de Beto (R-SY04: la asignación gana del backend)');
-select is((select count(*) from public.ubicacion), 1::bigint,
-          'Ana sigue viendo solo su zona después de intentar la escalada');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a1');
+-- Las de Montevideo (suyas y de Beto) y la propia en Canelones.
+select results_eq(
+  $$ select id from public.ubicacion order by id $$,
+  $$ values ('01920000-0000-7000-8000-0000000000f2'::uuid), ('01920000-0000-7000-8000-0000000000f3'::uuid),
+            ('01920000-0000-7000-8000-0000000000f6'::uuid), ('01920000-0000-7000-8000-0000000000f7'::uuid) $$,
+  'Ana ve las casas de su ciudad y las propias, después de intentar la escalada');
 
-update public.ubicacion set zona_id = '01920000-0000-7000-8000-0000000000d2'
-where id = '01920000-0000-7000-8000-0000000000f2';
-select is((select zona_id from public.ubicacion where id = '01920000-0000-7000-8000-0000000000f2'),
-          '01920000-0000-7000-8000-0000000000d1'::uuid,
-          'Ana NO puede mover su ubicación a la zona de Beto');
+-- Una casa ajena de su ciudad la corrige, pero no la manda a una ciudad donde no trabaja.
+select throws_ok(
+  $$ update public.ubicacion set ciudad_id = '01920000-0000-7000-8000-0000000000c2'
+      where id = '01920000-0000-7000-8000-0000000000f6' $$,
+  '42501', null,
+  'Ana NO puede mandar la casa de Beto a una ciudad donde no trabaja');
 
 -- --- sync_version es del servidor también en el INSERT ------------------------------
 select lives_ok(
@@ -142,17 +173,15 @@ select is((select sync_version from public.jornada where id = '01920000-0000-700
 
 -- --- constraints de integridad del dominio ------------------------------------------
 select throws_ok(
-  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad)
-     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA',
-             '01920000-0000-7000-8000-0000000000d1', 'RECHAZO', 1) $$,
+  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad)
+     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA', 'RECHAZO', 1) $$,
   '23514', null,
-  'house_status con color y prioridad contradictorios se rechaza (ADR-010)'
+  'house_status con color y prioridad contradictorios se rechaza (ADR-003)'
 );
 select lives_ok(
-  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, zona_id, color, prioridad)
-     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA',
-             '01920000-0000-7000-8000-0000000000d1', 'RECHAZO', 7) $$,
-  'house_status con el par color/prioridad de ADR-010 se acepta'
+  $$ insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad)
+     values ('01920000-0000-7000-8000-0000000000f2', -34.9, -56.18, 'CASA', 'RECHAZO', 7) $$,
+  'house_status con el par color/prioridad de ADR-003 se acepta'
 );
 
 -- venta_item: la línea es aritmética pura. El descuento informal vive en venta.monto_total (S38).
@@ -182,14 +211,15 @@ select lives_ok(
 -- Fixtures como postgres (session_user), que no pasa por RLS.
 select set_config('role', 'postgres', true);
 
-insert into public.zona (id, nombre, ciudad_id) values
-  ('01920000-0000-7000-8000-000000000201', 'Zona campaña vieja', '01920000-0000-7000-8000-0000000000c1'),
-  ('01920000-0000-7000-8000-000000000202', 'Zona campaña viva',  '01920000-0000-7000-8000-0000000000c1');
-insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, ciudad_id) values
-  ('01920000-0000-7000-8000-000000000203', 'Verano 2020', 'VERANO', '2020-01-01', '2020-03-01',
-   '01920000-0000-7000-8000-0000000000c1'),
-  ('01920000-0000-7000-8000-000000000204', 'Permanente', 'PERMANENTE', current_date - 30, null,
-   '01920000-0000-7000-8000-0000000000c1');
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
+  ('01920000-0000-7000-8000-000000000203', 'Verano 2020', 'VERANO', '2020-01-01', '2020-03-01'),
+  ('01920000-0000-7000-8000-000000000204', 'Permanente', 'PERMANENTE', current_date - 30, null);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-000000000207', '01920000-0000-7000-8000-000000000203', '01920000-0000-7000-8000-0000000000c1'),
+  ('01920000-0000-7000-8000-000000000208', '01920000-0000-7000-8000-000000000204', '01920000-0000-7000-8000-0000000000c1');
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
+  ('01920000-0000-7000-8000-000000000201', 'Zona campaña vieja', '01920000-0000-7000-8000-000000000207', 'RADIAL', -34.90, -56.18, 300),
+  ('01920000-0000-7000-8000-000000000202', 'Zona campaña viva',  '01920000-0000-7000-8000-000000000208', 'RADIAL', -34.90, -56.18, 300);
 insert into public.campania_colportor (id, campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-000000000205', '01920000-0000-7000-8000-000000000203',
    '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-000000000201'),
@@ -207,16 +237,16 @@ select is((select count(*) from public.mis_zonas() z where z = '01920000-0000-70
           1::bigint,
           'una campaña vigente sí da acceso a su zona');
 
--- Baja administrativa (ADR-011): la revocación de sesión ocurre fuera de esta base, así que los
+-- Baja administrativa (ADR-005): la revocación de sesión ocurre fuera de esta base, así que los
 -- helpers de autorización tienen que caerse solos si la sesión sobrevive.
 select set_config('role', 'postgres', true);
 update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000000a2';
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000000a2');
 
 select is((select count(*) from public.mis_zonas()), 0::bigint,
-          'un usuario con baja administrativa pierde todas sus zonas (ADR-011)');
+          'un usuario con baja administrativa pierde todas sus zonas (ADR-005)');
 select is(public.tiene_rol('COLPORTOR'), false,
-          'un usuario con baja administrativa pierde sus roles (ADR-011)');
+          'un usuario con baja administrativa pierde sus roles (ADR-005)');
 
 -- --- anon no ve nada ----------------------------------------------------------------
 select set_config('role', 'anon', true);
