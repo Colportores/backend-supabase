@@ -185,6 +185,20 @@ Desde la migración `0009`, la inscripción es el **único** lugar donde vive la
 - **Con quién comparte el permiso.** El chequeo de permiso y campaña vigente (`motivo_campania_del_coordinador()`) es el mismo que usa `inscribir_colportor()`.
 - **Historial de zonas** (`0022`, decisión del 02/10). `campania_colportor.zona_id` sigue siendo la zona actual; además `campania_colportor_zona_historial` guarda un tramo por zona (`desde`, `hasta`, quién la asignó en `created_by` y quién la cerró en `cerrada_por`), para auditoría. Lo llena solo un trigger de `campania_colportor`, al asignar, cambiar, quitar o dar de baja la zona, o al dar de baja la inscripción; no hay nada que llamar. **Dar de baja la inscripción** deja al colportor sin zona (decisión de Cristian, 02/10): el tramo se cierra con quién y cuándo, y al volver (reactivación) aparece en «Sin zona» hasta que se le asigne otra con `asignar_zona()`. Si se elimina al usuario que asignó o cerró un tramo, `created_by` y `cerrada_por` quedan en `null`. El tramo vigente tiene `hasta` en `null`. Los tramos que ya existían al activarlo van con `inicial = true`: su `desde` es el de la migración, no el de la asignación real. Lo leen el ADMIN y el coordinador de la campaña (`select … from campania_colportor_zona_historial where campania_colportor_id = …`); nadie lo escribe directo y no baja al teléfono (no va por el pull ni por el push).
 
+## Precio de venta: general y modificado por ciudad
+
+Desde la migración `0034` (backend-supabase#78, decisión de Cristian del 06/10, «Precio gral.»): **Administración pone un precio general** para todo el país y la coordinadora puede **modificarlo para una ciudad de su campaña**. Vale el modificado vigente y, si no hay, el general.
+
+```sql
+select * from public.precio_vigente(campania_ciudad_id, producto_id);                       -- hoy
+select * from public.precio_vigente(campania_ciudad_id, null, coleccion_id, '2026-03-01');  -- una colección, en otra fecha
+```
+
+- **Dos tablas.** `precio_general` (nueva: producto o colección, centavos, `valido_desde` / `valido_hasta`, un solo vigente a la vez) y `precio_por_ciudad`, que no cambió y son las modificaciones. Cada tramo de precio es una fila: ese es el historial. Un precio nuevo vale para las ventas que se registren después; las anteriores conservan el suyo en `venta_item.precio_unitario`.
+- **Qué devuelve `precio_vigente()`.** Una fila con `origen` (`MODIFICADO` o `GENERAL`), `precio_id`, `precio_venta`, `valido_desde` y `valido_hasta`, o ninguna si no hay ni modificado ni general vigente (el producto no se ofrece en esa ciudad). Sin fecha usa el día de Montevideo (`hoy_montevideo()`, no el `current_date` de la sesión) y las dos fechas del tramo valen. Se pasa el producto **o** la colección (22023 si no).
+- **Quién.** Escribe el general solo el **ADMIN** (no hay `DELETE`: la baja es `deleted_at`). Lo lee el ADMIN y quien hoy lee los precios de una campaña (el coordinador que la lleva y el colportor inscripto en una que no terminó); un colportor sin campaña no lo lee. `precio_vigente()` es `SECURITY INVOKER`: la RLS sigue siendo la autoridad, y una ciudad de campaña que el usuario no ve no devuelve nada. `EXECUTE` solo para `authenticated` y `service_role`.
+- **Todavía no.** El general no se sincroniza al teléfono ni se publica por Realtime: eso cambia el contrato de sync y la publicación de Realtime ([ADR-012](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-012-backend-supabase-sa-east-1.md)), y va en un PR de docs aparte que revisa Bruno. Tampoco existe la pantalla de Administración: hasta entonces se carga con el seed y con [`docs/guia-carga-manual.md` § 8](./docs/guia-carga-manual.md).
+
 ## Mapa de la campaña
 
 Una campaña abarca una o más ciudades (`campania_ciudad`) y cada ciudad se divide en zonas dibujadas sobre el mapa (vista 24 del panel, migración `0008`). Una zona es `RADIAL` (centro y radio; el polígono lo calcula el servidor) o `ESQUINAS` (esquinas en `zona_vertice` y el borde que sigue las calles, que llega ya calculado). `zona.poligono_geojson` es la geometría que dibujan la app y el panel.
