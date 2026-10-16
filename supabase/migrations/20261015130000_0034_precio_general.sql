@@ -78,12 +78,15 @@
 --
 -- ## Para otros repos
 --
---   · front-coordinadores-web (vista 27, front-coordinadores-web#21): el general se lee con
---     `/rest/v1/precio_general` (sin poder cambiarlo: 42501 al insertar). La búsqueda de un precio
---     es `rpc/precio_vigente` con `p_campania_ciudad_id`, `p_producto_id` o `p_coleccion_id` (uno
---     solo) y, si se quiere, `p_fecha`; devuelve 0 o 1 fila con `origen`, `precio_id`,
---     `precio_venta` (centavos), `valido_desde` y `valido_hasta`. Argumentos que no cierran
---     (sin ciudad, sin producto ni colección, o los dos): 22023.
+--   · front-coordinadores-web (vista 27, front-coordinadores-web#21): el panel NO lee
+--     `precio_general` ni `precio_por_ciudad` con `.from()` (ADR-013: los clientes no hacen select
+--     sobre tablas). La búsqueda de UN precio es `rpc/precio_vigente` con `p_campania_ciudad_id`,
+--     `p_producto_id` o `p_coleccion_id` (uno solo) y, si se quiere, `p_fecha`; devuelve 0 o 1 fila
+--     con `origen`, `precio_id`, `precio_venta` (centavos), `valido_desde` y `valido_hasta`.
+--     Argumentos que no cierran (sin ciudad, sin producto ni colección, o los dos): 22023. Para
+--     LISTAR los precios de una ciudad de la campaña la vista 27 va a necesitar una RPC de lectura
+--     que todavía no existe (llamar a `precio_vigente()` producto por producto sería el N+1 que
+--     ADR-013 descarta): issue de seguimiento backend-supabase#84 (S7), sin implementar acá.
 --   · front-colportores-mobile y motor de sync (front-colportores-mobile#157 y #178): hasta el PR de
 --     docs del contrato, el general no baja al teléfono; sigue bajando `precio_por_ciudad`. Avisar a
 --     @BrunoFCapri.

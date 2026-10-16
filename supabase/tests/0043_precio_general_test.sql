@@ -630,6 +630,116 @@ select is((select count(*)::int from information_schema.table_constraints tc
               and u.table_name = 'precio_general'),
           0, 'ninguna tabla tiene una FK al precio general (la venta guarda el suyo, sin apuntarlo)');
 
+-- El procedimiento de cambio de la guía (docs/guia-carga-manual.md, § 8 y § 9): cierra ayer lo que ya
+-- rige, da de baja lo que empieza hoy o más adelante y recién ahí inserta el nuevo. No puede dar 23514
+-- con un precio cargado hoy ni agarrar uno futuro programado (revisión de #83, menor 3). Las dos
+-- funciones repiten los pasos de la guía, con los ids de la prueba.
+create or replace function pg_temp.cambiar_general(p_producto uuid, p_nuevo uuid, p_importe integer)
+returns void language plpgsql as $$
+begin
+  update public.precio_general
+     set valido_hasta = public.hoy_montevideo() - 1
+   where producto_id = p_producto and deleted_at is null
+     and valido_desde < public.hoy_montevideo()
+     and (valido_hasta is null or valido_hasta >= public.hoy_montevideo());
+  update public.precio_general
+     set deleted_at = now()
+   where producto_id = p_producto and deleted_at is null
+     and valido_desde >= public.hoy_montevideo();
+  insert into public.precio_general (id, producto_id, precio_venta, valido_desde)
+  values (p_nuevo, p_producto, p_importe, public.hoy_montevideo());
+end $$;
+create or replace function pg_temp.cambiar_modificado(p_producto uuid, p_ciudad uuid, p_nuevo uuid, p_importe integer)
+returns void language plpgsql as $$
+begin
+  update public.precio_por_ciudad
+     set valido_hasta = public.hoy_montevideo() - 1
+   where producto_id = p_producto and campania_ciudad_id = p_ciudad and deleted_at is null
+     and valido_desde < public.hoy_montevideo()
+     and (valido_hasta is null or valido_hasta >= public.hoy_montevideo());
+  update public.precio_por_ciudad
+     set deleted_at = now()
+   where producto_id = p_producto and campania_ciudad_id = p_ciudad and deleted_at is null
+     and valido_desde >= public.hoy_montevideo();
+  insert into public.precio_por_ciudad (id, producto_id, campania_ciudad_id, precio_venta, valido_desde)
+  values (p_nuevo, p_producto, p_ciudad, p_importe, public.hoy_montevideo());
+end $$;
+
+select pg_temp.actuar_como_servidor();
+insert into public.producto (id, nombre, tipo) values
+  (pg_temp.u('61'), 'Libro p14 general43', 'LIBRO'),
+  (pg_temp.u('62'), 'Libro p15 general43', 'LIBRO'),
+  (pg_temp.u('63'), 'Libro p16 general43', 'LIBRO'),
+  (pg_temp.u('64'), 'Libro p17 general43', 'LIBRO'),
+  (pg_temp.u('65'), 'Libro p18 general43', 'LIBRO');
+-- p14: general cargado HOY (el caso que antes daba 23514). p15: general que rige y otro programado a
+-- futuro, abierto (el update viejo agarraba el futuro). p16: el general abierto de siempre.
+insert into public.precio_general (id, producto_id, precio_venta, valido_desde, valido_hasta) values
+  (pg_temp.u('71'), pg_temp.u('61'), 1000, pg_temp.h(), null),
+  (pg_temp.u('73'), pg_temp.u('62'), 1000, pg_temp.h() - 10, pg_temp.h() + 4),
+  (pg_temp.u('74'), pg_temp.u('62'), 1500, pg_temp.h() + 5, null),
+  (pg_temp.u('76'), pg_temp.u('63'), 1000, pg_temp.h() - 100, null);
+-- p17: modificado cargado HOY; p18: modificado que rige y otro programado (f1, la ciudad de e1).
+insert into public.precio_por_ciudad (id, producto_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta) values
+  (pg_temp.u('7a'), pg_temp.u('64'), pg_temp.u('f1'), 3000, pg_temp.h(), null),
+  (pg_temp.u('7c'), pg_temp.u('65'), pg_temp.u('f1'), 3000, pg_temp.h() - 10, pg_temp.h() + 4),
+  (pg_temp.u('7d'), pg_temp.u('65'), pg_temp.u('f1'), 3200, pg_temp.h() + 5, null);
+
+select lives_ok(
+  $$ select pg_temp.cambiar_general('01920000-0000-7000-8000-000000004361', '01920000-0000-7000-8000-000000004372', 2000) $$,
+  'cambiar el general cargado HOY con el procedimiento de la guía no da 23514');
+select results_eq(
+  $$ select id, precio_venta, deleted_at is not null from public.precio_general
+      where producto_id = '01920000-0000-7000-8000-000000004361' order by precio_venta $$,
+  $$ values ('01920000-0000-7000-8000-000000004371'::uuid, 1000, true),
+            ('01920000-0000-7000-8000-000000004372'::uuid, 2000, false) $$,
+  'el cargado hoy queda dado de baja y rige el nuevo');
+select lives_ok(
+  $$ select pg_temp.cambiar_general('01920000-0000-7000-8000-000000004362', '01920000-0000-7000-8000-000000004375', 2000) $$,
+  'con un general programado a futuro, el procedimiento de la guía tampoco falla');
+select results_eq(
+  $$ select id, valido_hasta, deleted_at is not null from public.precio_general
+      where producto_id = '01920000-0000-7000-8000-000000004362' order by id $$,
+  $$ values ('01920000-0000-7000-8000-000000004373'::uuid, public.hoy_montevideo() - 1, false),
+            ('01920000-0000-7000-8000-000000004374'::uuid, null::date, true),
+            ('01920000-0000-7000-8000-000000004375'::uuid, null::date, false) $$,
+  'el que regía se cierra ayer, el programado se da de baja y el nuevo queda abierto');
+select lives_ok(
+  $$ select pg_temp.cambiar_general('01920000-0000-7000-8000-000000004363', '01920000-0000-7000-8000-000000004377', 2000) $$,
+  'y el cambio de siempre (general abierto desde hace tiempo) sigue andando');
+select results_eq(
+  $$ select id, valido_hasta, deleted_at is not null from public.precio_general
+      where producto_id = '01920000-0000-7000-8000-000000004363' order by id $$,
+  $$ values ('01920000-0000-7000-8000-000000004376'::uuid, public.hoy_montevideo() - 1, false),
+            ('01920000-0000-7000-8000-000000004377'::uuid, null::date, false) $$,
+  'el viejo queda cerrado ayer (historial) y rige el nuevo');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is(pg_temp.pv('f1', '62'), 'GENERAL:2000:75', 'hoy vale el nuevo general');
+select is(pg_temp.pv('f1', '62', null, pg_temp.h() - 5), 'GENERAL:1000:73', 'y hace cinco días valía el que regía');
+select pg_temp.actuar_como_servidor();
+
+select lives_ok(
+  $$ select pg_temp.cambiar_modificado('01920000-0000-7000-8000-000000004364', '01920000-0000-7000-8000-0000000043f1',
+                                       '01920000-0000-7000-8000-00000000437b', 3500) $$,
+  'cambiar el precio por ciudad cargado HOY con el procedimiento de la guía no da 23514');
+select results_eq(
+  $$ select id, precio_venta, deleted_at is not null from public.precio_por_ciudad
+      where producto_id = '01920000-0000-7000-8000-000000004364' order by precio_venta $$,
+  $$ values ('01920000-0000-7000-8000-00000000437a'::uuid, 3000, true),
+            ('01920000-0000-7000-8000-00000000437b'::uuid, 3500, false) $$,
+  'el cargado hoy queda dado de baja y rige el nuevo (precio por ciudad)');
+select lives_ok(
+  $$ select pg_temp.cambiar_modificado('01920000-0000-7000-8000-000000004365', '01920000-0000-7000-8000-0000000043f1',
+                                       '01920000-0000-7000-8000-00000000437e', 3500) $$,
+  'con un precio por ciudad programado a futuro, el procedimiento de la guía tampoco falla');
+select results_eq(
+  $$ select id, valido_hasta, deleted_at is not null from public.precio_por_ciudad
+      where producto_id = '01920000-0000-7000-8000-000000004365' order by id $$,
+  $$ values ('01920000-0000-7000-8000-00000000437c'::uuid, public.hoy_montevideo() - 1, false),
+            ('01920000-0000-7000-8000-00000000437d'::uuid, null::date, true),
+            ('01920000-0000-7000-8000-00000000437e'::uuid, null::date, false) $$,
+  'el que regía se cierra ayer, el programado se da de baja y el nuevo queda abierto (precio por ciudad)');
+
 -- Con la sesión en cualquier zona horaria, el valido_desde por defecto es el día de Montevideo.
 select pg_temp.actuar_como(pg_temp.u('ad'));
 select set_config('TimeZone', 'Pacific/Kiritimati', true);

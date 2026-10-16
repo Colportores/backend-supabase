@@ -282,15 +282,26 @@ values (null, '<id de coleccion>', 44000, public.hoy_montevideo(), null);
   viejo y se inserta el nuevo; cada tramo queda como una fila, que es el
   historial:
   ```sql
-  -- 1. Cerrar el precio viejo:
+  -- 1a. Cerrar ayer el precio que ya rige (empezó antes de hoy y no terminó):
   update public.precio_general
      set valido_hasta = public.hoy_montevideo() - 1
-   where producto_id = '<id de producto>' and valido_hasta is null and deleted_at is null;
+   where producto_id = '<id de producto>' and deleted_at is null
+     and valido_desde < public.hoy_montevideo()
+     and (valido_hasta is null or valido_hasta >= public.hoy_montevideo());
+
+  -- 1b. Dar de baja el que empieza hoy o más adelante: uno cargado hoy no se puede cerrar
+  --     «ayer» (el rango quedaría al revés: 23514), y uno programado a futuro se superpondría
+  --     con el nuevo (23P01); el nuevo lo reemplaza.
+  update public.precio_general
+     set deleted_at = now()
+   where producto_id = '<id de producto>' and deleted_at is null
+     and valido_desde >= public.hoy_montevideo();
 
   -- 2. Recién ahí insertar el nuevo:
   insert into public.precio_general (producto_id, precio_venta, valido_desde)
   values ('<id de producto>', 26000, public.hoy_montevideo());
   ```
+  Para el general de una colección es lo mismo con `coleccion_id = '<id de coleccion>'`.
   Cambiar el general **no toca las ventas anteriores**: cada ítem de venta
   guarda el precio con el que se vendió (`venta_item.precio_unitario`).
 - Lo escribe solo el **ADMIN**; el coordinador y el colportor no. (Desde el SQL
@@ -354,11 +365,22 @@ values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_
   `campania_ciudad`), no cuenta. Un precio dado de baja (`deleted_at`) tampoco.
   Para cambiar un precio:
   ```sql
-  -- 1. Cerrar el precio viejo:
+  -- 1a. Cerrar ayer el precio que ya rige (empezó antes de hoy y no terminó):
   update public.precio_por_ciudad
      set valido_hasta = public.hoy_montevideo() - 1
    where producto_id = '<id de producto>' and campania_ciudad_id = '<id de campania_ciudad>'
-     and valido_hasta is null and deleted_at is null;
+     and deleted_at is null
+     and valido_desde < public.hoy_montevideo()
+     and (valido_hasta is null or valido_hasta >= public.hoy_montevideo());
+
+  -- 1b. Dar de baja el que empieza hoy o más adelante: uno cargado hoy no se puede cerrar
+  --     «ayer» (el rango quedaría al revés: 23514), y uno programado a futuro se superpondría
+  --     con el nuevo (23P01); el nuevo lo reemplaza.
+  update public.precio_por_ciudad
+     set deleted_at = now()
+   where producto_id = '<id de producto>' and campania_ciudad_id = '<id de campania_ciudad>'
+     and deleted_at is null
+     and valido_desde >= public.hoy_montevideo();
 
   -- 2. Recién ahí insertar el nuevo:
   insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde)
