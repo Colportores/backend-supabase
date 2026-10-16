@@ -17,7 +17,9 @@
 --
 -- Lo demás de la vista 24 ya es RPC: agregar_ciudad_a_campania(), guardar_zona() (con
 -- p_vista_previa), baja_zona(), asignar_zona(), quitar_zona(), zonas_asignables(),
--- colportores_de_campania() y buscar_candidatos().
+-- colportores_de_campania() y buscar_candidatos(). Dos de ellas, zonas_asignables() y
+-- colportores_de_campania(), se recrean acá para leer con el mismo criterio que las tres nuevas
+-- (sección 5b).
 --
 -- ## Modelo de permisos
 --
@@ -111,7 +113,8 @@
 --
 --   42501  sin sesión, sin el rol, o la campaña es de otro coordinador (y existe)
 --   CZ001  la campaña no existe (o está dada de baja)
---   CZ011  la campaña ya terminó (una que todavía no empezó se lee)
+--   CZ011  la campaña ya terminó (una que todavía no empezó se lee); también en
+--          colportores_de_campania() y zonas_asignables()
 --   CZ012  zonas_de_ciudad(): la ciudad no está en esta campaña
 --
 -- ## Decididas (15/10, por el mapa de decisiones; el archivo de pendientes del PR las registra)
@@ -123,6 +126,17 @@
 --   · Campañas futuras y terminadas (antes pendiente): las tres lecturas de campaña usan
 --     motivo_mapa_de_campania(); en curso o por empezar se leen, la terminada es CZ011. No se abre
 --     la lectura de campañas terminadas (sería otra función).
+--
+--   · Las otras dos lecturas de la vista 24 (decidido el 16/10, P1 de la revisión de #82:
+--     pendientes/backend-supabase-54-rev-261015-2356.md): colportores_de_campania() y
+--     zonas_asignables() pasan al mismo criterio, motivo_mapa_de_campania(), con la misma comprobación
+--     (exigir_lectura_de_campania()). Antes usaban motivo_campania_del_coordinador() (la campaña tiene
+--     que estar vigente) y, en una campaña por empezar, la pantalla cargaba las zonas y fallaba al
+--     pedir los colportores con CZ002 (un error que también sale para una terminada: el panel no
+--     puede adivinar un estado desde un error). Ahora: en curso o por empezar contestan con su lista
+--     (hoy, sin colportores en una por empezar: inscribir exige que haya empezado), terminada CZ011.
+--     inscribir_colportor() y asignar_zona() NO cambian: siguen exigiendo una campaña vigente (CZ002
+--     en una por empezar). Sumar colportores antes del inicio es otra pregunta (de Cristian).
 --
 -- ## Pendientes (no se deciden acá; P1 del archivo de pendientes del PR)
 --
@@ -137,6 +151,9 @@
 --   · front-coordinadores-web#18 (topbar) llama a mi_perfil() y a campanias_del_coordinador(); #40
 --     (vista 24) llama a las otras tres. Por PostgREST: POST /rest/v1/rpc/<función> con el JWT del
 --     coordinador y los parámetros por nombre (p_campania_id, p_texto, p_campania_ciudad_id).
+--   · colportores_de_campania() y zonas_asignables() cambian de CZ002 a CZ011 para una campaña
+--     terminada, y dejan de dar CZ002 para una por empezar (devuelven su lista). El adaptador de #40
+--     no trata un error como una lista vacía.
 --   · Dos `null` que el contrato del panel tipa como `string` y el adaptador de #40 tiene que
 --     cubrir: `zonas_de_ciudad().color` (una zona se puede guardar sin color) y
 --     `esquinas[].calle_a` / `calle_b` (columnas nulables; los polígonos que 0008 convirtió a
@@ -398,6 +415,72 @@ comment on function public.zonas_de_ciudad(uuid, uuid) is
   'ESQUINAS), colportores asignados (nombre, apellido, suspendido) y cuántas ubicaciones incluye '
   '(un número, sin datos de clientes). Errores: 42501 sin permiso; CZ001 inexistente; CZ011 '
   'terminada; CZ012 la ciudad no está en esta campaña.';
+
+-- ----------------------------------------------------------------------------
+-- 5b. colportores_de_campania() y zonas_asignables(): el mismo criterio de lectura
+-- ----------------------------------------------------------------------------
+
+-- Misma firma, mismas columnas y mismo orden que en 0015 y 0008: create or replace conserva los
+-- privilegios (EXECUTE para authenticated). Lo único que cambia es la comprobación del principio:
+-- antes lanzar_motivo_zona(motivo_campania_del_coordinador()) (campaña vigente: CZ002 en una por
+-- empezar y en una terminada), ahora la de las otras lecturas, exigir_lectura_de_campania()
+-- (motivo_mapa_de_campania(): una por empezar se lee, una terminada es CZ011). Siguen siendo
+-- VOLATILE por la misma razón que las tres de arriba (supabase-js las manda por POST).
+create or replace function public.colportores_de_campania(p_campania_id uuid)
+returns table (usuario_id uuid, nombre text, apellido text, zona_id uuid, zona_nombre text,
+                suspendido boolean, email text, estado text)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.exigir_lectura_de_campania(p_campania_id);
+
+  return query
+    select u.id, u.nombre, u.apellido, z.id, z.nombre, (u.suspendido_en is not null), u.email,
+           public.estado_de_cuenta(u.suspendido_en,
+                                   exists (select 1 from public.campanias_vigentes_de(u.id)))
+      from public.campania_colportor cc
+      join public.usuario u on u.id = cc.usuario_id
+      left join public.zona z on z.id = cc.zona_id and z.deleted_at is null
+     where cc.campania_id = p_campania_id
+       and cc.deleted_at is null and u.deleted_at is null
+     order by u.apellido, u.nombre, u.id;
+end;
+$$;
+
+comment on function public.colportores_de_campania(uuid) is
+  'HU-CAM-004/006: inscriptos vivos de p_campania_id con su zona actual, email y estado de la '
+  'cuenta (0015). Desde 0033 se lee con el criterio del mapa: una campaña por empezar contesta (sin '
+  'inscriptos, la lista vacía). Errores: 42501 sin permiso; CZ001 inexistente; CZ011 terminada.';
+
+create or replace function public.zonas_asignables(p_campania_id uuid)
+returns table (id uuid, nombre text, de_esta_campania boolean)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.exigir_lectura_de_campania(p_campania_id);
+
+  return query
+    select z.id, z.nombre, true
+      from public.zona z
+      join public.campania_ciudad cc on cc.id = z.campania_ciudad_id
+     where cc.campania_id = p_campania_id
+       and cc.deleted_at is null
+       and z.deleted_at is null
+     order by z.nombre, z.id;
+end;
+$$;
+
+comment on function public.zonas_asignables(uuid) is
+  'HU-CAM-006: zonas que asignar_zona() aceptaría en p_campania_id (vivas, de sus ciudades vivas). '
+  'de_esta_campania es siempre true. Desde 0033 se lee con el criterio del mapa: una campaña por '
+  'empezar lista sus zonas (asignar_zona() sigue pidiendo una vigente). Errores: 42501 sin permiso; '
+  'CZ001 inexistente; CZ011 terminada.';
 
 -- ----------------------------------------------------------------------------
 -- 6. Privilegios

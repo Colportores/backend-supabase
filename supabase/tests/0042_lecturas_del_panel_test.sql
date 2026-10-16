@@ -3,7 +3,8 @@
 -- zonas_de_ciudad(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña), los códigos de campaña (CZ001, CZ011, CZ012; una campaña por
 -- empezar se lee y una terminada no), el contenido de cada respuesta y que no devuelven nada de
--- más (ni email, ni clientes, ni personas).
+-- más (ni email, ni clientes, ni personas). También colportores_de_campania() y zonas_asignables(),
+-- que 0033 alinea con el mismo criterio (la vista 24 de una campaña por empezar).
 begin;
 select * from no_plan();
 
@@ -158,6 +159,13 @@ select is((select pg_get_function_result('public.ciudades_del_catalogo(uuid,text
 select is((select pg_get_function_result('public.zonas_de_ciudad(uuid,uuid)'::regprocedure)),
           'TABLE(zona_id uuid, nombre text, tipo_forma text, color text, centro_lat double precision, centro_lon double precision, radio_m integer, poligono_geojson jsonb, esquinas jsonb, colportores jsonb, ubicaciones_registradas integer)',
           'zonas_de_ciudad(): la forma de la respuesta (sin email, sin clientes, sin personas)');
+
+select is((select pg_get_function_result('public.colportores_de_campania(uuid)'::regprocedure)),
+          'TABLE(usuario_id uuid, nombre text, apellido text, zona_id uuid, zona_nombre text, suspendido boolean, email text, estado text)',
+          'colportores_de_campania(): la forma de la respuesta no cambió al alinear el criterio');
+select is((select pg_get_function_result('public.zonas_asignables(uuid)'::regprocedure)),
+          'TABLE(id uuid, nombre text, de_esta_campania boolean)',
+          'zonas_asignables(): la forma de la respuesta no cambió al alinear el criterio');
 
 select is((select p.prosecdef from pg_proc p where p.oid = 'public.mi_perfil()'::regprocedure), false,
           'mi_perfil() es SECURITY INVOKER: la RLS de usuario le basta (solo la fila propia)');
@@ -336,6 +344,65 @@ select results_eq(
 select throws_ok($$ select * from public.ciudades_de_campania('01920000-0000-7000-8000-0000000042e3') $$,
   'CZ011', null, 'y a un ADMIN la terminada también le da CZ011');
 
+-- colportores_de_campania() y zonas_asignables() leen con el mismo criterio (0033): la vista 24 de
+-- una campaña por empezar carga zonas, zonas asignables y colportores sin error. Inscribir exige que
+-- la campaña haya empezado, así que la lista de colportores de una por empezar es vacía, no un error.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a1');
+select is_empty(
+  $$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
+  'campaña por empezar: colportores_de_campania() sin filas, no CZ002');
+select results_eq(
+  $$ select id, nombre, de_esta_campania from public.zonas_asignables('01920000-0000-7000-8000-0000000042e5') $$,
+  $$ values ('01920000-0000-7000-8000-0000000042d6'::uuid, 'Zona futura'::text, true) $$,
+  'campaña por empezar: zonas_asignables() lista sus zonas, no CZ002');
+select results_eq(
+  $$ select usuario_id from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e1') order by apellido, nombre, usuario_id $$,
+  $$ values ('01920000-0000-7000-8000-0000000042b2'::uuid), ('01920000-0000-7000-8000-0000000042b3'::uuid),
+            ('01920000-0000-7000-8000-0000000042b6'::uuid), ('01920000-0000-7000-8000-0000000042b1'::uuid) $$,
+  'campaña en curso: colportores_de_campania() sigue listando sus inscriptos vivos (Alfa, Beta, Sinzona, Zeta)');
+select results_eq(
+  $$ select id from public.zonas_asignables('01920000-0000-7000-8000-0000000042e1') order by nombre $$,
+  $$ values ('01920000-0000-7000-8000-0000000042d1'::uuid), ('01920000-0000-7000-8000-0000000042d2'::uuid) $$,
+  'campaña en curso: zonas_asignables() sigue listando las vivas (Centro, Cordón)');
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e3') $$,
+  'CZ011', null, 'campaña terminada: CZ011 (colportores)');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e3') $$,
+  'CZ011', null, 'campaña terminada: CZ011 (zonas asignables)');
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042ff') $$,
+  'CZ001', null, 'campaña inexistente: CZ001 (colportores)');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042ff') $$,
+  'CZ001', null, 'campaña inexistente: CZ001 (zonas asignables)');
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e4') $$,
+  'CZ001', null, 'campaña dada de baja: CZ001 (colportores)');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e4') $$,
+  'CZ001', null, 'campaña dada de baja: CZ001 (zonas asignables)');
+-- Asignar zona sigue pidiendo una campaña que empezó: la regla de escritura no cambia.
+select throws_ok(
+  $$ select public.asignar_zona('01920000-0000-7000-8000-0000000042e5', '01920000-0000-7000-8000-0000000042b1', '01920000-0000-7000-8000-0000000042d6') $$,
+  'CZ002', null, 'asignar_zona() en una campaña por empezar sigue en CZ002');
+-- El permiso va primero: el coordinador de otra campaña, el colportor y quien no tiene sesión no
+-- leen una por empezar.
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a2');
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
+  '42501', null, 'el coordinador de otra campaña no lista los colportores de una por empezar');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e5') $$,
+  '42501', null, 'el coordinador de otra campaña no lista las zonas asignables de una por empezar');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a0');
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
+  '42501', null, 'un colportor no lista los colportores de una por empezar');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e5') $$,
+  '42501', null, 'un colportor no lista las zonas asignables de una por empezar');
+select pg_temp.actuar_sin_jwt();
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
+  '42501', null, 'sin sesión: 42501 (colportores)');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e5') $$,
+  '42501', null, 'sin sesión: 42501 (zonas asignables)');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042ad');
+select isnt_empty($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e5') $$,
+  'un ADMIN lista las zonas asignables de una por empezar');
+select lives_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
+  'y sus colportores');
+
 -- El borde del día (en Montevideo): la que termina hoy todavía se lee, la que terminó ayer no; la que
 -- empieza hoy y la que empieza mañana, sí. Son de a6 y no tienen ciudades.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a6');
@@ -351,6 +418,16 @@ select lives_ok($$ select * from public.ciudades_de_campania('01920000-0000-7000
   'la que empieza mañana se lee');
 select lives_ok($$ select * from public.ciudades_del_catalogo('01920000-0000-7000-8000-0000000042eb', 'sal') $$,
   'una sin fin se lee');
+select lives_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e7') $$,
+  'la que termina hoy: colportores_de_campania() todavía se lee');
+select lives_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e7') $$,
+  'la que termina hoy: zonas_asignables() todavía se lee');
+select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e8') $$,
+  'CZ011', null, 'la que terminó ayer: CZ011 (colportores)');
+select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e8') $$,
+  'CZ011', null, 'la que terminó ayer: CZ011 (zonas asignables)');
+select lives_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042ea') $$,
+  'la que empieza mañana: colportores_de_campania() se lee');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a1');
 
 -- zonas_de_ciudad: la ciudad tiene que ser una ciudad VIVA de ESTA campaña.

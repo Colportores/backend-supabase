@@ -1,6 +1,7 @@
 -- pgTAP · lecturas del panel (migración 0007, HU-CAM-004/006)
 -- zonas_asignables() y colportores_de_campania(): acceso (permiso primero), errores y cada
--- filtro, con los mismos criterios que motivo_rechazo_zona() / asignar_zona().
+-- filtro, con los mismos criterios que motivo_rechazo_zona() / asignar_zona(). Desde 0033 las dos
+-- leen con el criterio del mapa (una campaña por empezar se lee, una terminada es CZ011; ver 0042).
 begin;
 select * from no_plan();
 
@@ -149,9 +150,9 @@ select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-80
 select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000009e4') $$,
   'CZ001', null, 'campaña borrada: CZ001 (colportores)');
 select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000009e3') $$,
-  'CZ002', null, 'campaña no vigente: CZ002 (zonas)');
+  'CZ011', null, 'campaña terminada: CZ011 (zonas; antes CZ002, 0033)');
 select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000009e3') $$,
-  'CZ002', null, 'campaña no vigente: CZ002 (colportores)');
+  'CZ011', null, 'campaña terminada: CZ011 (colportores; antes CZ002, 0033)');
 
 -- ---------------------------------------------------------------------------
 -- 4. zonas_asignables: cada filtro
