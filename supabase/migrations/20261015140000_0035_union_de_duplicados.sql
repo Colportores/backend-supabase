@@ -93,7 +93,9 @@
 --     sin ella, el depto de un colportor que sube tarde se rechazaría (42501) y con él los clientes
 --     y las ventas que cuelgan de él. El trigger deja una marca de transacción con el id del
 --     espacio y su destino; la política la compara con la fila final. Quien no podía escribir donde
---     nombró sigue con 42501, y escribir en A sin nombrar a una B unida no cambia.
+--     nombró sigue con 42501, y escribir en A sin nombrar a una B unida no cambia. En el UPDATE la
+--     marca vale solo para un espacio que cargó quien escribe (created_by): sin eso, poner
+--     ubicacion_id = B en el SET dejaría corregir o dar de baja cualquier espacio de A que se ve.
 --   · marcar_como_duplicado conserva sus privilegios de 0026 (authenticated y service_role).
 --
 -- ## Lo que queda fuera
@@ -436,6 +438,13 @@ create trigger espacio_0_union_redirige
 -- La marca es una variable de la transacción (`colportores.union_espacio` = «<espacio>:<destino>»)
 -- que solo escribe tg_espacio_union_redirige(): la API no ejecuta set_config, y como incluye el
 -- destino no sirve para mover la misma fila a otro lado después.
+-- En el UPDATE la rama de la marca exige además `created_by = auth.uid()`: el USING deja tocar todo
+-- lo que se ve, y la marca se deja para cualquier fila que nombre a una B donde se puede escribir,
+-- sea suya o no (un UPDATE con ubicacion_id = B sobre un espacio ajeno de A, o un insert que choca
+-- por id —on conflict do nothing— dejan la marca del id ajeno). Sin esa condición, quien escribe en B
+-- corregiría o daría de baja cualquier espacio de A que ve. Con ella, la corrección tardía es solo
+-- de lo que cargó quien la sube; la de un espacio ajeno que estaba en B se rechaza (ante la duda, se
+-- bloquea). El INSERT ya exige `created_by = auth.uid()`; created_by es inmutable en UPDATE (0001).
 drop policy espacio_por_ubicacion_insert on public.espacio;
 create policy espacio_por_ubicacion_insert on public.espacio
   for insert to authenticated
@@ -450,14 +459,16 @@ create policy espacio_por_ubicacion_update on public.espacio
          or public.puedo_escribir_en_ubicacion(ubicacion_id)
          or exists (select 1 from public.ubicacion u where u.id = ubicacion_id))
   with check (public.puedo_escribir_en_ubicacion(ubicacion_id)
-              or current_setting('colportores.union_espacio', true) = id::text || ':' || ubicacion_id::text);
+              or (created_by = (select auth.uid())
+                  and current_setting('colportores.union_espacio', true) = id::text || ':' || ubicacion_id::text));
 
 comment on policy espacio_por_ubicacion_insert on public.espacio is
   'Alta: quien la carga y puede cargar en la ubicación (0021), o un espacio que llegó nombrando a una '
   'ubicación ya unida a esta y quien lo sube podía cargar en la nombrada (marca de tg_espacio_union_redirige, 0035).';
 comment on policy espacio_por_ubicacion_update on public.espacio is
-  'Corrección: USING como en 0021; WITH CHECK: puede escribir en la ubicación, o el espacio se movió '
-  'a la que recibió una ubicación unida que nombraba y en la que podía escribir (0035).';
+  'Corrección: USING como en 0021; WITH CHECK: puede escribir en la ubicación, o el espacio es suyo '
+  '(created_by) y se movió a la que recibió una ubicación unida que nombraba y en la que podía '
+  'escribir (0035).';
 
 -- espacio_persona.espacio_id (espacio fundido → el de A) y ubicacion_cobranza_alt_id (B → A).
 create function public.tg_espacio_persona_union_redirige()

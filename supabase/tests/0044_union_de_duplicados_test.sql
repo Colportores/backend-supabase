@@ -681,5 +681,104 @@ select is((select count(*)::int from sync.entidad where tabla in ('public.ubicac
           'ninguna de las dos está en sync.entidad (no van al pull ni al push)');
 select is((select count(*)::int from sync.entidad), 23, 'sync.entidad sigue con sus 23 entidades');
 
+-- ---------------------------------------------------------------------------
+-- 7. La marca no abre los espacios ajenos de A (revisión de #85: la excepción de la 3b)
+-- ---------------------------------------------------------------------------
+-- El trigger deja la marca para cualquier fila que nombre a una B unida donde quien escribe puede
+-- escribir, sea suya o no. Si el UPDATE no pedía además `created_by = auth.uid()`, quien escribe en B
+-- corregía o daba de baja cualquier espacio de A que ve con solo poner ubicacion_id = B en el SET.
+--   · b4 (colportor): Verano en curso en f1 (escribe en Y, unida a Z) y una campaña por empezar en f2
+--     (ve Z sin poder escribir en ella).
+--   · b5 (coordinador sin campaña): registró la 20 (f1), unida a Z; ve todo y solo puede cargar en ella.
+--   · b8 y b9: deptos de b2 en Z, ajenos para los dos.
+select pg_temp.actuar_como_servidor();
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
+       'authenticated', 'authenticated', 'union44-' || s || '@example.com', 'x', now(), now(), now()
+  from unnest(array['b4', 'b5']) s;
+insert into public.usuario_rol (usuario_id, rol_id)
+select pg_temp.u('b5'), r.id from public.rol r where r.codigo = 'COORDINADOR';
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
+  (pg_temp.u('b6'), 'Pronto union44', 'VERANO', public.hoy_montevideo() + 10, public.hoy_montevideo() + 40);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.u('b7'), pg_temp.u('b6'), pg_temp.u('f2'));
+insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+  (pg_temp.u('f3'), pg_temp.u('b4'), null),
+  (pg_temp.u('b6'), pg_temp.u('b4'), null);
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by)
+values (pg_temp.u('20'), 'CASA', 'Union 20', '20', -35.16, -56.2, pg_temp.u('f1'), pg_temp.u('b5'));
+insert into public.espacio (id, ubicacion_id, numero_depto, created_by) values
+  (pg_temp.u('b8'), pg_temp.u('06'), 'v1', pg_temp.u('b2')),
+  (pg_temp.u('b9'), pg_temp.u('06'), 'v2', pg_temp.u('b2'));
+select is(pg_temp.dup('20', '06') ->> 'ya_unida', 'false', 'se une la 20 (de b5) a Z, como las otras de Y y X');
+select is(public.ubicacion_vigente(pg_temp.u('20')), pg_temp.u('06'), 'y su vigente es Z');
+
+-- Casos 1 y 2: el colportor que escribe en Y (unida a Z) y solo ve Z. Sin la marca, 42501.
+select pg_temp.actuar_como(pg_temp.u('b4'));
+select is((select count(*) from public.espacio where id in (pg_temp.u('b8'), pg_temp.u('b9'))), 2::bigint,
+          'b4 ve los dos deptos de Z (su campaña por empezar en f2)');
+select is(pg_temp.err(format($$ update public.espacio set descripcion = 'tocado' where id = %L $$, pg_temp.u('b8'))), '42501',
+          'pero no corrige el depto de Z: no escribe ahí, 42501');
+select is(pg_temp.err(format($$ update public.espacio set ubicacion_id = %L, descripcion = 'tocado por b4' where id = %L $$,
+                             pg_temp.u('05'), pg_temp.u('b8'))), '42501',
+          '1. b4 pone ubicacion_id = Y (unida a Z, donde sí escribe) para corregir el depto ajeno b8 de Z: 42501');
+select is(pg_temp.err(format($$ update public.espacio set ubicacion_id = %L, deleted_at = now() where id = %L $$,
+                             pg_temp.u('05'), pg_temp.u('b9'))), '42501',
+          '2. y para darlo de baja (b9): 42501');
+-- Caso 3: lo mismo por sync.push.
+create temp table lote_ajeno_b4 on commit drop as
+select sync.push(jsonb_build_array(
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'espacio', 'op', 'update',
+                     'sync_version', (select sync_version from public.espacio where id = pg_temp.u('b8')),
+                     'payload', jsonb_build_object('id', pg_temp.u('b8'), 'ubicacion_id', pg_temp.u('05'), 'descripcion', 'tocado por el push')))) as r;
+select is((select pg_temp.resultados(r) from lote_ajeno_b4), array['invalid 42501'],
+          '3. el update de b8 con ubicacion_id = Y por sync.push vuelve invalid 42501, no accepted');
+
+-- Caso 4: el coordinador que solo carga en la 20 (unida a Z). Un insert que choca por id (on conflict
+-- do nothing: duplicate) dejaba la marca del depto ajeno, y el update de después pasaba.
+select pg_temp.actuar_como(pg_temp.u('b5'));
+select is((select count(*) from public.espacio where id in (pg_temp.u('b8'), pg_temp.u('b9'))), 2::bigint, 'b5 (coordinador) ve los deptos de Z');
+select is(pg_temp.err(format($$ update public.espacio set descripcion = 'tocado' where id = %L $$, pg_temp.u('b8'))), '42501',
+          'pero no escribe en ellos (no tiene campaña): 42501');
+create temp table lote_marca_ajena on commit drop as
+select sync.push(jsonb_build_array(
+  pg_temp.job('espacio', 'insert', jsonb_build_object('id', pg_temp.u('b8'), 'ubicacion_id', pg_temp.u('20'), 'numero_depto', 'v1')),
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'espacio', 'op', 'update',
+                     'sync_version', (select sync_version from public.espacio where id = pg_temp.u('b8')),
+                     'payload', jsonb_build_object('id', pg_temp.u('b8'), 'ubicacion_id', pg_temp.u('20'), 'descripcion', 'tocado por b5')))) as r;
+select is((select pg_temp.resultados(r) from lote_marca_ajena), array['duplicate', 'invalid 42501'],
+          '4. un insert que choca con el id de b8 nombrando a la 20, seguido de su update, en un mismo push: duplicate e invalid 42501');
+
+-- Nada se movió, cambió ni se dio de baja.
+select pg_temp.actuar_como_servidor();
+select results_eq(
+  $$ select ubicacion_id, descripcion, deleted_at is null, sync_version, created_by from public.espacio
+      where id in (pg_temp.u('b8'), pg_temp.u('b9')) order by id $$,
+  $$ values (pg_temp.u('06'), null::text, true, 0::bigint, pg_temp.u('b2')),
+            (pg_temp.u('06'), null::text, true, 0::bigint, pg_temp.u('b2')) $$,
+  'los dos deptos de Z siguen en Z, sin descripción, vivos, sin versión nueva y de b2');
+
+-- Lo propio sigue entrando: la corrección tardía de un depto que cargó quien lo corrige.
+select pg_temp.actuar_como(pg_temp.u('b4'));
+select is(pg_temp.err(format($$ insert into public.espacio (id, ubicacion_id, numero_depto) values (%L, %L, 'v3') $$,
+                             pg_temp.u('ba'), pg_temp.u('05'))), 'ok', 'b4 sube un depto propio nombrando a Y: entra (cae en Z)');
+select is(pg_temp.err(format($$ update public.espacio set ubicacion_id = %L, descripcion = 'corregido' where id = %L $$,
+                             pg_temp.u('05'), pg_temp.u('ba'))), 'ok',
+          'y lo corrige nombrando a Y otra vez (la corrección tardía de lo propio, por la API)');
+create temp table lote_propio_b4 on commit drop as
+select sync.push(jsonb_build_array(
+  jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'espacio', 'op', 'update',
+                     'sync_version', (select sync_version from public.espacio where id = pg_temp.u('ba')),
+                     'payload', jsonb_build_object('id', pg_temp.u('ba'), 'ubicacion_id', pg_temp.u('05'), 'piso', '3')))) as r;
+select is((select pg_temp.resultados(r) from lote_propio_b4), array['accepted'], 'y por sync.push también');
+select pg_temp.actuar_como(pg_temp.u('b5'));
+select is(pg_temp.err(format($$ insert into public.espacio (id, ubicacion_id, numero_depto) values (%L, %L, 'v4') $$,
+                             pg_temp.u('bb'), pg_temp.u('20'))), 'ok', 'b5 carga un depto propio nombrando a la 20, unida a Z: entra');
+select pg_temp.actuar_como_servidor();
+select results_eq(
+  $$ select ubicacion_id, descripcion, piso from public.espacio where id = pg_temp.u('ba') $$,
+  $$ values (pg_temp.u('06'), 'corregido'::text, '3'::text) $$,
+  'el depto de b4 quedó en Z, corregido');
+select is((select ubicacion_id from public.espacio where id = pg_temp.u('bb')), pg_temp.u('06'), 'y el de b5, en Z');
+
 select * from finish();
 rollback;
