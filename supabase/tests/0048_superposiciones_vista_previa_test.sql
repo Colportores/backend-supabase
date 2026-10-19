@@ -9,6 +9,8 @@
 --   7. Ciudad sin calles cargadas (calles_compartidas null) y calle sin nombre (null).
 --   8. Permiso: el de guardar_zona(); la respuesta no lleva ni importes ni personas.
 --   9. El metro de tolerancia al recorrer un tramo, y las calles de otra ciudad del catálogo no cuentan.
+--  10. Una zona grande sobre una ciudad ya dividida en muchas zonas no pasa el statement_timeout (8 s).
+--  11. Un tramo de menos de 1 m en una esquina donde dos zonas solo se tocan no cuenta como calle compartida.
 begin;
 select * from no_plan();
 
@@ -525,6 +527,113 @@ select is(pg_temp.calles((select r from tolerancia)),
           'una zona cuyo borde pasa a 0,37 m de las mismas calles las comparte (el metro de tolerancia); a 3 m, no');
 select is(pg_temp.sup((select r from tolerancia)), 'Corrida 0,4 m; Corrida 3 m',
           'y las dos se superponen en área, con o sin la calle compartida: son avisos distintos');
+
+-- ---------------------------------------------------------------------------
+-- 10. Rendimiento: una zona de 10 km sobre una ciudad de 101×101 calles dividida en 100 zonas de 1 km
+-- ---------------------------------------------------------------------------
+-- Sin `materialized` (y con st_coveredby) esto tardaba 20 s o más y pasaba el statement_timeout de 8 s de Supabase: la
+-- vista previa y el guardado, que nunca se rechazan, fallaban con 57014. Tarda ~0,1 s; el tope de acá (3 s) es 30 veces eso.
+select pg_temp.actuar_como_servidor();
+insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial)
+values ('01920000-0000-7000-8000-0000000048c5', 'Grande q87', '01920000-0000-7000-8000-0000000048c0', -35.0, -56.45, 12);
+insert into public.campania_ciudad (id, campania_id, ciudad_id)
+values ('01920000-0000-7000-8000-000000004876', '01920000-0000-7000-8000-0000000048e1', '01920000-0000-7000-8000-0000000048c5');
+select ruteo.cargar_red('01920000-0000-7000-8000-0000000048c5', jsonb_build_object('elements',
+  (select jsonb_agg(pg_temp.via(60000 + n, 'Calle ' || n, 'residential', p) order by n) from (
+     select r as n, (select jsonb_agg(pg_temp.pt(-56.5, -34.5, c, r) order by c) from generate_series(0, 100) c) as p
+       from generate_series(0, 100) r
+     union all
+     select 1000 + c, (select jsonb_agg(pg_temp.pt(-56.5, -34.5, c, r) order by r) from generate_series(0, 100) r)
+       from generate_series(0, 100) c
+  ) x)), 'pgTAP grande');
+-- 100 zonas de 10×10 cuadras que cubren toda la ciudad (por INSERT directo: la forma ya es válida y es lo que importa medir).
+insert into public.zona (nombre, campania_ciudad_id, tipo_forma, poligono_geojson)
+select 'Z ' || i || ',' || j, '01920000-0000-7000-8000-000000004876', 'ESQUINAS',
+       jsonb_build_object('type', 'Polygon', 'coordinates', jsonb_build_array(jsonb_build_array(
+         pg_temp.pt(-56.5, -34.5, i * 10, j * 10), pg_temp.pt(-56.5, -34.5, i * 10 + 10, j * 10),
+         pg_temp.pt(-56.5, -34.5, i * 10 + 10, j * 10 + 10), pg_temp.pt(-56.5, -34.5, i * 10, j * 10 + 10),
+         pg_temp.pt(-56.5, -34.5, i * 10, j * 10))))
+  from generate_series(0, 9) i, generate_series(0, 9) j;
+select is((select count(*)::int from public.zona where campania_ciudad_id = '01920000-0000-7000-8000-000000004876'), 100, '100 zonas vivas en la ciudad grande');
+select is((select tramos from ruteo.red where ciudad_id = '01920000-0000-7000-8000-0000000048c5'), 20200, 'y 20 200 tramos de calle');
+
+create temp table grande_t0 on commit drop as select clock_timestamp() t0;
+create temp table grande on commit drop as
+  select public.zonas_que_comparten_calle('01920000-0000-7000-8000-000000004876',
+    jsonb_build_object('type', 'Polygon', 'coordinates', jsonb_build_array(jsonb_build_array(
+      pg_temp.pt(-56.5, -34.5, 0, 0), pg_temp.pt(-56.5, -34.5, 100, 0), pg_temp.pt(-56.5, -34.5, 100, 100),
+      pg_temp.pt(-56.5, -34.5, 0, 100), pg_temp.pt(-56.5, -34.5, 0, 0)))), null) r;
+select ok((select clock_timestamp() - t0 < interval '3 seconds' from grande_t0),
+          'una zona de 10 km sobre 100 zonas y 20 200 tramos se calcula en menos de 3 s (el tope de Supabase es 8 s)');
+-- Las 36 zonas de la orilla comparten calles con el borde del cuadrado grande; las 64 de adentro, ninguna.
+select is((select count(distinct e ->> 'zona_id')::int from grande, jsonb_array_elements(r) e), 36,
+          'y avisa de las 36 zonas de la orilla (las 64 de adentro no comparten el borde)');
+
+-- ---------------------------------------------------------------------------
+-- 11. Tramos de menos de 1 m: en la esquina donde dos zonas solo se tocan no cuentan; a mitad de un borde en común, sí
+-- ---------------------------------------------------------------------------
+-- c6 «Esquina corta»: una cuadrícula de 3×3 cruces (0,001°) con dos nodos a ~0,45 m del cruce (1,1):
+--   · al este, sobre «Fila 1», donde se junta «Pasaje E»: parte la calle y deja un tramo de «Fila 1» de 0,46 m;
+--   · al norte, sobre la columna 1, donde se junta «Pasaje N»: la columna 1 son tres vías («Col 1 N», «Corta» y
+--     «Col 1 S»), y «Corta» es un tramo de 0,44 m.
+select pg_temp.actuar_como_servidor();
+insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial)
+values ('01920000-0000-7000-8000-0000000048c6', 'Esquina corta q87', '01920000-0000-7000-8000-0000000048c0', -34.8, -56.6, 15);
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  ('01920000-0000-7000-8000-000000004877', '01920000-0000-7000-8000-0000000048e1', '01920000-0000-7000-8000-0000000048c6'),
+  ('01920000-0000-7000-8000-000000004878', '01920000-0000-7000-8000-0000000048e3', '01920000-0000-7000-8000-0000000048c6');
+select ruteo.cargar_red('01920000-0000-7000-8000-0000000048c6', jsonb_build_object('elements', jsonb_build_array(
+  pg_temp.via(70000, 'Fila 0', 'residential', jsonb_build_array(pg_temp.pt(-56.6, -34.8, 0, 0), pg_temp.pt(-56.6, -34.8, 1, 0), pg_temp.pt(-56.6, -34.8, 2, 0))),
+  pg_temp.via(70001, 'Fila 1', 'residential', jsonb_build_array(
+    pg_temp.pt(-56.6, -34.8, 0, 1), pg_temp.pt(-56.6, -34.8, 1, 1),
+    jsonb_build_array(pg_temp.r7(-56.6 + 0.001 + 0.000005), pg_temp.r7(-34.8 - 0.001)), pg_temp.pt(-56.6, -34.8, 2, 1))),
+  pg_temp.via(70002, 'Fila 2', 'residential', jsonb_build_array(pg_temp.pt(-56.6, -34.8, 0, 2), pg_temp.pt(-56.6, -34.8, 1, 2), pg_temp.pt(-56.6, -34.8, 2, 2))),
+  pg_temp.via(70010, 'Col 0', 'residential', jsonb_build_array(pg_temp.pt(-56.6, -34.8, 0, 0), pg_temp.pt(-56.6, -34.8, 0, 1), pg_temp.pt(-56.6, -34.8, 0, 2))),
+  pg_temp.via(70011, 'Col 1 N', 'residential', jsonb_build_array(
+    pg_temp.pt(-56.6, -34.8, 1, 0), jsonb_build_array(pg_temp.r7(-56.6 + 0.001), pg_temp.r7(-34.8 - 0.001 + 0.000004)))),
+  pg_temp.via(70012, 'Corta', 'residential', jsonb_build_array(
+    jsonb_build_array(pg_temp.r7(-56.6 + 0.001), pg_temp.r7(-34.8 - 0.001 + 0.000004)), pg_temp.pt(-56.6, -34.8, 1, 1))),
+  pg_temp.via(70013, 'Col 1 S', 'residential', jsonb_build_array(pg_temp.pt(-56.6, -34.8, 1, 1), pg_temp.pt(-56.6, -34.8, 1, 2))),
+  pg_temp.via(70012 + 100, 'Col 2', 'residential', jsonb_build_array(pg_temp.pt(-56.6, -34.8, 2, 0), pg_temp.pt(-56.6, -34.8, 2, 1), pg_temp.pt(-56.6, -34.8, 2, 2))),
+  pg_temp.via(70020, 'Pasaje E', 'residential', jsonb_build_array(
+    jsonb_build_array(pg_temp.r7(-56.6 + 0.001 + 0.000005), pg_temp.r7(-34.8 - 0.001)),
+    jsonb_build_array(pg_temp.r7(-56.6 + 0.001 + 0.000005), pg_temp.r7(-34.8 - 0.001 + 0.0001)))),
+  pg_temp.via(70021, 'Pasaje N', 'residential', jsonb_build_array(
+    jsonb_build_array(pg_temp.r7(-56.6 + 0.001), pg_temp.r7(-34.8 - 0.001 + 0.000004)),
+    jsonb_build_array(pg_temp.r7(-56.6 + 0.001 + 0.0001), pg_temp.r7(-34.8 - 0.001 + 0.000004)))))),
+  'pgTAP esquina corta');
+select is((select count(*)::int from ruteo.tramo where ciudad_id = '01920000-0000-7000-8000-0000000048c6' and largo_m < 1), 2,
+          'la red tiene dos tramos de menos de 1 m: el de Fila 1 (0,46 m) y «Corta» (0,44 m)');
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000048a1');
+-- (a) SO y NE en diagonal: se tocan solo en el cruce (1,1). Los dos tramos cortos están pegados a esa esquina y a 1 m o
+-- menos de los dos bordes, pero no son una calle que las dos zonas recorran: no se avisa.
+create temp table ne on commit drop as
+  select pg_temp.zona('01920000-0000-7000-8000-000000004877', 'NE',
+                      jsonb_build_array(pg_temp.pt(-56.6, -34.8, 1, 0), pg_temp.pt(-56.6, -34.8, 2, 0),
+                                       pg_temp.pt(-56.6, -34.8, 2, 1), pg_temp.pt(-56.6, -34.8, 1, 1))) r;
+create temp table so on commit drop as
+  select pg_temp.zona('01920000-0000-7000-8000-000000004877', 'SO',
+                      jsonb_build_array(pg_temp.pt(-56.6, -34.8, 0, 1), pg_temp.pt(-56.6, -34.8, 1, 1),
+                                       pg_temp.pt(-56.6, -34.8, 1, 2), pg_temp.pt(-56.6, -34.8, 0, 2)), true) r;
+select is((select r ->> 'guardada' from ne), 'true', 'la NE se guarda');
+select is((select r -> 'calles_compartidas' from so), '[]'::jsonb,
+          'SO y NE en diagonal, con tramos de 0,46 m y 0,44 m pegados a la esquina: no comparten calle');
+select is((select r -> 'superposiciones' from so), '[]'::jsonb, 'y no se superponen');
+
+-- (b) Control: A y B comparten la columna 1 entera, que incluye «Corta» (0,44 m) a mitad del borde: «Corta» sigue contando.
+create temp table za on commit drop as
+  select pg_temp.zona('01920000-0000-7000-8000-000000004878', 'A',
+                      jsonb_build_array(pg_temp.pt(-56.6, -34.8, 0, 0), pg_temp.pt(-56.6, -34.8, 1, 0),
+                                       pg_temp.pt(-56.6, -34.8, 1, 2), pg_temp.pt(-56.6, -34.8, 0, 2))) r;
+create temp table zb on commit drop as
+  select pg_temp.zona('01920000-0000-7000-8000-000000004878', 'B',
+                      jsonb_build_array(pg_temp.pt(-56.6, -34.8, 1, 0), pg_temp.pt(-56.6, -34.8, 2, 0),
+                                       pg_temp.pt(-56.6, -34.8, 2, 2), pg_temp.pt(-56.6, -34.8, 1, 2)), true) r;
+-- (Los pasajes que salen de la columna, a 0,46 m de ella, también quedan a 1 m de los dos bordes: es el metro de tolerancia.)
+select ok(string_to_array(pg_temp.calles((select r from zb)), '; ') @> array['A / Col 1 N', 'A / Col 1 S', 'A / Corta'],
+          'un tramo corto a mitad de un borde en común sigue contando (Corta, de 0,44 m, entre Col 1 N y Col 1 S)');
+select is((select r -> 'superposiciones' from zb), '[]'::jsonb, 'y compartir la columna no es superponerse');
 
 select * from finish();
 rollback;

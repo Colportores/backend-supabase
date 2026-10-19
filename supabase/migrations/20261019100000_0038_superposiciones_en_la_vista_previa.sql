@@ -32,7 +32,12 @@
 --
 -- El borde de la zona nueva recorre al menos UN tramo de la red de calles (ruteo.tramo) que también
 -- está en el borde de otra zona viva de la misma ciudad de la campaña. Sin largo mínimo. Tocarse en
--- una sola esquina no cuenta (un punto no es un tramo). «Recorre» = el tramo entero queda a 1 m o
+-- una sola esquina no cuenta (un punto no es un tramo): un tramo que queda entero a 1 m o menos de
+-- un punto donde se cruzan o se tocan los dos bordes no cuenta (decisión del 19/10, revisión de
+-- #90: con el metro de ADR-018, un tramo así no se distingue de la esquina; un nodo de OSM a 0,46 m
+-- de la esquina, donde se junta un pasaje, partía la calle y dejaba un tramo de 0,46 m que avisaba
+-- «Comparte la calle» con una zona que solo se toca en el punto. No es un largo mínimo: un tramo
+-- corto a mitad de un borde en común sigue contando). «Recorre» = el tramo entero queda a 1 m o
 -- menos del borde, el mismo metro que ADR-018 usa para las esquinas: el borde de una zona por
 -- esquinas se arma pegando tramos (poligono_por_calles(), 0036), así que dos zonas vecinas lo
 -- recorren idéntico. Compartir un borde NO es superponerse: la zona vecina que solo comparte la
@@ -99,7 +104,8 @@ comment on function public.zonas_que_se_superponen(uuid, jsonb, uuid) is
 -- ----------------------------------------------------------------------------
 
 -- Los tramos de la red de la ciudad que el borde de p_poligono recorre (el tramo entero a 1 m o menos)
--- y que también recorre el borde de otra zona viva de la campania_ciudad (sin p_zona_id). Una fila por
+-- y que también recorre el borde de otra zona viva de la campania_ciudad (sin p_zona_id), salvo los que
+-- quedan enteros a 1 m o menos de un punto donde los dos bordes se tocan o se cruzan. Una fila por
 -- zona y por nombre de calle; el punto es la mitad del más largo de esos tramos. null si la ciudad no
 -- tiene calles cargadas.
 create function public.zonas_que_comparten_calle(p_campania_ciudad_id uuid, p_poligono jsonb,
@@ -113,6 +119,7 @@ declare
   c_tolerancia constant double precision := 1.0;   -- metros: el mismo de las esquinas (ADR-018)
   v_ciudad_id  uuid;
   v_nueva      extensions.geometry := public.zona_geometria(p_poligono);
+  v_anillo     extensions.geometry := extensions.st_exteriorring(public.zona_geometria(p_poligono));
   v_franja     extensions.geometry;   -- 1 m a cada lado del borde de la zona nueva
 begin
   select cc.ciudad_id into v_ciudad_id
@@ -122,22 +129,30 @@ begin
     return null;
   end if;
 
-  v_franja := extensions.geometry(extensions.st_buffer(
-                extensions.geography(extensions.st_exteriorring(v_nueva)), c_tolerancia));
+  v_franja := extensions.geometry(extensions.st_buffer(extensions.geography(v_anillo), c_tolerancia));
 
   return coalesce((
-    with recorridos as (          -- los tramos que el borde nuevo recorre
+    -- `materialized` en los dos: sin eso Postgres los inlinea y vuelve a leer las calles (y a probar la franja
+    -- entera) una vez por cada zona vecina; con una zona grande sobre una ciudad ya dividida en muchas zonas
+    -- pasaba los 8 s del statement_timeout (57014) y el guardado, que nunca se rechaza, se rechazaba.
+    -- st_covers(franja, tramo) es lo mismo que st_coveredby(tramo, franja), pero PostGIS prepara el primer
+    -- argumento y lo reutiliza para todos los tramos.
+    with recorridos as materialized (     -- los tramos que el borde nuevo recorre
       select t.id, t.nombre, t.largo_m, t.geom
         from ruteo.tramo t
        where t.ciudad_id = v_ciudad_id
-         and extensions.st_coveredby(t.geom, v_franja)
+         and extensions.st_covers(v_franja, t.geom)
     ),
-    vecinas as (                  -- las zonas vivas de la ciudad de la campaña que llegan hasta ahí
+    vecinas as materialized (             -- las zonas vivas de la ciudad de la campaña que llegan hasta ahí
+      -- `cerca`: 1 m alrededor de los puntos sueltos donde el borde de la vecina cruza o toca el de la zona nueva
+      -- (la intersección de los dos bordes sin sus tramos en común); null si no hay.
       select z.id, z.nombre,
-             extensions.geometry(extensions.st_buffer(
-               extensions.geography(extensions.st_exteriorring(public.zona_geometria(z.poligono_geojson))),
-               c_tolerancia)) as franja
+             extensions.geometry(extensions.st_buffer(extensions.geography(a.anillo), c_tolerancia)) as franja,
+             case when not extensions.st_isempty(p.puntos)
+                  then extensions.geometry(extensions.st_buffer(extensions.geography(p.puntos), c_tolerancia)) end as cerca
         from public.zona z
+        cross join lateral (select extensions.st_exteriorring(public.zona_geometria(z.poligono_geojson)) as anillo) a
+        cross join lateral (select extensions.st_collectionextract(extensions.st_intersection(v_anillo, a.anillo), 1) as puntos) p
        where z.campania_ciudad_id = p_campania_ciudad_id
          and z.deleted_at is null
          and z.id is distinct from p_zona_id
@@ -148,7 +163,9 @@ begin
       select v.id as zona_id, v.nombre as zona, nullif(btrim(r.nombre), '') as calle,
              (array_agg(r.geom order by r.largo_m desc, r.id))[1] as tramo_mayor
         from vecinas v
-        join recorridos r on extensions.st_coveredby(r.geom, v.franja)
+        join recorridos r on r.geom operator(extensions.&&) v.franja
+                         and extensions.st_covers(v.franja, r.geom)
+                         and (v.cerca is null or not extensions.st_covers(v.cerca, r.geom))
        group by v.id, v.nombre, nullif(btrim(r.nombre), '')
     )
     select jsonb_agg(jsonb_build_object(
@@ -163,7 +180,8 @@ $$;
 comment on function public.zonas_que_comparten_calle(uuid, jsonb, uuid) is
   'Interna (0038): [{zona_id, nombre, calle, punto}] de las zonas vivas de la campania_ciudad (sin '
   'p_zona_id) con las que el borde de p_poligono recorre al menos un mismo tramo de ruteo.tramo (el '
-  'tramo entero a 1 m o menos de los dos bordes; sin largo mínimo; tocarse en una esquina no cuenta). '
+  'tramo entero a 1 m o menos de los dos bordes; sin largo mínimo; tocarse en una esquina no cuenta, ni un '
+  'tramo entero a 1 m o menos de ese punto). '
   'calle es null si el tramo no tiene nombre; punto, la mitad del tramo más largo. null si la ciudad '
   'no tiene calles cargadas.';
 
