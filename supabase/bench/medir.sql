@@ -6,7 +6,7 @@
 -- `colportor_id = auth.uid()` — una igualdad, y el índice del delta la lleva
 -- adelante. Para `ubicacion`/`espacio`/`house_status` es, desde 0011,
 -- `ciudad_id in (select mis_ciudades_de_trabajo())` (antes, la zona), que NO es una
--- igualdad indexable, y el pull le suma el alcance (su zona o la ciudad). Para
+-- igualdad indexable, y el pull le suma lo mismo: sus ciudades de trabajo (0023: ya no hay alcance). Para
 -- `venta_item` es un EXISTS contra `venta`.
 --
 -- Lo que hay que mirar en cada plan: si aparece **Index Cond** con la columna
@@ -78,20 +78,20 @@ select jsonb_array_length(sync.pull(array['jornada','visita','ubicacion','venta'
 select sync.pull(array['jornada','visita','ubicacion','venta'],
                  sync.pull(array['jornada','visita','ubicacion','venta']) -> 'watermark') -> 'has_more';
 
-\echo '-- alcance (0011): el área completa de su zona, desde cero (asignar o redibujar la zona)'
+\echo '-- ciudad (0023): la ciudad completa de su zona, desde cero (cambia la lista de ciudades)'
 select jsonb_array_length(sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 500)
                           #> '{rows,ubicacion}') as filas_zona;
 
-\echo '-- alcance: pull incremental de la zona sin novedades'
+\echo '-- ciudad: pull incremental sin novedades'
 select sync.pull(array['ubicacion','espacio','house_status'],
                  sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 1000) -> 'watermark',
                  1000) -> 'rows' as filas_incrementales;
 
-\echo '-- alcance: primera página de toda la ciudad'
-select jsonb_array_length(sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 500, null, 'ciudad')
+\echo '-- ciudad: primera página de 500 (el pull ya no distingue alcances: es la misma consulta)'
+select jsonb_array_length(sync.pull(array['ubicacion','espacio','house_status'], '{}'::jsonb, 500)
                           #> '{rows,ubicacion}') as filas_ciudad;
 
-\echo '-- alcance: «Incluye N ubicaciones» de una zona (vista 24)'
+\echo '-- «Incluye N ubicaciones» de una zona (vista 24)'
 reset role;
 select public.zona_ubicaciones_incluidas(z.campania_ciudad_id, z.poligono_geojson) as incluidas
   from public.zona z where z.nombre = 'BENCH zona 1';

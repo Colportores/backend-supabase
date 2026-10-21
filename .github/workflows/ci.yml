@@ -11,6 +11,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Pruebas del publicador de mapas (tiles/, backend-supabase#42): catálogo, estilo, política de
+  # tamaño, subida a Storage y verificación, todo contra un Storage de mentira. No necesita Docker
+  # ni credenciales. El bucket en sí no se prueba acá: lo prueba el job `storage` (de abajo) contra un
+  # storage-api real, y `node src/cli.mjs verificar` después de cada publicación (workflow Mapas).
+  tiles:
+    name: tiles · pruebas del publicador
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: tiles
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tiles/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  # El bucket `mapas` contra un Storage de verdad (backend-supabase#75). La base del job `migraciones` no
+  # trae el servicio Storage (el schema `storage` está vacío): ahí la migración 0029 y pgTAP 0036 se
+  # saltean. Este job levanta el storage-api oficial (imagen de ghcr.io, sin credenciales), aplica las
+  # migraciones y corre los pgTAP que dependen de Storage (hoy la 0036): es la parte de base de
+  # `tiles/prueba-storage/correr.sh` (`SOLO_BASE=1`: se detiene después de pgTAP, sin red, sin recorte y sin
+  # cargar ciudades). FALLA si la 0029 no creó el bucket o si algún pgTAP de Storage se saltea
+  # (`EXIGIR_STORAGE=1`), para que un cambio que rompa el bucket o las políticas de `storage.objects`
+  # no pase en verde. Pasos y variables: docs/mapas-tiles.md § «Probar contra un Storage real».
+  storage:
+    name: bucket mapas · Storage real (0029 y pgTAP 0036)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Las imágenes salen de ghcr.io (la base, storage-api y PostgREST): con el login el pull va
+      # autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
+      - name: Login a ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # correr.sh no construye imágenes: usa la `backend-supabase-dev:latest` de compose.dev.yml.
+      - name: Construir tooling
+        run: docker compose -f compose.dev.yml build cli
+
+      - name: Migraciones y pgTAP 0036 contra un storage-api real
+        run: SOLO_BASE=1 bash tiles/prueba-storage/correr.sh
+
+      # correr.sh ya apaga todo al salir; esto cubre que el job se corte antes.
+      - name: Apagar
+        if: always()
+        run: |
+          docker rm -f tiles-storage-storage tiles-storage-rest tiles-storage-gateway || true
+          docker compose -p tiles-storage -f compose.dev.yml down -v --remove-orphans
+
   migraciones:
     name: migraciones desde cero · pgTAP
     runs-on: ubuntu-latest
@@ -26,6 +86,10 @@ jobs:
       # No necesita Docker — es git y grep.
       - name: SQL solo en supabase/
         run: bash scripts/check-sql-layout.sh
+
+      # El servidor exige al menos la contraseña mínima de la app (8). Tampoco necesita Docker.
+      - name: Contraseña mínima del servidor
+        run: bash scripts/check-config.sh
 
       # La imagen de la DB sale de ghcr.io (mismo tag y digest que en ECR Public). Con el login
       # el pull va autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.

@@ -43,11 +43,11 @@ insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, deleted_at) values
   ('01920000-0000-7000-8000-0000000006e1', 'Vigente', 'VERANO', current_date - 10, current_date + 10, null),
-  ('01920000-0000-7000-8000-0000000006e2', 'Vencida', 'VERANO', current_date - 60, current_date - 1, null),
-  ('01920000-0000-7000-8000-0000000006e3', 'Futura', 'INVIERNO', current_date + 1, current_date + 30, null),
+  ('01920000-0000-7000-8000-0000000006e2', 'Vencida', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo() - 1, null),
+  ('01920000-0000-7000-8000-0000000006e3', 'Futura', 'INVIERNO', public.hoy_montevideo() + 1, public.hoy_montevideo() + 30, null),
   ('01920000-0000-7000-8000-0000000006e4', 'Borrada', 'VERANO', current_date - 10, current_date + 10, now()),
-  ('01920000-0000-7000-8000-0000000006e5', 'Termina hoy', 'PERMANENTE', current_date - 10, current_date, null),
-  ('01920000-0000-7000-8000-0000000006e6', 'Empieza hoy', 'VERANO', current_date, current_date + 10, null),
+  ('01920000-0000-7000-8000-0000000006e5', 'Termina hoy', 'PERMANENTE', public.hoy_montevideo() - 10, public.hoy_montevideo(), null),
+  ('01920000-0000-7000-8000-0000000006e6', 'Empieza hoy', 'VERANO', public.hoy_montevideo(), public.hoy_montevideo() + 10, null),
   ('01920000-0000-7000-8000-0000000006e7', 'Sin fin', 'PERMANENTE', current_date - 10, null, null);
 insert into public.campania_ciudad (campania_id, ciudad_id) values
   ('01920000-0000-7000-8000-0000000006e1', '01920000-0000-7000-8000-0000000006c1'),
