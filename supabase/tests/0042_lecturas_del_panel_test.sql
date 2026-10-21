@@ -152,10 +152,10 @@ select is((select pg_get_function_result('public.campanias_del_coordinador()'::r
           'TABLE(id uuid, nombre text, tipo text, fecha_inicio date, fecha_fin date)',
           'campanias_del_coordinador(): la forma de la respuesta');
 select is((select pg_get_function_result('public.ciudades_de_campania(uuid)'::regprocedure)),
-          'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
+          'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, departamento text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
           'ciudades_de_campania(): la forma de la respuesta');
 select is((select pg_get_function_result('public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
-          'TABLE(ciudad_id uuid, nombre text)', 'ciudades_del_catalogo(): la forma de la respuesta');
+          'TABLE(ciudad_id uuid, nombre text, departamento text)', 'ciudades_del_catalogo(): la forma de la respuesta');
 select is((select pg_get_function_result('public.zonas_de_ciudad(uuid,uuid)'::regprocedure)),
           'TABLE(zona_id uuid, nombre text, tipo_forma text, color text, centro_lat double precision, centro_lon double precision, radio_m integer, poligono_geojson jsonb, esquinas jsonb, colportores jsonb, ubicaciones_registradas integer)',
           'zonas_de_ciudad(): la forma de la respuesta (sin email, sin clientes, sin personas)');
