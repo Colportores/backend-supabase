@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0042 · Acompañamientos del coordinador: agregar uno a una jornada finalizada, el historial por
+-- 0043 · Acompañamientos del coordinador: agregar uno a una jornada finalizada, el historial por
 --        colportor y los «días sin acompañar» (backend-supabase#97, HU-JOR-004, vista 33 «Equipo»)
 --
 -- Origen: HU-JOR-004 y el cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C13): en la
@@ -147,7 +147,7 @@ as $$
 $$;
 
 comment on function public.jornadas_acompaniadas_de_campania(uuid) is
-  'Interna (0042, backend-supabase#97): las jornadas vivas con acompañante de los colportores '
+  'Interna (0043, backend-supabase#97): las jornadas vivas con acompañante de los colportores '
   'inscriptos en la campaña (antes de la baja, en sus fechas, día de Montevideo), abiertas '
   'incluidas (horas null). Sin permiso: la usan acompaniamientos_por_colportor() y '
   'historial_de_acompaniamientos(), que lo piden antes.';
@@ -217,7 +217,7 @@ end;
 $$;
 
 comment on function public.acompaniamientos_por_colportor(uuid) is
-  'Vista 33, HU-JOR-004 (0042, backend-supabase#97): por colportor inscripto (vivo) de la '
+  'Vista 33, HU-JOR-004 (0043, backend-supabase#97): por colportor inscripto (vivo) de la '
   'campaña, cuántas jornadas acompañadas tiene, el día del último y los días corridos sin '
   'acompañar (desde el último o, si nunca, desde el inicio de la campaña: contado_desde; sin '
   'umbral). Orden: más días sin acompañar primero. Una campaña terminada se lee. Errores: 42501 '
@@ -273,7 +273,7 @@ end;
 $$;
 
 comment on function public.historial_de_acompaniamientos(uuid, uuid) is
-  'Vista 33, HU-JOR-004 (0042, backend-supabase#97): las jornadas acompañadas de la campaña '
+  'Vista 33, HU-JOR-004 (0043, backend-supabase#97): las jornadas acompañadas de la campaña '
   '(de p_colportor_id, o de todos si es null), la más nueva primero: día de Montevideo, horas de '
   'la jornada (null si sigue abierta) y quién acompañó. Una campaña terminada se lee. Un colportor '
   'que no es de la campaña da la lista vacía. Errores: 42501 sin permiso; CZ001 campaña '
@@ -374,7 +374,7 @@ end;
 $$;
 
 comment on function public.agregar_acompaniamiento(uuid, uuid) is
-  'Vista 33, HU-JOR-004 (0042, backend-supabase#97): el coordinador de la campaña (o un ADMIN) '
+  'Vista 33, HU-JOR-004 (0043, backend-supabase#97): el coordinador de la campaña (o un ADMIN) '
   'registra que acompañó al colportor en una jornada ya cerrada: jornada.acompaniante_id = '
   'auth.uid(). Idempotente (ya_estaba) si ya era él; si la acompañó otra persona, JO003 y no se '
   'pisa. Errores: 42501 sin permiso; CZ001 campaña inexistente; CZ011 campaña terminada; 22023 '
@@ -437,7 +437,7 @@ end;
 $$;
 
 comment on function public.jornadas_cerradas_de_colportor(uuid, uuid) is
-  'Vista 33, HU-JOR-004 (0042, backend-supabase#97): las jornadas CERRADAS de p_colportor_id en '
+  'Vista 33, HU-JOR-004 (0043, backend-supabase#97): las jornadas CERRADAS de p_colportor_id en '
   'la campaña (fechas de la campaña, antes de la baja de la inscripción, día de Montevideo), la '
   'más nueva primero, con sus horas y quién la acompañó (null si nadie todavía): de ahí elige el '
   'coordinador a cuál agregar su acompañamiento. Un colportor que no es de la campaña da la lista '

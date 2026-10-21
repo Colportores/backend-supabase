@@ -1,4 +1,4 @@
--- pgTAP · acompañamientos del coordinador (migración 0042, backend-supabase#97, HU-JOR-004)
+-- pgTAP · acompañamientos del coordinador (migración 0043, backend-supabase#97, HU-JOR-004)
 -- agregar_acompaniamiento(), acompaniamientos_por_colportor(), historial_de_acompaniamientos():
 -- forma y privilegios; el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña) y que las lecturas leen una campaña terminada o por empezar y la

@@ -306,7 +306,7 @@ Desde la migración `0011` (backend-supabase#32, decisión D2 del 29/09) la zona
 
 ### Acompañamientos del coordinador (sin BFF)
 
-Desde la migración `0042` (backend-supabase#97, HU-JOR-004, vista 33 «Equipo», decisión de Cristian del 21/10 «C13», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el coordinador completa el dato «acompañé al colportor X el día Y» cuando el colportor se olvidó de marcarlo, y ve por colportor el historial de acompañamientos y los días sin acompañar. Cuatro RPC que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)); no hay tablas ni columnas nuevas: todo sale de `jornada.acompaniante_id`.
+Desde la migración `0043` (backend-supabase#97, HU-JOR-004, vista 33 «Equipo», decisión de Cristian del 21/10 «C13», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el coordinador completa el dato «acompañé al colportor X el día Y» cuando el colportor se olvidó de marcarlo, y ve por colportor el historial de acompañamientos y los días sin acompañar. Cuatro RPC que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)); no hay tablas ni columnas nuevas: todo sale de `jornada.acompaniante_id`.
 
 ```sql
 select * from public.acompaniamientos_por_colportor(campania_id);                -- la tabla: total, último y días sin acompañar
