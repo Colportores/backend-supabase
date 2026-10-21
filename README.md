@@ -322,6 +322,21 @@ select * from public.agregar_acompaniamiento(campania_id, jornada_id);          
 - **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; campaña inexistente o dada de baja, `CZ001`. `SECURITY DEFINER` con `search_path` vacío (el coordinador no lee `jornada`), `VOLATILE` (`supabase-js` las manda por `POST`), `EXECUTE` solo para `authenticated`.
 - **Pendiente de decisión.** Elegir a **otro colportor** como acompañante, la **nota** opcional y «de dónde salió el dato» (el canvas los muestra; la HU dice «no hay datos nuevos»), y el `audit_log` que nombra la HU (la tabla no existe): ver el PR.
 
+### Zonas de cada colportor para Equipo (sin BFF)
+
+Desde la migración `0047` (backend-supabase#98, HU-CAM-006, vista 33 «Equipo», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee de una sola vez la zona de hoy de cada colportor y sus **zonas anteriores con fechas**, que salen del historial de la `0022` (`campania_colportor_zona_historial`, que hasta ahora ninguna lectura devolvía).
+
+```sql
+select * from public.zonas_por_colportor(campania_id);
+-- colportor_id, nombre, apellido, ciudad_id, ciudad_nombre, zona_id, zona_nombre, zona_desde, zona_desde_inicial, zonas_anteriores
+```
+
+- **Una fila por inscripto vivo** de la campaña (los mismos de `colportores_de_campania()`: inscripción viva y cuenta no dada de baja), con o sin zona, por apellido y nombre. `zona_id`, `zona_nombre`, `ciudad_*` y `zona_desde` son los de hoy (todo `null` = «Sin zona»; una zona dada de baja cuenta como sin zona). La ciudad es la de la zona de hoy, como en `acompaniamientos_por_colportor()`.
+- **`zonas_anteriores`** es un `jsonb`: `[{zona_id, nombre, ciudad_id, ciudad_nombre, desde, hasta, inicial, eliminada}]`, uno por tramo ya cerrado, del más viejo al más nuevo; `[]` si nunca tuvo otra. Las fechas son el **día de Montevideo** del cambio (un tramo cierra el mismo día en que abre el siguiente). La misma zona puede figurar más de una vez, y `ciudad_nombre` distingue dos zonas con el mismo nombre. `eliminada` marca una zona dada de baja después; sigue figurando con el nombre que tenía.
+- **`inicial` / `zona_desde_inicial`**: el tramo ya existía cuando se activó el historial (`0022`) y su `desde` es una cota, no la fecha real de la asignación. El panel decide cómo mostrarlo.
+- **Quién.** Igual que `acompaniamientos_por_colportor()`: el coordinador de la campaña o un ADMIN, `42501` antes de mirar nada, `CZ001` si la campaña no existe, y una campaña **por empezar o terminada se lee** (el historial se consulta también al cierre). Sin email ni clientes. `SECURITY DEFINER`, `VOLATILE`, `EXECUTE` solo para `authenticated`.
+- **Casas registradas.** La columna del canvas no está en esta lectura: la regla «las casas de una zona anterior siguen contando» se cumple porque la ubicación no guarda zona, pero qué se cuenta y desde cuándo es una decisión pendiente del PR.
+
 ## Privacidad
 
 Los datos personales de clientes (`persona.nombre`, `persona.apellido`, `persona.telefono`, `nota.texto`) son **local-only**: viven solo en el dispositivo del colportor y nunca llegan al cloud, por la Ley 18.331 de Uruguay. Ver [`02-restricciones.md`](https://github.com/Colportores/docs-organizacion/blob/main/docs/02-restricciones.md).
