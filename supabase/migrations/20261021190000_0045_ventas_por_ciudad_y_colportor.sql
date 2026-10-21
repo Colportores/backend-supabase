@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0041 · Ventas y presentaciones por ciudad y colportor, por día, semana o mes, con la
+-- 0045 · Ventas y presentaciones por ciudad y colportor, por día, semana o mes, con la
 --        tendencia contra el período anterior (backend-supabase#96, HU-REP-002, vista 32)
 --
 -- Origen: cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C3 y C15): el reporte de
@@ -14,7 +14,7 @@
 --         ventas_anterior, monto_anterior, presentaciones_anterior,
 --         por_cobrar_pct, por_cobrar_pct_anterior)
 --
--- Es la hermana de horas_por_ciudad_y_colportor() (0040, #95): mismos parámetros, mismo permiso,
+-- Es la hermana de horas_por_ciudad_y_colportor() (#95): mismos parámetros, mismo permiso,
 -- mismas reglas de período, de rango y de comparación, y la misma ciudad del colportor. Lo único
 -- que cambia es lo que se suma.
 --
@@ -338,7 +338,7 @@ end;
 $$;
 
 comment on function public.ventas_por_ciudad_y_colportor(uuid, date, date, text, uuid, uuid[]) is
-  'Vista 32, HU-REP-002 (0041, backend-supabase#96): ventas (cantidad y monto en centavos) y '
+  'Vista 32, HU-REP-002 (0045, backend-supabase#96): ventas (cantidad y monto en centavos) y '
   'presentaciones (visitas VENTA o ENTREVISTA) por período (p_agrupar = dia | semana | mes) × '
   'ciudad (la de la zona actual del colportor; sin zona, ciudad null) × colportor, de la '
   'campaña, y lo del período anterior para la tendencia (el día anterior, el lunes contra el '

@@ -1,4 +1,4 @@
--- pgTAP · ventas y presentaciones por ciudad y colportor (migración 0041, backend-supabase#96, HU-REP-002)
+-- pgTAP · ventas y presentaciones por ciudad y colportor (migración 0045, backend-supabase#96, HU-REP-002)
 -- ventas_por_ciudad_y_colportor(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña) y que una campaña terminada se lee; los errores de campaña y de
 -- parámetros; las ventas, los montos y las presentaciones por día, semana y mes (qué visitas cuentan,

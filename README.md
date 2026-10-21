@@ -284,7 +284,7 @@ select * from public.poligono_por_calles(campania_ciudad_id, esquinas);   -- pol
 
 ### Ventas y presentaciones por ciudad y colportor para el panel (sin BFF)
 
-Desde la migración `0041` (backend-supabase#96, HU-REP-002, vista 32 «Reportes», decisión de Cristian del 21/10 «C3», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee las ventas, los montos y las presentaciones por ciudad y por colportor, por día, semana o mes, con la tendencia contra el período anterior. Es la hermana de `horas_por_ciudad_y_colportor()` (`0040`): mismos parámetros, mismo permiso, mismas reglas de período y de rango. Una RPC, que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)):
+Desde la migración `0045` (backend-supabase#96, HU-REP-002, vista 32 «Reportes», decisión de Cristian del 21/10 «C3», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee las ventas, los montos y las presentaciones por ciudad y por colportor, por día, semana o mes, con la tendencia contra el período anterior. Es la hermana de `horas_por_ciudad_y_colportor()` (#95): mismos parámetros, mismo permiso, mismas reglas de período y de rango. Una RPC, que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)):
 
 ```sql
 select * from public.ventas_por_ciudad_y_colportor(campania_id, desde, hasta, 'semana');           -- 'dia' | 'semana' | 'mes'
