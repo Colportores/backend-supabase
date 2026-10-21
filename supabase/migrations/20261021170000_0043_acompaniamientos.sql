@@ -26,8 +26,12 @@
 --
 --   · Una jornada viva con `acompaniante_id` de un colportor inscripto en p_campania_id, que
 --     empezó entre `fecha_inicio` y `fecha_fin` de la campaña (día de Montevideo, ambos
---     incluidos). Una inscripción dada de baja sigue contando lo anterior a la baja (lo hecho no
---     desaparece); lo posterior no.
+--     incluidos), DESDE que el colportor se inscribió (`campania_colportor.created_at`) y hasta su
+--     baja si la hubo: lo hecho antes de entrar a esta campaña (p. ej. en la de la que lo
+--     reasignaron, HU-CAM-005) es de la otra y no se lee ni se escribe acá. Lo anterior a la baja
+--     sigue contando (lo hecho no desaparece); lo posterior no. Una inscripción reactivada
+--     (0028) conserva su `created_at`; dos inscripciones vivas a la vez en campañas superpuestas
+--     comparten las jornadas (la jornada no dice de qué campaña es): decisión pendiente.
 --   · Las jornadas todavía abiertas (sin `fin`) cuentan: el colportor marcó que lo acompañan
 --     mientras trabaja (HU-JOR-003) y eso ya pasó. Su `horas` es null y `en_curso` true.
 --   · Acompaña cualquiera (`acompaniante_id` es una FK a `usuario`): no se filtra por rol ni por
@@ -141,6 +145,7 @@ as $$
      and c.deleted_at is null
      and j.deleted_at is null
      and j.acompaniante_id is not null
+     and j.inicio >= i.created_at
      and (i.deleted_at is null or j.inicio < i.deleted_at)
      and public.hoy_montevideo(j.inicio) >= c.fecha_inicio
      and public.hoy_montevideo(j.inicio) <= coalesce(c.fecha_fin, 'infinity'::date)
@@ -329,6 +334,7 @@ begin
       on i.usuario_id = j.colportor_id and i.campania_id = p_campania_id
    where j.id = p_jornada_id
      and j.deleted_at is null
+     and j.inicio >= i.created_at
      and (i.deleted_at is null or j.inicio < i.deleted_at)
      and public.hoy_montevideo(j.inicio) >= v_campania.fecha_inicio
      and public.hoy_montevideo(j.inicio) <= coalesce(v_campania.fecha_fin, 'infinity'::date)
@@ -429,6 +435,7 @@ begin
        and i.usuario_id = p_colportor_id
        and j.deleted_at is null
        and j.fin is not null
+       and j.inicio >= i.created_at
        and (i.deleted_at is null or j.inicio < i.deleted_at)
        and public.hoy_montevideo(j.inicio) >= v_campania.fecha_inicio
        and public.hoy_montevideo(j.inicio) <= coalesce(v_campania.fecha_fin, 'infinity'::date)

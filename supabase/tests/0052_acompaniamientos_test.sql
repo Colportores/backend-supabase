@@ -107,15 +107,17 @@ $$;
 -- Campañas: e1 En curso (desde hoy - 60, sin fin, a1)  e2 Cierre (03/08/2026 a 30/09/2026, a1)
 --        e3 Otra (a2)  e4 Borrada (a1)  e5 Futura (desde hoy + 10, a1, con b3 inscripto)
 --        e6 Borde (de hoy - 20 a hoy, a1; b5 inscripto): para el primer y el último día
+--        e7 Reasignada (desde hoy - 60, a1): b7 se inscribió hace 10 días (venía de otra campaña)
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'acomp-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6']) s;
+  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7']) s;
 
 update public.usuario u set nombre = x.n, apellido = x.a
   from (values ('a1','Mariela','Pereyra'), ('a2','Nora','Quiroga'), ('ad','Admin','Zeta'),
                ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz'),
-               ('b4','Diego','Duarte'), ('b5','Elena','Eguren'), ('b6','Fede','Fuentes')) x(s, n, a)
+               ('b4','Diego','Duarte'), ('b5','Elena','Eguren'), ('b6','Fede','Fuentes'),
+               ('b7','Gabi','Gómez')) x(s, n, a)
  where u.id = pg_temp.u(x.s);
 
 insert into public.usuario_rol (usuario_id, rol_id)
@@ -137,7 +139,8 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
   (pg_temp.u('e3'), 'Otra',     'VERANO', pg_temp.hoy() - 60, null,         pg_temp.u('a2'), null),
   (pg_temp.u('e4'), 'Borrada',  'VERANO', pg_temp.hoy() - 60, null,         pg_temp.u('a1'), now()),
   (pg_temp.u('e5'), 'Futura',   'VERANO', pg_temp.hoy() + 10, null,         pg_temp.u('a1'), null),
-  (pg_temp.u('e6'), 'Borde',    'VERANO', pg_temp.hoy() - 20, pg_temp.hoy(), pg_temp.u('a1'), null);
+  (pg_temp.u('e6'), 'Borde',    'VERANO', pg_temp.hoy() - 20, pg_temp.hoy(), pg_temp.u('a1'), null),
+  (pg_temp.u('e7'), 'Reasignada', 'VERANO', pg_temp.hoy() - 60, null,        pg_temp.u('a1'), null);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('71'), pg_temp.u('e1'), pg_temp.u('c1'));
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poligono_geojson) values
@@ -146,7 +149,9 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poli
   (pg_temp.u('d2'), 'Baja',   pg_temp.u('71'), 'ESQUINAS', null,
    '{"type":"Polygon","coordinates":[[[-56.19,-34.95],[-56.17,-34.95],[-56.17,-34.94],[-56.19,-34.94],[-56.19,-34.95]]]}'::jsonb);
 
-insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+-- Todas inscriptas hace 200 días (antes que cualquier jornada), salvo b7 en Reasignada.
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at)
+select x.*, now() - interval '200 days' from (values
   (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1')),
   (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1')),
   (pg_temp.u('e1'), pg_temp.u('b3'), null),
@@ -155,7 +160,10 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   (pg_temp.u('e1'), pg_temp.u('ad'), null),
   (pg_temp.u('e3'), pg_temp.u('b5'), null),
   (pg_temp.u('e5'), pg_temp.u('b3'), null),
-  (pg_temp.u('e6'), pg_temp.u('b5'), null);
+  (pg_temp.u('e6'), pg_temp.u('b5'), null)) x;
+-- b7 estaba en otra campaña y hace 10 días lo inscribieron en Reasignada (e7).
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at)
+values (pg_temp.u('e7'), pg_temp.u('b7'), null, now() - interval '10 days');
 update public.zona set deleted_at = now() where id = pg_temp.u('d2');
 update public.campania_colportor set deleted_at = now() - interval '30 days'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b4');
@@ -197,6 +205,9 @@ select pg_temp.u(x.id), pg_temp.u(x.colp),
     ('fb', 'b5',  5, time '09:00', 2.0,          'a1', null),
     ('fc', 'b6',  4, time '09:00', 2.0,          null, null),
     ('ff', 'ad',  3, time '09:00', 2.0,          null, null),
+    ('91', 'b7', 30, time '09:00', 5.0,          'a2', null),
+    ('92', 'b7', 20, time '09:00', 2.0,          null, null),
+    ('93', 'b7',  5, time '09:00', 1.0,          null, null),
     ('81', 'b5', 20, time '09:00', 2.0,          'a1', null),
     ('82', 'b5', 21, time '09:00', 2.0,          'a1', null),
     ('83', 'b5',  0, time '00:30', 0.5,          'a1', null),
@@ -421,6 +432,17 @@ select is(pg_temp.jornadas('e1', 'b2'), '-1|1.00|null;-2|3.00|null;-6|3.00|null'
 select is(pg_temp.jornadas('e6', 'b5'), '0|0.50|null;0|0.50|Mariela;-5|2.00|Mariela;-20|1.00|null;-20|2.00|Mariela',
           'Borde: el primer y el último día entran; el anterior y el siguiente no; el orden dentro del día es por hora');
 
+-- Reasignación (HU-CAM-005): b7 trabajó en otra campaña (91 con a2, hace 30 días; 92 libre, hace
+-- 20) y hace 10 días entró a Reasignada. Lo anterior a su inscripción no es de esta campaña.
+select is(pg_temp.jornadas('e7', 'b7'), '-5|1.00|null',
+          'Reasignada: solo la jornada posterior a la inscripción (93), no 91 ni 92');
+select is(pg_temp.historial('e7', 'b7'), '(vacío)',
+          'Reasignada: el acompañamiento de la otra campaña (91) no aparece en el historial');
+select is(pg_temp.fila('e7', 'b7'), format('0|null|60|%s|(sin ciudad)', pg_temp.hoy() - 60),
+          'Reasignada: el acompañamiento de la otra campaña no cuenta ni mueve los días sin acompañar');
+select is((select count(*) from public.historial_de_acompaniamientos(pg_temp.u('e7'))), 0::bigint,
+          'Reasignada: tampoco en el historial de todos');
+
 -- ---------------------------------------------------------------------------
 -- 5. Agregar un acompañamiento
 -- ---------------------------------------------------------------------------
@@ -442,6 +464,8 @@ select is(split_part(pg_temp.agregar('e1', 'fb'), '|', 1), 'JO001', 'una jornada
 select is(split_part(pg_temp.agregar('e1', '99'), '|', 1), 'JO001', 'una jornada inexistente: JO001');
 select is(split_part(pg_temp.agregar('e6', '87'), '|', 1), 'JO001', 'Borde: la jornada del día anterior a la campaña: JO001');
 select is(split_part(pg_temp.agregar('e6', '88'), '|', 1), 'JO001', 'Borde: la jornada del día siguiente al fin: JO001');
+select is(split_part(pg_temp.agregar('e7', '92'), '|', 1), 'JO001', 'Reasignada: una jornada anterior a la inscripción (libre): JO001');
+select is(split_part(pg_temp.agregar('e7', '91'), '|', 1), 'JO001', 'Reasignada: una jornada anterior a la inscripción (ya acompañada): JO001, no JO003');
 select is(pg_temp.agregar('e1', 'fb'), pg_temp.agregar('e1', '99'),
           'la ajena y la inexistente contestan igual (no se averigua qué jornadas hay)');
 select is(split_part(pg_temp.error_de(format('select * from public.agregar_acompaniamiento(%L, null)', pg_temp.u('e1'))), '|', 1),
