@@ -11,7 +11,7 @@
 --   9. El metro de tolerancia al recorrer un tramo, y las calles de otra ciudad del catálogo no cuentan.
 --  10. Una zona grande sobre una ciudad ya dividida en muchas zonas no pasa el statement_timeout (8 s).
 --  11. Un tramo de menos de 1 m en una esquina donde dos zonas solo se tocan no cuenta como calle compartida.
--- (La 0043 pasa las esquinas a la interna y cuenta solo los tramos del camino entre ellas: ver el test 0052.)
+-- (La 0046 pasa las esquinas a la interna y cuenta solo los tramos del camino entre ellas: ver el test 0053.)
 begin;
 select * from no_plan();
 
@@ -636,8 +636,8 @@ create temp table zb on commit drop as
   select pg_temp.zona('01920000-0000-7000-8000-000000004878', 'B',
                       jsonb_build_array(pg_temp.pt(-56.6, -34.8, 1, 0), pg_temp.pt(-56.6, -34.8, 2, 0),
                                        pg_temp.pt(-56.6, -34.8, 2, 2), pg_temp.pt(-56.6, -34.8, 1, 2)), true) r;
--- (Desde la 0043 la lista se compara entera: «Fila 1» y «Pasaje E» salen del borde a 0,46 m y quedan dentro del metro, pero no son
--- parte del camino entre las esquinas de B; ver el test 0052.)
+-- (Desde la 0046 la lista se compara entera: «Fila 1» y «Pasaje E» salen del borde a 0,46 m y quedan dentro del metro, pero no son
+-- parte del camino entre las esquinas de B; ver el test 0053.)
 select is(pg_temp.calles((select r from zb)), 'A / Col 1 N; A / Col 1 S; A / Corta',
           'un tramo corto a mitad de un borde en común sigue contando (Corta, de 0,44 m, entre Col 1 N y Col 1 S), y no suma ninguna calle más');
 select is((select r -> 'superposiciones' from zb), '[]'::jsonb, 'y compartir la columna no es superponerse');

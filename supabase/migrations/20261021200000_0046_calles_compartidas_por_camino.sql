@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0043 · El aviso «Comparte la calle X con Y» cuenta solo los tramos del camino entre las esquinas
+-- 0046 · El aviso «Comparte la calle X con Y» cuenta solo los tramos del camino entre las esquinas
 --        (backend-supabase#91, seguimiento de #87 / PR #90, HU-CAM-006, ADR-018, vista 24)
 --
 -- Decisión del orquestador del 19/10, por el mapa de decisiones, sobre la revisión de #90:
@@ -197,7 +197,7 @@ end;
 $$;
 
 comment on function public.zonas_que_comparten_calle(uuid, jsonb, uuid, jsonb) is
-  'Interna (0043): [{zona_id, nombre, calle, punto}] de las zonas vivas de la campania_ciudad (sin '
+  'Interna (0046): [{zona_id, nombre, calle, punto}] de las zonas vivas de la campania_ciudad (sin '
   'p_zona_id) con las que el borde de p_poligono recorre al menos un mismo tramo de ruteo.tramo: un tramo '
   'del camino por calles entre las esquinas p_vertices (el de poligono_por_calles()) que además queda '
   'entero a 1 m o menos de los dos bordes; sin largo mínimo; tocarse en una esquina no cuenta, ni un tramo '

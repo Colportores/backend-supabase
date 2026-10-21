@@ -1,5 +1,5 @@
 -- pgTAP · el aviso «Comparte la calle X con Y» cuenta solo los tramos del camino entre las esquinas
--- (migración 0043, backend-supabase#91, seguimiento de #87 / PR #90, HU-CAM-006, ADR-018, vista 24)
+-- (migración 0046, backend-supabase#91, seguimiento de #87 / PR #90, HU-CAM-006, ADR-018, vista 24)
 --   1. Forma y privilegios: la interna ahora recibe las esquinas; la de tres parámetros ya no existe.
 --   2. El tramo que sale a mitad de un borde en común no cuenta (Fila 1, Pasaje E), el corto que es parte del camino sí.
 --   3. La T donde termina un borde en común: el tramo que sigue de largo no cuenta.
