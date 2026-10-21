@@ -328,14 +328,14 @@ Desde la migración `0047` (backend-supabase#98, HU-CAM-006, vista 33 «Equipo»
 
 ```sql
 select * from public.zonas_por_colportor(campania_id);
--- colportor_id, nombre, apellido, ciudad_id, ciudad_nombre, zona_id, zona_nombre, zona_desde, zona_desde_inicial, zonas_anteriores
+-- colportor_id, nombre, apellido, ciudad_id, ciudad_nombre, zona_id, zona_nombre, zona_desde, zona_desde_inicial, zonas_anteriores, casas_registradas
 ```
 
 - **Una fila por inscripto vivo** de la campaña (los mismos de `colportores_de_campania()`: inscripción viva y cuenta no dada de baja), con o sin zona, por apellido y nombre. `zona_id`, `zona_nombre`, `ciudad_*` y `zona_desde` son los de hoy (todo `null` = «Sin zona»; una zona dada de baja cuenta como sin zona). La ciudad es la de la zona de hoy, como en `acompaniamientos_por_colportor()`.
 - **`zonas_anteriores`** es un `jsonb`: `[{zona_id, nombre, ciudad_id, ciudad_nombre, desde, hasta, inicial, eliminada}]`, uno por tramo ya cerrado, del más viejo al más nuevo; `[]` si nunca tuvo otra. Las fechas son el **día de Montevideo** del cambio (un tramo cierra el mismo día en que abre el siguiente). La misma zona puede figurar más de una vez, y `ciudad_nombre` distingue dos zonas con el mismo nombre. `eliminada` marca una zona dada de baja después; sigue figurando con el nombre que tenía.
 - **`inicial` / `zona_desde_inicial`**: el tramo ya existía cuando se activó el historial (`0022`) y su `desde` es una cota, no la fecha real de la asignación. El panel decide cómo mostrarlo.
 - **Quién.** Igual que `acompaniamientos_por_colportor()`: el coordinador de la campaña o un ADMIN, `42501` antes de mirar nada, `CZ001` si la campaña no existe, y una campaña **por empezar o terminada se lee** (el historial se consulta también al cierre). Sin email ni clientes. `SECURITY DEFINER`, `VOLATILE`, `EXECUTE` solo para `authenticated`.
-- **Casas registradas.** La columna del canvas no está en esta lectura: la regla «las casas de una zona anterior siguen contando» se cumple porque la ubicación no guarda zona, pero qué se cuenta y desde cuándo es una decisión pendiente del PR.
+- **`casas_registradas`** (0048; decisión del orquestador, 21/10, gana el canvas): un número, las ubicaciones **vivas** que creó el colportor (`created_by`) en las ciudades **vivas** de la campaña, **desde que se inscribió** (`campania_colportor.created_at`, el mismo inicio que los acompañamientos). No mira la zona: las casas de una zona anterior siguen contando, y cambiar de zona o quedar sin zona no resta nada. No cuentan las dadas de baja, las anteriores a la inscripción ni las de una ciudad que no es de la campaña.
 
 ## Privacidad
 

@@ -1,7 +1,7 @@
--- pgTAP · las zonas de cada colportor para Equipo (migración 0047, backend-supabase#98, HU-CAM-006)
+-- pgTAP · las zonas de cada colportor para Equipo (migraciones 0047 y 0048, backend-supabase#98, HU-CAM-006)
 -- zonas_por_colportor(): forma y privilegios; el permiso primero (sin JWT, anon, colportor, sin rol,
 -- rol vencido, coordinador de otra campaña) y que una campaña por empezar o terminada se lee; la
--- zona de hoy con su ciudad y desde cuándo; las zonas anteriores con sus fechas, en orden, con el
+-- zona de hoy con su ciudad y desde cuándo; las casas registradas (no dependen de la zona); las zonas anteriores con sus fechas, en orden, con el
 -- día de Montevideo (también con otra zona horaria de sesión); la misma zona dos veces, la de otra
 -- ciudad con el mismo nombre, la dada de baja, el tramo inicial y el tramo dado de baja; quién figura
 -- (los mismos inscriptos que colportores_de_campania()) y quién no (inscripción de baja, cuenta
@@ -104,6 +104,26 @@ create or replace function pg_temp.fila(p_camp text, p_colp text) returns text l
      where r.colportor_id = pg_temp.u(p_colp)), 'sin fila')
 $$;
 
+-- Una ubicación creada por un colportor, hace p_dias días (a las 12:00 de Montevideo), en una ciudad.
+create or replace function pg_temp.ubic(p_colp text, p_ciudad text, p_dias integer, p_baja boolean default false)
+returns void language sql as $$
+  insert into public.ubicacion (tipo, lat, lon, ciudad_id, created_by, created_at, deleted_at)
+  values ('CASA', -34.90, -56.16, pg_temp.u(p_ciudad), pg_temp.u(p_colp), pg_temp.t(p_dias),
+          case when p_baja then now() end)
+$$;
+
+-- Las casas registradas de un colportor en una campaña, como texto.
+create or replace function pg_temp.casas(p_camp text, p_colp text) returns text language sql as $$
+  select coalesce((select r.casas_registradas::text from public.zonas_por_colportor(pg_temp.u(p_camp)) r
+                    where r.colportor_id = pg_temp.u(p_colp)), 'sin fila')
+$$;
+
+-- Las casas de toda la lista, como texto: apellido=casas, en el orden en que vuelven.
+create or replace function pg_temp.casas_lista(p_camp text) returns text language sql as $$
+  select coalesce(string_agg(r.apellido || '=' || r.casas_registradas, ',' order by o), '(vacía)')
+    from (select r.*, row_number() over () o from public.zonas_por_colportor(pg_temp.u(p_camp)) r) r
+$$;
+
 -- Los apellidos de la lista, en el orden en que vuelven.
 create or replace function pg_temp.lista(p_camp text) returns text language sql as $$
   select coalesce(string_agg(r.apellido, ',' order by o), '(vacía)')
@@ -158,7 +178,9 @@ select pg_temp.u('a4'), r.id, now() - interval '10 days', now() - interval '1 da
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais zpc', 'ZQ');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
   (pg_temp.u('c1'), 'Ciudad uno q98', pg_temp.u('c0'), -34.90, -56.16, 13),
-  (pg_temp.u('c2'), 'Ciudad dos q98', pg_temp.u('c0'), -34.91, -56.17, 13);
+  (pg_temp.u('c2'), 'Ciudad dos q98', pg_temp.u('c0'), -34.91, -56.17, 13),
+  (pg_temp.u('c3'), 'Ciudad tres q98', pg_temp.u('c0'), -34.92, -56.18, 13),
+  (pg_temp.u('c4'), 'Ciudad cuatro q98', pg_temp.u('c0'), -34.93, -56.19, 13);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   (pg_temp.u('e1'), 'En curso', 'VERANO', pg_temp.hoy() - 60, null,         pg_temp.u('a1'), null),
@@ -172,6 +194,9 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('73'), pg_temp.u('e2'), pg_temp.u('c1')),
   (pg_temp.u('74'), pg_temp.u('e3'), pg_temp.u('c1')),
   (pg_temp.u('75'), pg_temp.u('e5'), pg_temp.u('c1'));
+-- Ciudad tres estuvo en En curso y se quitó de la campaña (fila dada de baja).
+insert into public.campania_ciudad (id, campania_id, ciudad_id, deleted_at)
+values (pg_temp.u('76'), pg_temp.u('e1'), pg_temp.u('c3'), now());
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values
   (pg_temp.u('d1'), 'Centro',      pg_temp.u('71'), 'RADIAL', -34.90, -56.16, 300),
   (pg_temp.u('d2'), 'Norte',       pg_temp.u('71'), 'RADIAL', -34.88, -56.16, 300),
@@ -183,9 +208,11 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat,
 
 -- Las inscripciones (las que traen zona abren su tramo por el trigger: abajo se reemplazan por los
 -- tramos de la historia, con las fechas que pide cada caso).
-insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at)
+-- Las de En curso se inscribieron el primer día de la campaña (hace 60 días, a las 12:00).
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at, created_at)
 select pg_temp.u(x.e), pg_temp.u(x.b), case when x.d is null then null else pg_temp.u(x.d) end,
-       case when x.baja then now() end
+       case when x.baja then now() end,
+       case when x.e = 'e1' then pg_temp.t(60) else now() end
   from (values ('e1','b1','d1',false), ('e1','b2','d1',false), ('e1','b3',null,false),
                ('e1','b4',null,false), ('e1','b5','d2',false), ('e1','b6','d1',false),
                ('e1','b7',null,true),  ('e1','b9','d1',false),
@@ -217,6 +244,21 @@ select pg_temp.tramo('e1', 'b9', 'd1', pg_temp.t(8), null);
 -- ba: su zona (Puerto) se dio de baja y la inscripción la conserva; bb: el tramo abierto está dado de baja
 select pg_temp.tramo('e1', 'ba', 'd3', pg_temp.t(5), null);
 select pg_temp.tramo('e1', 'bb', 'd1', pg_temp.t(5), null, false, true);
+-- Casas registradas. b1: tres que cuentan (dos ciudades de la campaña y una de ayer) y cuatro que no
+-- (antes de inscribirse, dada de baja, ciudad quitada de la campaña, ciudad ajena a la campaña).
+-- b2: una en Ciudad dos y otra creada justo al inscribirse (cuenta: el límite es inclusivo).
+-- b3 y b4: una cada uno.
+select pg_temp.ubic('b1', 'c1', 30);
+select pg_temp.ubic('b1', 'c2', 20);
+select pg_temp.ubic('b1', 'c1', 1);
+select pg_temp.ubic('b1', 'c1', 61);
+select pg_temp.ubic('b1', 'c1', 10, true);
+select pg_temp.ubic('b1', 'c3', 10);
+select pg_temp.ubic('b1', 'c4', 10);
+select pg_temp.ubic('b2', 'c2', 5);
+select pg_temp.ubic('b2', 'c1', 60);
+select pg_temp.ubic('b3', 'c1', 5);
+select pg_temp.ubic('b4', 'c1', 5);
 -- Otras campañas
 select pg_temp.tramo('e5', 'b1', 'd6', pg_temp.t(1), null);
 select pg_temp.tramo('e2', 'b2', 'd5', pg_temp.t(100), pg_temp.t(70));
@@ -248,7 +290,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.zonas_por_colportor(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['apellido','ciudad_id','ciudad_nombre','colportor_id','nombre','zona_desde',
+          array['apellido','casas_registradas','ciudad_id','ciudad_nombre','colportor_id','nombre','zona_desde',
                 'zona_desde_inicial','zona_id','zona_nombre','zonas_anteriores'],
           'la fila trae el nombre, la zona de hoy con su ciudad y desde cuándo, y las anteriores: ni email ni clientes');
 select is((select array(select k from jsonb_object_keys(
@@ -358,15 +400,27 @@ select is((select array_agg(r.zona_id order by r.colportor_id) from public.zonas
           (select array_agg(c.zona_id order by c.usuario_id) from public.colportores_de_campania(pg_temp.u('e1')) c),
           'y con la misma zona de hoy');
 
+-- Casas registradas: no dependen de la zona.
+select is(pg_temp.casas_lista('e1'), 'Alfa=3,Bravo=2,Cruz=1,Duarte=1,Eguren=0,Herrera=0,Ibarra=0,Jaramillo=0,Kappa=0',
+          'casas: b1 tiene 3 (dos ciudades de la campaña, una de ayer); no cuentan la de antes de inscribirse, '
+          'la dada de baja, la de una ciudad quitada de la campaña ni la de una ciudad ajena; b2 cuenta la creada justo al inscribirse');
+select is(pg_temp.casas('e1', 'b3'), '1',
+          'casas: b3 está sin zona hoy y sus anteriores no le restan: la cuenta no mira la zona');
+select is(pg_temp.casas('e1', 'b1'), '3',
+          'casas: b1 cambió tres veces de zona y conserva las que cargó en las anteriores');
+
 -- ---------------------------------------------------------------------------
 -- 4. Cada campaña con lo suyo
 -- ---------------------------------------------------------------------------
 select is(pg_temp.fila('e5', 'b1'), 'Zona futura|Ciudad uno q98|-1|false|(ninguna)',
           'Futura (todavía no empezó) se lee, y trae solo lo de esa inscripción');
 select is(pg_temp.lista('e5'), 'Alfa', 'Futura: solo b1');
+select is(pg_temp.casas('e5', 'b1'), '0',
+          'casas: b1 se inscribió en Futura hoy: lo que cargó antes (en En curso) no cuenta ahí');
 select is(pg_temp.fila('e2', 'b2'), '-|-|-|-|Vieja@Ciudad uno q98:-100..-70',
           'Cierre (terminada) se lee: el historial se consulta también al cierre');
 select is(pg_temp.lista('e2'), 'Bravo', 'Cierre: solo b2');
+select is(pg_temp.casas('e2', 'b2'), '0', 'casas: b2 se inscribió en Cierre hoy: lo anterior no cuenta');
 select is(pg_temp.fila('e1', 'b2'),
           'Centro|Ciudad uno q98|-10|false|Centro@Ciudad uno q98:-40..-35,Centro@Ciudad dos q98:-35..-12',
           'lo de b2 en otras campañas no se mezcla con En curso');
@@ -374,6 +428,8 @@ select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(pg_temp.fila('e3', 'b2'), 'Otra zona|Ciudad uno q98|-2|false|(ninguna)',
           'el coordinador de Otra lee la suya');
 select is(pg_temp.lista('e3'), 'Bravo', 'Otra: solo b2');
+select is(pg_temp.casas('e3', 'b2'), '0',
+          'casas: b2 se inscribió en Otra hoy: sus casas de En curso (y de la misma ciudad) no cuentan ahí');
 
 -- El ADMIN lee cualquiera, también una terminada.
 select pg_temp.actuar_como(pg_temp.u('ad'));
@@ -403,6 +459,7 @@ select lives_ok(format('select public.asignar_zona(%L, %L, %L)', pg_temp.u('e1')
                 'el coordinador le asigna Centro a b4');
 select is(pg_temp.fila('e1', 'b4'), 'Centro|Ciudad uno q98|0|false|(ninguna)',
           'b4: Centro desde hoy, y todavía sin anteriores');
+select is(pg_temp.casas('e1', 'b4'), '1', 'casas: asignarle una zona no cambia las que cargó');
 select lives_ok(format('select public.asignar_zona(%L, %L, %L)', pg_temp.u('e1'), pg_temp.u('b4'), pg_temp.u('d2')),
                 'se la cambia por Norte');
 select is(pg_temp.fila('e1', 'b4'), 'Norte|Ciudad uno q98|0|false|Centro@Ciudad uno q98:0..0',
@@ -411,6 +468,11 @@ select lives_ok(format('select public.quitar_zona(%L, %L)', pg_temp.u('e1'), pg_
                 'se la quita');
 select is(pg_temp.fila('e1', 'b4'), '-|-|-|-|Centro@Ciudad uno q98:0..0,Norte@Ciudad uno q98:0..0',
           'b4: sin zona, con las dos anteriores en el orden en que las tuvo');
+select is(pg_temp.casas('e1', 'b4'), '1', 'casas: cambiarle la zona y quitársela no le resta casas');
+select pg_temp.actuar_como_servidor();
+select pg_temp.ubic('b4', 'c2', 0);
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(pg_temp.casas('e1', 'b4'), '2', 'casas: una casa nueva, ya sin zona, suma');
 select lives_ok(format('select public.asignar_zona(%L, %L, %L)', pg_temp.u('e1'), pg_temp.u('b4'), pg_temp.u('d1')),
                 'le vuelve a asignar Centro');
 select is(pg_temp.fila('e1', 'b4'), 'Centro|Ciudad uno q98|0|false|Centro@Ciudad uno q98:0..0,Norte@Ciudad uno q98:0..0',
