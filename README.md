@@ -268,7 +268,7 @@ select * from public.casas_de_zona(campania_id, zona_id, ultimo_ubicacion_id, 50
 
 ### Horas por ciudad y colportor para el panel (sin BFF)
 
-Desde la migración `0040` (backend-supabase#95, HU-REP-001, vista 32 «Reportes», decisión de Cristian del 21/10 «C3», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee las horas trabajadas por ciudad y por colportor, por día, semana o mes, con la tendencia contra el período anterior. Una RPC, que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)):
+Desde la migración `0044` (backend-supabase#95, HU-REP-001, vista 32 «Reportes», decisión de Cristian del 21/10 «C3», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee las horas trabajadas por ciudad y por colportor, por día, semana o mes, con la tendencia contra el período anterior. Una RPC, que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)):
 
 ```sql
 select * from public.horas_por_ciudad_y_colportor(campania_id, desde, hasta, 'semana');           -- 'dia' | 'semana' | 'mes'

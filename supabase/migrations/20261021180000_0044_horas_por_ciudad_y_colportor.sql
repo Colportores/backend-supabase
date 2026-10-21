@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0040 · Horas trabajadas por ciudad y colportor, por día, semana o mes, con la tendencia
+-- 0044 · Horas trabajadas por ciudad y colportor, por día, semana o mes, con la tendencia
 --        contra el período anterior (backend-supabase#95, HU-REP-001, vista 32)
 --
 -- Origen: cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C3 y C15): el reporte de
@@ -316,7 +316,7 @@ end;
 $$;
 
 comment on function public.horas_por_ciudad_y_colportor(uuid, date, date, text, uuid, uuid[]) is
-  'Vista 32, HU-REP-001 (0040, backend-supabase#95): horas trabajadas por período (p_agrupar = '
+  'Vista 32, HU-REP-001 (0044, backend-supabase#95): horas trabajadas por período (p_agrupar = '
   'dia | semana | mes) × ciudad (la de la zona actual del colportor; sin zona, ciudad null) × '
   'colportor, con jornadas cerradas de la campaña, y las del período anterior para la tendencia '
   '(el día anterior, el lunes contra el sábado; la semana anterior; el mismo tramo del mes '

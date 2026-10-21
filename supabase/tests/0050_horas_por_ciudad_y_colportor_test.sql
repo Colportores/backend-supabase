@@ -1,4 +1,4 @@
--- pgTAP · horas trabajadas por ciudad y colportor (migración 0040, backend-supabase#95, HU-REP-001)
+-- pgTAP · horas trabajadas por ciudad y colportor (migración 0044, backend-supabase#95, HU-REP-001)
 -- horas_por_ciudad_y_colportor(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña) y que una campaña terminada se lee; los errores de campaña y de
 -- parámetros; las horas por día, semana y mes (jornadas cerradas, el día de Montevideo, la campaña,
