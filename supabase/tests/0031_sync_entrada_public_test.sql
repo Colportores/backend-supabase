@@ -1,4 +1,4 @@
--- pgTAP · migración 0025 — las puertas del sync en public (backend-supabase#53, ADR-013):
+-- pgTAP · migración 0042 — las puertas del sync en public (backend-supabase#53, ADR-013):
 -- public.sync_push y public.sync_pull devuelven lo mismo que sync.*, con la RLS de quien llama;
 -- el sobre y los topes se rechazan con CS001 a CS003; sin sesión, 42501; y desde la Data API no
 -- hay otro camino a sync.*.
@@ -258,6 +258,25 @@ select throws_ok($$ select public.sync_pull(jsonb_build_object('device', pg_temp
 select throws_ok($$ select public.sync_pull(jsonb_build_object('device', pg_temp.sobre() || '{"device_id": 7}', 'entities', '[]'::jsonb)) $$,
                  'CS001', null, 'pull con device_id que no es UUID: CS001');
 
+-- Un cuerpo que no es un objeto no es una app vieja (CS002, transitorio para el motor): es un
+-- parámetro inválido, 22023, y el motor lo manda a payload.
+select throws_ok($$ select public.sync_push(null::jsonb) $$,
+                 '22023', null, 'push con el cuerpo null (SQL): 22023');
+select throws_ok($$ select public.sync_push('null'::jsonb) $$,
+                 '22023', null, 'push con el cuerpo null (JSON): 22023');
+select throws_ok($$ select public.sync_push('[]'::jsonb) $$,
+                 '22023', null, 'push con el cuerpo como array: 22023');
+select throws_ok($$ select public.sync_push('"x"'::jsonb) $$,
+                 '22023', null, 'push con el cuerpo como string: 22023');
+select throws_ok($$ select public.sync_pull(null::jsonb) $$,
+                 '22023', null, 'pull con el cuerpo null (SQL): 22023');
+select throws_ok($$ select public.sync_pull('null'::jsonb) $$,
+                 '22023', null, 'pull con el cuerpo null (JSON): 22023');
+select throws_ok($$ select public.sync_pull('[]'::jsonb) $$,
+                 '22023', null, 'pull con el cuerpo como array: 22023');
+select throws_ok($$ select public.sync_pull('"x"'::jsonb) $$,
+                 '22023', null, 'pull con el cuerpo como string: 22023');
+
 -- El resto del cuerpo con otra forma: 22023, como sync.push() con p_jobs que no es array.
 select throws_ok($$ select public.sync_push(jsonb_build_object('device', pg_temp.sobre(), 'jobs', '{}'::jsonb)) $$,
                  '22023', null, 'push con jobs que no es array: 22023');
@@ -276,6 +295,36 @@ select throws_ok($$ select public.sync_pull(jsonb_build_object('device', pg_temp
 -- ---------------------------------------------------------------------------
 -- 6. Topes del lote en la puerta: CS003
 -- ---------------------------------------------------------------------------
+-- Los topes valen por arriba: justo en el tope entra (si no, un `>=` en lugar de `>` pasaría).
+select lives_ok(
+  $$ select public.sync_push(jsonb_build_object('device', pg_temp.sobre(), 'jobs',
+       (select jsonb_agg(jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'ubicacion', 'op', 'delete',
+                                            'sync_version', 1, 'payload', '{}'::jsonb))
+          from generate_series(1, 500)))) $$,
+  'exactamente 500 jobs entran');
+
+-- Un lote de un job cuyo jobs::text mide justo 1 MB (1048576 bytes): se arma con el relleno que
+-- falta sobre el tamaño del mismo job sin relleno.
+create or replace function pg_temp.lote_de_bytes(p_bytes integer) returns jsonb language plpgsql as $$
+declare
+  v_sin_relleno integer;
+begin
+  v_sin_relleno := octet_length(jsonb_build_array(jsonb_build_object(
+    'client_op_id', '01920000-0000-7000-8000-000000000000', 'entity', 'ubicacion', 'op', 'update', 'sync_version', 1,
+    'payload', jsonb_build_object('id', pg_temp.u('01'), 'calle', '')))::text);
+  return jsonb_build_array(jsonb_build_object(
+    'client_op_id', gen_random_uuid(), 'entity', 'ubicacion', 'op', 'update', 'sync_version', 1,
+    'payload', jsonb_build_object('id', pg_temp.u('01'), 'calle', repeat('x', p_bytes - v_sin_relleno))));
+end $$;
+select is(octet_length(pg_temp.lote_de_bytes(1024 * 1024)::text), 1024 * 1024,
+          'el lote de prueba mide exactamente 1048576 bytes');
+select lives_ok($$ select public.sync_push(jsonb_build_object('device', pg_temp.sobre(), 'jobs',
+                     pg_temp.lote_de_bytes(1024 * 1024))) $$,
+                'un lote de exactamente 1 MB entra');
+select throws_ok($$ select public.sync_push(jsonb_build_object('device', pg_temp.sobre(), 'jobs',
+                     pg_temp.lote_de_bytes(1024 * 1024 + 1))) $$,
+                 'CS003', null, 'y un byte más: CS003');
+
 select throws_ok(
   $$ select public.sync_push(jsonb_build_object('device', pg_temp.sobre(), 'jobs',
        (select jsonb_agg(jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', 'ubicacion', 'op', 'delete',
