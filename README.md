@@ -282,6 +282,24 @@ select * from public.poligono_por_calles(campania_ciudad_id, esquinas);   -- pol
 - **pgRouting 3.4** viene en la imagen de Supabase (`create extension pgrouting with schema extensions`). No funciona con `search_path` vacío: solo `ruteo.dijkstra()` (una envoltura interna con `search_path = extensions`) lo necesita.
 - **Decidido el 16/10.** Las calles de OSM se cargan a mano, una vez por ciudad, con el script (Overpass), en el paso de la ciudad de la [guía de carga](./docs/guia-carga-manual.md); el aviso «Comparte la calle X con Y» de la vista 24 sale de la vista previa de `guardar_zona()` (`0038`, backend-supabase#87: ver «Avisos de la vista previa»); los criterios (sin tope de distancia, tope de 100 esquinas, tipos de calle) quedan como están.
 
+### Ventas y presentaciones por ciudad y colportor para el panel (sin BFF)
+
+Desde la migración `0041` (backend-supabase#96, HU-REP-002, vista 32 «Reportes», decisión de Cristian del 21/10 «C3», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee las ventas, los montos y las presentaciones por ciudad y por colportor, por día, semana o mes, con la tendencia contra el período anterior. Es la hermana de `horas_por_ciudad_y_colportor()` (`0040`): mismos parámetros, mismo permiso, mismas reglas de período y de rango. Una RPC, que el panel llama directo ([ADR-013](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-013-clientes-directo-a-rpc-de-supabase.md)):
+
+```sql
+select * from public.ventas_por_ciudad_y_colportor(campania_id, desde, hasta, 'semana');           -- 'dia' | 'semana' | 'mes'
+select * from public.ventas_por_ciudad_y_colportor(campania_id, desde, hasta, 'dia', ciudad_id);  -- una ciudad
+select * from public.ventas_por_ciudad_y_colportor(campania_id, desde, hasta, 'mes', null, array[colportor_id]);
+```
+
+- **Qué devuelve.** Una fila por período × ciudad × colportor: `periodo_inicio`, `periodo_fin`, `ciudad_id`, `ciudad_nombre`, `colportor_id`, `nombre`, `apellido`, `ventas` (cuántas ventas), `monto_total` (en **centavos**, lo vendido y no lo cobrado), `presentaciones`, `en_curso`, `ventas_anterior`, `monto_anterior`, `presentaciones_anterior`, `por_cobrar_pct` y `por_cobrar_pct_anterior`. La ciudad que se expande a sus colportores la arma el panel sumando las filas; no hay subtotales.
+- **Presentación.** Una visita con la entrevista hecha (HU-VIS-005, 21/10): `VENTA` o `ENTREVISTA`. `NO_CONTESTO` no cuenta. `RECHAZO` tampoco, **de forma provisoria**: confirmarlo es el supuesto S62 de la HU (de Cristian); si cuenta, es una línea de la función (`c_presentacion`).
+- **% por cobrar.** `por_cobrar_pct` y `por_cobrar_pct_anterior` (en puntos) vienen **siempre `null`** hasta V2 (dependen de los cobros y de Cuentas, HU-COB-005 y HU-CTA-005); la vista oculta la columna mientras no haya valor. Están desde ya para que la firma no cambie.
+- **Qué cuenta.** Ventas y visitas vivas de colportores inscriptos en la campaña, de los días entre su `fecha_inicio` y su `fecha_fin`; el día es el de `America/Montevideo`. Una inscripción dada de baja sigue contando lo anterior a la baja. La ciudad es la de la **zona actual** del colportor («Ciudad colp.», 21/10); sin zona (o con la zona o la ciudad de la campaña de baja), `ciudad_id` y `ciudad_nombre` son `null`, **una sola vez**.
+- **Período anterior, rango, permiso y errores.** Los de `horas_por_ciudad_y_colportor()`: el día anterior (el de un lunes es el sábado), la semana anterior, el mismo tramo del mes pasado; lo en curso no se compara (salvo el mes a la fecha) y sus tres `*_anterior` son `null`; una fila vacía existe si el período anterior tiene datos; el rango sube a períodos completos y llega a 366 días (`22023` si no); `42501` sin permiso (coordinador de la campaña o ADMIN), `CZ001` campaña inexistente; una campaña terminada se lee.
+- **Qué no devuelve.** Ni clientes, ni cobros, ni medios de pago, ni números de talonario, ni ubicaciones, ni el email: solo totales (el coordinador ve montos, no clientes). Ninguna escribe. `SECURITY DEFINER` con `search_path` vacío, `VOLATILE` (`supabase-js` la manda por `POST`), `EXECUTE` solo para `authenticated`.
+- **Pendiente.** El filtro «departamento → ciudad» de la HU no se puede servir (`public.ciudad` no tiene `departamento`, ver `0033`): se filtra por ciudad. «% rechazo», «% no contesta» y «libros bonificables» de la HU no están acá (no los pide el issue). Depende de que las ventas y las visitas suban a la nube (backend-supabase#53): hasta entonces devuelve la lista vacía.
+
 ### Qué ubicaciones baja cada colportor
 
 Desde la migración `0011` (backend-supabase#32, decisión D2 del 29/09) la zona es una guía visual: **las ubicaciones no guardan zona ni campaña** (`ubicacion.zona_id` y `house_status.zona_id`, de `0010`, ya no existen). La zona decide qué casas bajan al teléfono, y eso se calcula al descargar (HU-SYNC-011).
