@@ -120,7 +120,7 @@ select ok(
 
 -- La decisión de ADR-012 hecha código: si la ingesta corriera como su dueño, la
 -- RLS no la alcanzaría y la autorización pasaría a depender del BFF. Las únicas DEFINER son las
--- purgas (las corre pg_cron) y registrar_push_recibido (0052: escribe usuario.ultimo_push_at, que
+-- purgas (las corre pg_cron) y registrar_push_recibido (0053: escribe usuario.ultimo_push_at, que
 -- el colportor no puede escribir, y no toca nada que push/pull lean o autoricen).
 select is(
   (select array_agg(p.proname::text order by p.proname)

@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0052 · Último dato recibido por colportor: usuario.ultimo_push_at
+-- 0053 · Último dato recibido por colportor: usuario.ultimo_push_at
 --        (backend-supabase#93, HU-CAM-008, vista 31 «Inicio», C2 de docs#69, supuesto S61)
 --
 -- La vista rápida de Inicio muestra, en la fila de cada colportor, hace cuánto el servidor recibió
@@ -56,7 +56,7 @@
 alter table public.usuario add column ultimo_push_at timestamptz;
 
 comment on column public.usuario.ultimo_push_at is
-  'Cuándo el servidor recibió el último sync_push de este usuario (0052, HU-CAM-008, S61). null = '
+  'Cuándo el servidor recibió el último sync_push de este usuario (0053, HU-CAM-008, S61). null = '
   'todavía no llegó ninguno. Solo la escribe el servidor (sync.registrar_push_recibido); es un dato '
   'visual del panel (tiempo sin conexión), sin umbral ni alerta.';
 
@@ -84,7 +84,7 @@ $$;
 
 comment on function public.tg_usuario_ultimo_push_servidor() is
   'BEFORE UPDATE de usuario: descarta un cambio de ultimo_push_at hecho por authenticated o anon '
-  '(la marca es del servidor, 0052).';
+  '(la marca es del servidor, 0053).';
 
 revoke all on function public.tg_usuario_ultimo_push_servidor() from public, anon, authenticated;
 
@@ -114,7 +114,7 @@ $$;
 
 comment on function sync.registrar_push_recibido() is
   'Guarda en usuario.ultimo_push_at el momento del push que recibió el usuario autenticado, sin '
-  'retroceder (0052, HU-CAM-008). La llama public.sync_push(); el schema sync no está en la Data API.';
+  'retroceder (0053, HU-CAM-008). La llama public.sync_push(); el schema sync no está en la Data API.';
 
 revoke all on function sync.registrar_push_recibido() from public, anon;
 grant execute on function sync.registrar_push_recibido() to authenticated, service_role;
@@ -176,4 +176,4 @@ $$;
 comment on function public.sync_push(jsonb) is
   'Entrada del push del motor (POST /rest/v1/rpc/sync_push, ADR-013): valida el sobre y los '
   'topes del lote (500 jobs, 1 MB; CS003), delega en sync.push() como quien llama (0042) y deja en '
-  'usuario.ultimo_push_at el momento en que lo recibió (0052).';
+  'usuario.ultimo_push_at el momento en que lo recibió (0053).';

@@ -1,4 +1,4 @@
--- pgTAP · migración 0052 (backend-supabase#93, HU-CAM-008, vista 31 «Inicio», C2, supuesto S61):
+-- pgTAP · migración 0053 (backend-supabase#93, HU-CAM-008, vista 31 «Inicio», C2, supuesto S61):
 -- usuario.ultimo_push_at, el momento en que el servidor recibió el último sync_push de un colportor.
 --   1. La columna: timestamptz, opcional (null = todavía no llegó ninguna sincronización), y un
 --      usuario nuevo no la trae. `usuario` sigue sin estar en sync.entidad.
@@ -53,10 +53,10 @@ begin
   perform set_config('role', 'anon', true);
 end $$;
 create or replace function pg_temp.u(p text) returns uuid language sql immutable as $$
-  select ('01920000-0000-7000-8000-0000000058' || p)::uuid;
+  select ('01920000-0000-7000-8000-0000000059' || p)::uuid;
 $$;
 create or replace function pg_temp.sobre() returns jsonb language sql as $$
-  select jsonb_build_object('device_id', '01920000-0000-7000-8000-0000000058d0',
+  select jsonb_build_object('device_id', '01920000-0000-7000-8000-0000000059d0',
                             'app_version', '1.4.2', 'schema_version', 1);
 $$;
 -- Un push por la puerta con estos jobs.
@@ -100,19 +100,19 @@ $$;
 -- Usuarios: b1 y b2 colportores de la ciudad f1 (b1 es el que empuja); b3 sin ningún push; ad ADMIN.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
-       'authenticated', 'authenticated', 'ultimo58-' || s || '@example.com', 'x', now(), now(), now()
+       'authenticated', 'authenticated', 'ultimo59-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3','ad']) s;
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
   from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('ad','ADMIN')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
-insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais ultimo58', 'ZU');
+insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais ultimo59', 'ZU');
 insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('f1'), 'Ciudad f1 ultimo58', pg_temp.u('f0'), -34.9, -56.2),
-  (pg_temp.u('f2'), 'Ciudad f2 ultimo58', pg_temp.u('f0'), -31.4, -57.9);
+  (pg_temp.u('f1'), 'Ciudad f1 ultimo59', pg_temp.u('f0'), -34.9, -56.2),
+  (pg_temp.u('f2'), 'Ciudad f2 ultimo59', pg_temp.u('f0'), -31.4, -57.9);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
-  (pg_temp.u('f3'), 'Verano ultimo58', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30),
-  (pg_temp.u('f4'), 'Otoño ultimo58',  'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);
+  (pg_temp.u('f3'), 'Verano ultimo59', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30),
+  (pg_temp.u('f4'), 'Otoño ultimo59',  'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f5'), pg_temp.u('f3'), pg_temp.u('f1')),
   (pg_temp.u('f6'), pg_temp.u('f4'), pg_temp.u('f2'));
