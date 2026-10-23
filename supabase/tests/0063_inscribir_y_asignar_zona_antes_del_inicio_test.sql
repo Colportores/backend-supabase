@@ -235,20 +235,21 @@ select lives_ok(
 -- ---------------------------------------------------------------------------
 select throws_ok(
   format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e4'), pg_temp.u('ba')),
-  'CI002', 'La campaña no está activa: solo se inscribe en una campaña vigente.',
-  'inscribir en una terminada: CI002 con el aviso de siempre');
+  'CI002', 'La campaña ya terminó. Elegí una campaña en curso o por empezar.',
+  'inscribir en una terminada: CI002 con el aviso que guía');
 select throws_ok(
   format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('ea'), pg_temp.u('ba')),
   'CI001', null, 'una borrada: CI001');
 select throws_ok(
   format($$ select * from public.buscar_candidatos(%L, 'antes62') $$, pg_temp.u('e4')),
-  'CI002', null, 'buscar_candidatos() en una terminada: CI002');
+  'CI002', 'La campaña ya terminó. Elegí una campaña en curso o por empezar.',
+  'buscar_candidatos() en una terminada: CI002 con el mismo aviso');
 select throws_ok(
   format($$ select public.asignar_zona(%L, %L, %L) $$, pg_temp.u('e4'), pg_temp.u('b7'), pg_temp.u('f4')),
-  'CZ002', 'La campaña no está activa.', 'asignar_zona() en una terminada: CZ002 con el aviso de siempre');
+  'CZ002', 'La campaña ya terminó: ya no se asignan zonas.', 'asignar_zona() en una terminada: CZ002 con el aviso que guía');
 select throws_ok(
   format($$ select public.quitar_zona(%L, %L) $$, pg_temp.u('e4'), pg_temp.u('b7')),
-  'CZ002', null, 'quitar_zona() en una terminada: CZ002');
+  'CZ002', 'La campaña ya terminó: ya no se asignan zonas.', 'quitar_zona() en una terminada: CZ002');
 select throws_ok(
   format($$ select public.asignar_zona(%L, %L, %L) $$, pg_temp.u('ea'), pg_temp.u('b9'), pg_temp.u('f1')),
   'CZ001', null, 'asignar_zona() en una borrada: CZ001');

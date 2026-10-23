@@ -15,10 +15,11 @@
 --   1. `motivo_campania_del_coordinador(campania)` (0006): el permiso es el mismo, pero ya no pide
 --      que la campaña haya empezado: solo que no haya terminado (`fecha_fin < hoy_montevideo()`,
 --      el mismo criterio de `motivo_mapa_de_campania()`, 0024). Sigue devolviendo
---      `CAMPANIA_NO_VIGENTE` para la terminada, así que el aviso de una campaña terminada no cambia
---      (CI002 «La campaña no está activa…» al inscribir y buscar, CZ002 «La campaña no está
---      activa.» al asignar y quitar la zona). Lo que deja de salir es ese mismo aviso en una campaña
---      por empezar. Es la regla compartida por cinco funciones, que cambian juntas (mismo caso, misma
+--      `CAMPANIA_NO_VIGENTE` para la terminada, con los mismos códigos (CI002 al inscribir y buscar,
+--      CZ002 al asignar y quitar la zona). Los textos de esos dos avisos cambian (sección 4):
+--      «La campaña ya terminó. Elegí una campaña en curso o por empezar.» (CI002) y «La campaña ya
+--      terminó: ya no se asignan zonas.» (CZ002). El aviso de «no está activa» deja de salir en una
+--      campaña por empezar. Es la regla compartida por cinco funciones, que cambian juntas (mismo caso, misma
 --      regla):
 --        · `inscribir_colportor()` y `buscar_candidatos()` (vista 23, «Añadir colportor»), por
 --          `motivo_rechazo_inscripcion()`;
@@ -46,7 +47,8 @@
 --     `colportores_de_campania().estado`, `buscar_candidatos()`), `mis_zonas()` y la RLS. Un colportor
 --     inscripto solo en una campaña por empezar sigue en `PENDIENTE_ASIGNACION` hasta que ella
 --     empiece: eso es lo que NO está decidido y queda como pendiente (P2 del mismo archivo).
---   · Los códigos y los textos de rechazo: CI001..CI007 y CZ001..CZ006, CZ014 como estaban.
+--   · Los códigos de rechazo: CI001..CI007 y CZ001..CZ006, CZ014 como estaban (cambian solo los
+--     textos de CI002 y CZ002).
 --   · El resto de las reglas de inscribir y asignar: permiso, usuario existente, email verificado,
 --     no suspendido, no inscripto ya, zona viva de una ciudad viva de esa campaña.
 --   · El lock por usuario de `inscribir_colportor()` (dos coordinadores a la vez), la reactivación de
@@ -62,7 +64,7 @@
 --
 --   · front-coordinadores-web (vista 23, #41): «Añadir colportor» deja de recibir CI002 en una
 --     campaña por empezar y puede recibir CI007 si el colportor ya está en otra campaña del mismo
---     momento; el aviso de «no está activa» queda solo para la terminada.
+--     momento; el aviso de la terminada cambia de texto (CI002: «La campaña ya terminó. Elegí una campaña en curso o por empezar.»).
 --   · docs-organizacion (HU-CAM-004, docs#72): «mi campaña activa» pasa a «una campaña de la que soy
 --     coordinador y que no terminó».
 --
@@ -229,3 +231,237 @@ comment on function public.buscar_candidatos(uuid, text, uuid) is
   'de la página anterior. Devuelve estado, campaña vigente (en curso) y motivo_bloqueo (el de '
   'inscribir_colportor(), null si se puede). Errores: 42501 sin permiso; CI001 campaña '
   'inexistente; CI002 terminada (una por empezar se busca, 0058); 22023 cursor desconocido (0015).';
+
+-- ----------------------------------------------------------------------------
+-- 4. Los avisos de la campaña terminada (decisión del agente de decisiones, §2, sobre el pendiente P3)
+-- ----------------------------------------------------------------------------
+
+-- «No está activa» y «solo se inscribe en una campaña vigente» ya no describen la regla (una campaña
+-- por empezar también se puede): ahora dicen qué pasó y qué hacer. Los códigos no cambian (CI002,
+-- CZ002). Las tres funciones se copian enteras de su última versión, salvo el texto.
+
+-- Igual que en 0012, salvo el texto de CZ002.
+create or replace function public.lanzar_motivo_zona(p_motivo text)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  case p_motivo
+    when 'SIN_PERMISO' then
+      raise exception 'Solo el coordinador de la campaña puede asignar zonas en ella.'
+        using errcode = 'insufficient_privilege';
+    when 'CAMPANIA_INEXISTENTE' then
+      raise exception 'La campaña no existe.' using errcode = 'CZ001';
+    when 'CAMPANIA_NO_VIGENTE' then
+      raise exception 'La campaña ya terminó: ya no se asignan zonas.' using errcode = 'CZ002';
+    when 'NO_INSCRIPTO' then
+      raise exception 'El colportor no está en esta campaña.' using errcode = 'CZ003';
+    when 'ZONA_INEXISTENTE' then
+      raise exception 'La zona no existe o ya se dio de baja. Recargá el mapa.' using errcode = 'CZ004';
+    when 'ZONA_DE_OTRA_CIUDAD' then
+      raise exception 'La zona no pertenece a la ciudad de la campaña.' using errcode = 'CZ005';
+    when 'ZONA_DE_OTRA_CAMPANIA' then
+      raise exception 'La zona pertenece a otra campaña.' using errcode = 'CZ006';
+    when 'USUARIO_SUSPENDIDO' then
+      raise exception 'Cuenta suspendida. Pedile a un administrador que la reactive.' using errcode = 'CZ014';
+    else
+      null;
+  end case;
+end;
+$$;
+
+-- Igual que en 0028, salvo el texto de CI002.
+create or replace function public.inscribir_colportor(p_campania_id uuid, p_usuario_id uuid)
+returns public.campania_colportor
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_motivo    text;
+  v_conflicto uuid;
+  v_otra      public.campania;
+  v_fila      public.campania_colportor;
+begin
+  if auth.uid() is null then
+    raise exception 'inscribir_colportor requiere un usuario autenticado'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  -- Serializa las inscripciones de un mismo usuario: sin esto, dos coordinadores que lo
+  -- inscriben a la vez en campañas distintas pasan los dos el chequeo EN_OTRA_CAMPANIA.
+  -- La función es volátil, así que cada sentencia de abajo ve lo que el otro commiteó.
+  -- Alcanza porque no hay otro camino con JWT (0005, sección 3).
+  perform pg_advisory_xact_lock(hashtextextended('inscribir_colportor:' || p_usuario_id::text, 0));
+
+  select m.motivo, m.campania_en_conflicto into v_motivo, v_conflicto
+    from public.motivo_rechazo_inscripcion(p_campania_id, p_usuario_id) m;
+
+  case v_motivo
+    when 'SIN_PERMISO' then
+      raise exception 'Solo el coordinador de la campaña puede inscribir colportores en ella.'
+        using errcode = 'insufficient_privilege';
+    when 'CAMPANIA_INEXISTENTE' then
+      raise exception 'La campaña no existe.' using errcode = 'CI001';
+    when 'CAMPANIA_NO_VIGENTE' then
+      raise exception 'La campaña ya terminó. Elegí una campaña en curso o por empezar.'
+        using errcode = 'CI002';
+    when 'USUARIO_INEXISTENTE' then
+      raise exception 'El usuario no existe o fue dado de baja.' using errcode = 'CI003';
+    when 'EMAIL_NO_VERIFICADO' then
+      raise exception 'El usuario todavía no verificó su email.' using errcode = 'CI004';
+    when 'USUARIO_SUSPENDIDO' then
+      raise exception 'La cuenta está suspendida. Contactá al administrador.' using errcode = 'CI005';
+    when 'YA_INSCRIPTO' then
+      raise exception 'Ya está inscripto en esta campaña.' using errcode = 'CI006';
+    when 'EN_OTRA_CAMPANIA' then
+      select * into v_otra from public.campania c where c.id = v_conflicto;
+      raise exception 'Está en campaña %. Reasignar primero.', v_otra.nombre
+        using errcode = 'CI007',
+              detail = json_build_object('campania_id', v_otra.id, 'campania_nombre', v_otra.nombre)::text;
+    else
+      null;
+  end case;
+
+  -- Si ya estuvo en el equipo y la quitaron, vuelve la misma inscripción: sin zona (0022) y con lo
+  -- demás como estaba (meta_libros, created_at, created_by).
+  update public.campania_colportor cc
+     set deleted_at = null, zona_id = null
+   where cc.campania_id = p_campania_id and cc.usuario_id = p_usuario_id
+     and cc.deleted_at is not null
+  returning * into v_fila;
+  if found then
+    return v_fila;
+  end if;
+
+  insert into public.campania_colportor (campania_id, usuario_id, created_by)
+  values (p_campania_id, p_usuario_id, auth.uid())
+  returning * into v_fila;
+
+  return v_fila;
+end;
+$$;
+
+-- Igual que en 0015, salvo el texto de CI002.
+create or replace function public.buscar_candidatos(p_campania_id uuid, p_texto text default null,
+                                         p_despues_de uuid default null)
+returns table (usuario_id uuid, nombre text, apellido text, email text, estado text,
+               campania_actual text, creada_en timestamptz, motivo_bloqueo text)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_texto  text := public.normalizar_busqueda(p_texto);
+  v_motivo text;
+  -- La clave de orden de la cuenta del cursor: (no empieza, sin nombre, nombre, id).
+  v_cursor_no_empieza  boolean;
+  v_cursor_sin_nombre  boolean;
+  v_cursor_nombre      text;
+begin
+  if auth.uid() is null then
+    raise exception 'buscar_candidatos requiere un usuario autenticado'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  -- El permiso primero, con los códigos de inscribir_colportor().
+  v_motivo := public.motivo_campania_del_coordinador(p_campania_id);
+  case v_motivo
+    when 'SIN_PERMISO' then
+      raise exception 'Solo el coordinador de la campaña puede buscar cuentas para inscribir en ella.'
+        using errcode = 'insufficient_privilege';
+    when 'CAMPANIA_INEXISTENTE' then
+      raise exception 'La campaña no existe.' using errcode = 'CI001';
+    when 'CAMPANIA_NO_VIGENTE' then
+      raise exception 'La campaña ya terminó. Elegí una campaña en curso o por empezar.'
+        using errcode = 'CI002';
+    else
+      null;
+  end case;
+
+  -- La página siguiente. Sin texto, los sugeridos son una sola página.
+  if p_despues_de is not null then
+    if v_texto is null then
+      return;
+    end if;
+    select not coalesce(strpos(x.n_completo, v_texto) = 1 or strpos(x.n_apellido, v_texto) = 1
+                        or strpos(x.n_email, v_texto) = 1, false),
+           x.n_completo is null, coalesce(x.n_completo, '')
+      into v_cursor_no_empieza, v_cursor_sin_nombre, v_cursor_nombre
+      from (select public.normalizar_busqueda(u.nombre || ' ' || u.apellido) as n_completo,
+                   public.normalizar_busqueda(u.apellido) as n_apellido,
+                   public.normalizar_busqueda(u.email) as n_email
+              from public.usuario u
+             where u.id = p_despues_de) x;
+    if not found then
+      raise exception 'No se encontró la última cuenta de la página anterior. Volvé a buscar desde el principio.'
+        using errcode = 'invalid_parameter_value';
+    end if;
+  end if;
+
+  return query
+    with candidata as (
+      select u.id, u.nombre, u.apellido, u.email, u.created_at, u.suspendido_en,
+             public.normalizar_busqueda(u.nombre || ' ' || u.apellido) as n_completo,
+             public.normalizar_busqueda(u.apellido) as n_apellido,
+             public.normalizar_busqueda(u.email) as n_email
+        from public.usuario u
+       where u.deleted_at is null
+         and exists (select 1 from auth.users au
+                      where au.id = u.id and au.confirmed_at is not null)
+         and not exists (select 1 from public.campania_colportor cc
+                          where cc.campania_id = p_campania_id and cc.usuario_id = u.id
+                            and cc.deleted_at is null)
+    ),
+    -- La clave de orden de la búsqueda: primero las que empiezan con el texto (false < true),
+    -- después alfabético, las sin nombre al final, y el id.
+    clave as (
+      select c.*,
+             not coalesce(strpos(c.n_completo, v_texto) = 1 or strpos(c.n_apellido, v_texto) = 1
+                          or strpos(c.n_email, v_texto) = 1, false) as no_empieza,
+             c.n_completo is null as sin_nombre,
+             coalesce(c.n_completo, '') as nombre_orden
+        from candidata c
+    ),
+    elegida as (
+      -- Sugeridos: sin texto, las 5 pendientes de asignación más nuevas.
+      (select c.*, row_number() over (order by c.created_at desc, c.id desc) as orden
+         from clave c
+        where v_texto is null
+          and public.estado_de_cuenta(c.suspendido_en,
+                exists (select 1 from public.campanias_vigentes_de(c.id))) = 'PENDIENTE_ASIGNACION'
+        order by c.created_at desc, c.id desc
+        limit 5)
+      union all
+      -- Búsqueda: de a 10 que contienen el texto, primero las que empiezan con él; después
+      -- del cursor, si viene. El coalesce de no_empieza: sin nombre ni apellido, el «empieza»
+      -- sería null.
+      (select c.*, row_number() over (
+                order by c.no_empieza, c.sin_nombre, c.nombre_orden collate "C", c.id) as orden
+         from clave c
+        where v_texto is not null
+          and (strpos(c.n_completo, v_texto) > 0 or strpos(c.n_email, v_texto) > 0)
+          and (p_despues_de is null
+               or (c.no_empieza, c.sin_nombre, c.nombre_orden collate "C", c.id)
+                  > (v_cursor_no_empieza, v_cursor_sin_nombre, v_cursor_nombre collate "C", p_despues_de))
+        order by orden
+        limit 10)
+    )
+    select e.id, e.nombre, e.apellido, e.email,
+           public.estado_de_cuenta(e.suspendido_en, act.id is not null),
+           act.nombre, e.created_at, m.motivo
+      from elegida e
+      left join lateral (
+        -- La misma que nombra inscribir_colportor() en «Está en campaña X» (la más reciente).
+        select c.id, c.nombre
+          from public.campanias_vigentes_de(e.id) v
+          join public.campania c on c.id = v.campania_id
+         order by c.fecha_inicio desc, c.id
+         limit 1
+      ) act on true
+      cross join lateral public.motivo_rechazo_inscripcion(p_campania_id, e.id) m
+     order by e.orden;
+end;
+$$;
