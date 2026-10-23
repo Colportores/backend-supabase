@@ -1,11 +1,12 @@
--- pgTAP · la versión de Términos y Política que acepta la colportora (migración 0052, backend-supabase#109,
+-- pgTAP · la versión de Términos y Política que acepta la colportora (migración 0065, backend-supabase#109,
 -- HU-AUTH-001, R-AU04)
 --   1. La tabla consentimiento_terminos: columnas, forma de la versión, una fila por (usuario, versión),
 --      auditoría, RLS, privilegios (anon nada; authenticated solo lee; service_role todo) y que no es entidad
 --      de sync.
 --   2. El registro con `terminos_version` en los metadatos guarda la fila (versión, hora del servidor,
---      quién); sin la clave o con null el registro sigue igual y no guarda nada; con otra forma se rechaza
---      con TC001 y no queda ni el perfil; el cliente no pone la fecha ni el usuario.
+--      quién); sin la clave o con null el registro sigue igual y no guarda nada; con otra forma, o con la
+--      forma correcta pero una versión no publicada (hoy solo v1), se rechaza con TC001 y no queda ni el
+--      perfil; el cliente no pone la fecha ni el usuario.
 --   3. Quién lo lee: cada persona lo suyo, nadie lo ajeno (tampoco un ADMIN ni un coordinador); nadie lo
 --      escribe con su JWT; el servidor puede sumar una versión nueva (historial) pero no repetir una.
 --   4. Las cuentas que ya existían no se tocan; borrar la cuenta se lleva sus consentimientos.
@@ -46,7 +47,7 @@ begin
 end $$;
 
 create or replace function pg_temp.u(p_sufijo text) returns uuid language sql immutable as $$
-  select ('01920000-0000-7000-8000-0000000058' || p_sufijo)::uuid
+  select ('01920000-0000-7000-8000-0000000066' || p_sufijo)::uuid
 $$;
 
 -- SQLSTATE|mensaje del error que da una sentencia ('ok' si no da ninguno).
@@ -142,11 +143,32 @@ select row_eq(
   'versión, hora del servidor (now() de la transacción del registro), creada por la propia persona, viva'
 );
 
--- Versiones de varios dígitos, tope de 9.
-select is(pg_temp.registrar('a2', '{"terminos_version":"v12"}'), 'ok', 'v12 es válida');
-select is(pg_temp.consentimientos('a2'), 'v12', 'v12 queda guardada');
-select is(pg_temp.registrar('a3', '{"terminos_version":"v123456789"}'), 'ok', 'v con 9 dígitos es válida');
-select is(pg_temp.consentimientos('a3'), 'v123456789', 'v con 9 dígitos queda guardada');
+-- Otras dos personas con la v1 (las lecturas de abajo las usan como coordinador y ADMIN).
+select is(pg_temp.registrar('a2', '{"terminos_version":"v1"}'), 'ok', 'otra persona se registra con v1');
+select is(pg_temp.consentimientos('a2'), 'v1', 'v1 queda guardada');
+select is(pg_temp.registrar('a3', '{"terminos_version":"v1"}'), 'ok', 'una tercera persona se registra con v1');
+select is(pg_temp.consentimientos('a3'), 'v1', 'v1 queda guardada también');
+
+-- La lista de versiones publicadas está en un solo lugar y hoy es solo v1.
+select is(public.terminos_versiones_publicadas(), array['v1']::text[], 'las versiones publicadas son solo v1');
+select ok(not has_function_privilege('authenticated', 'public.terminos_versiones_publicadas()', 'execute')
+          and not has_function_privilege('anon', 'public.terminos_versiones_publicadas()', 'execute'),
+          'la lista de versiones publicadas no la ejecuta ni authenticated ni anon');
+
+-- Una versión con la forma correcta pero que nunca se publicó se rechaza (decisión P2, 22/10): la v2 todavía
+-- no existe, ni la v7, ni una de varios dígitos.
+select is(pg_temp.registrar('e1', '{"terminos_version":"v2"}'),
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v2").',
+  'v2 (forma válida, no publicada) se rechaza');
+select is(pg_temp.registrar('e2', '{"terminos_version":"v7"}'),
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v7").',
+  'v7 (forma válida, no publicada) se rechaza');
+select is(pg_temp.registrar('e3', '{"terminos_version":"v12"}'),
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v12").',
+  'v12 (forma válida, no publicada) se rechaza');
+select is(pg_temp.registrar('e4', '{"terminos_version":"v123456789"}'),
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v123456789").',
+  'v con 9 dígitos (forma válida, no publicada) se rechaza');
 
 -- El cliente no pone la fecha ni el usuario ni el id: lo demás de los metadatos se ignora.
 select is(pg_temp.registrar('a4',
@@ -172,51 +194,51 @@ select is(pg_temp.consentimientos('b4'), '(vacío)', 'sin metadatos no se guarda
 
 -- Una forma inválida frena el registro con TC001 y no deja ni el perfil.
 select is(pg_temp.registrar('c1', '{"terminos_version":"V1"}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "V1").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "V1").',
   'V1 en mayúscula se rechaza');
 select is(pg_temp.registrar('c2', '{"terminos_version":"1"}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "1").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "1").',
   '1 sin la v se rechaza');
 select is(pg_temp.registrar('c3', '{"terminos_version":1}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "1").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "1").',
   'un número JSON se rechaza');
 select is(pg_temp.registrar('c4', '{"terminos_version":"v0"}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v0").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v0").',
   'v0 se rechaza');
 select is(pg_temp.registrar('c5', '{"terminos_version":"v01"}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v01").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v01").',
   'v01 (cero a la izquierda) se rechaza');
 select is(pg_temp.registrar('c6', '{"terminos_version":""}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "").',
   'la cadena vacía se rechaza');
 select is(pg_temp.registrar('c7', '{"terminos_version":"v1 "}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v1 ").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v1 ").',
   'v1 con un espacio se rechaza (no se recorta)');
 select is(pg_temp.registrar('c8', '{"terminos_version":"v1" }'), 'ok', 'el espacio del JSON de afuera no cuenta');
 select is(pg_temp.registrar('c9', '{"terminos_version":"v1234567890"}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v1234567890").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v1234567890").',
   'v con 10 dígitos se rechaza');
 select is(pg_temp.registrar('d1', '{"terminos_version":"v1\n"}'),
-  E'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v1\n").',
+  E'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v1\n").',
   'v1 con un salto de línea se rechaza ($ de la regex no lo deja pasar)');
 select is(pg_temp.registrar('d2', '{"terminos_version":"v1; drop table usuario"}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v1; drop table usuario").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v1; drop table usuario").',
   'texto de más se rechaza');
 select is(pg_temp.registrar('d3', '{"terminos_version":["v1"]}'),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "["v1"]").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "["v1"]").',
   'una lista JSON se rechaza');
 select is(pg_temp.registrar('d4', ('{"terminos_version":"v' || repeat('9', 60) || '"}')::jsonb),
-  'TC001|La versión de los Términos y la Política de Privacidad tiene que ser v1, v2… (llegó "v' || repeat('9', 39) || '").',
+  'TC001|La versión de los Términos y la Política de Privacidad no es una versión publicada (publicadas: v1; llegó "v' || repeat('9', 39) || '").',
   'una versión larguísima se rechaza y el mensaje la recorta a 40 caracteres');
 select is(
   (select count(*) from public.usuario where id in
-     (select pg_temp.u(s) from unnest(array['c1','c2','c3','c4','c5','c6','c7','c9','d1','d2','d3','d4']) s)),
+     (select pg_temp.u(s) from unnest(array['c1','c2','c3','c4','c5','c6','c7','c9','d1','d2','d3','d4','e1','e2','e3','e4']) s)),
   0::bigint,
   'ningún registro rechazado dejó el perfil'
 );
 select is(
   (select count(*) from auth.users where id in
-     (select pg_temp.u(s) from unnest(array['c1','c2','c3','c4','c5','c6','c7','c9','d1','d2','d3','d4']) s)),
+     (select pg_temp.u(s) from unnest(array['c1','c2','c3','c4','c5','c6','c7','c9','d1','d2','d3','d4','e1','e2','e3','e4']) s)),
   0::bigint,
   'ningún registro rechazado dejó la cuenta'
 );
@@ -250,8 +272,8 @@ select is(pg_temp.consentimientos('a1'), 'v1', 'y su fila sigue igual');
 -- Un coordinador y un ADMIN tampoco lo leen (es de cada persona).
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is((select count(*) from public.consentimiento_terminos), 1::bigint,
-          'el coordinador lee solo el suyo (el de a2: v12)');
-select is((select version from public.consentimiento_terminos), 'v12', 'el suyo es v12');
+          'el coordinador lee solo el suyo (el de a2)');
+select is((select version from public.consentimiento_terminos), 'v1', 'el suyo es v1');
 select pg_temp.actuar_como(pg_temp.u('a3'));
 select is((select count(*) from public.consentimiento_terminos where usuario_id <> pg_temp.u('a3')), 0::bigint,
           'el ADMIN no lee los de las otras personas');
