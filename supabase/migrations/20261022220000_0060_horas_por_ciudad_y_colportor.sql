@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0044 · Horas trabajadas por ciudad y colportor, por día, semana o mes, con la tendencia
+-- 0060 · Horas trabajadas por ciudad y colportor, por día, semana o mes, con la tendencia
 --        contra el período anterior (backend-supabase#95, HU-REP-001, vista 32)
 --
 -- Origen: cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C3 y C15): el reporte de
@@ -65,6 +65,14 @@
 --     incluidos). Las horas de otra campaña del mismo colportor no se mezclan. Una inscripción
 --     dada de baja sigue contando las jornadas anteriores a la baja (para liquidar viáticos, lo
 --     trabajado no desaparece); las posteriores no.
+--   · Desde el DÍA de su inscripción en esta campaña (decisión del orquestador del 22/10, la
+--     misma regla en 0045 y en el tablero de Inicio): las jornadas de días anteriores al día de
+--     Montevideo del `created_at` de la inscripción son de otra campaña (p. ej. la de la que lo
+--     reasignaron, HU-CAM-005) y no se cuentan acá; si no, las horas se pagarían dos veces en la
+--     liquidación de viáticos. El día de la inscripción cuenta entero. Una inscripción reactivada
+--     (0028) conserva su `created_at`: lo trabajado en la otra campaña entre la baja y la
+--     reactivación sigue contando en las dos (exige guardar la fecha de reactivación: pendiente de
+--     Cristian, no se resuelve con una heurística).
 --   · El día de una jornada es el de su `inicio` en America/Montevideo, sin depender de la zona
 --     horaria de la sesión (hoy_montevideo(timestamptz), 0024). Una jornada que cruza la
 --     medianoche cuenta entera en el día en que empezó. Ver pendientes del PR.
@@ -179,11 +187,13 @@ begin
 
   return query
     with inscripcion as materialized (
-      -- Una por colportor de la campaña (unique campania_id, usuario_id). La ciudad sale de la
+      -- Una por colportor de la campaña (unique campania_id, usuario_id), con el día desde el que
+      -- cuenta (el de su inscripción) y la baja hasta la que cuenta. La ciudad sale de la
       -- zona actual; una zona o una ciudad de campaña dadas de baja no cuentan. Sin ciudad: el
       -- uuid cero, para poder unir sin `is not distinct from`.
       select i.usuario_id,
              i.deleted_at as baja,
+             public.hoy_montevideo(i.created_at) as desde_dia,
              coalesce(ci.ciudad_id, c_sin_ciudad) as ciudad_k
         from public.campania_colportor i
         left join public.zona z
@@ -209,6 +219,7 @@ begin
          and j.inicio <  ((v_fin + 1)::timestamp at time zone 'America/Montevideo')
          and public.hoy_montevideo(j.inicio) >= v_campania.fecha_inicio
          and public.hoy_montevideo(j.inicio) <= coalesce(v_campania.fecha_fin, 'infinity'::date)
+         and public.hoy_montevideo(j.inicio) >= ins.desde_dia
          and (ins.baja is null or j.inicio < ins.baja)
          and (p_ciudad_id is null
               or (ins.ciudad_k = p_ciudad_id and p_ciudad_id <> c_sin_ciudad))
@@ -316,12 +327,12 @@ end;
 $$;
 
 comment on function public.horas_por_ciudad_y_colportor(uuid, date, date, text, uuid, uuid[]) is
-  'Vista 32, HU-REP-001 (0044, backend-supabase#95): horas trabajadas por período (p_agrupar = '
+  'Vista 32, HU-REP-001 (0060, backend-supabase#95): horas trabajadas por período (p_agrupar = '
   'dia | semana | mes) × ciudad (la de la zona actual del colportor; sin zona, ciudad null) × '
   'colportor, con jornadas cerradas de la campaña, y las del período anterior para la tendencia '
   '(el día anterior, el lunes contra el sábado; la semana anterior; el mismo tramo del mes '
   'pasado; lo en curso no se compara salvo el mes a la fecha). El rango sube a períodos completos; '
-  'hasta 366 días. Solo totales: ni clientes, ni ventas, ni importes. Errores: 42501 sin permiso; '
+  'hasta 366 días. Cada colportor cuenta desde el día de su inscripción en la campaña y hasta su baja. Solo totales: ni clientes, ni ventas, ni importes. Errores: 42501 sin permiso; '
   'CZ001 campaña inexistente; 22023 agrupación, fechas o rango inválidos. Una campaña terminada '
   'se lee.';
 

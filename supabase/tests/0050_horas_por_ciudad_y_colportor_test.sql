@@ -1,4 +1,4 @@
--- pgTAP · horas trabajadas por ciudad y colportor (migración 0044, backend-supabase#95, HU-REP-001)
+-- pgTAP · horas trabajadas por ciudad y colportor (migración 0060, backend-supabase#95, HU-REP-001)
 -- horas_por_ciudad_y_colportor(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña) y que una campaña terminada se lee; los errores de campaña y de
 -- parámetros; las horas por día, semana y mes (jornadas cerradas, el día de Montevideo, la campaña,
@@ -125,16 +125,18 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poli
   (pg_temp.u('d4'), 'Cerro',  pg_temp.u('73'), 'ESQUINAS', null,
    '{"type":"Polygon","coordinates":[[[-56.19,-34.98],[-56.17,-34.98],[-56.17,-34.97],[-56.19,-34.97],[-56.19,-34.98]]]}'::jsonb);
 
-insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
-  (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2')),
-  (pg_temp.u('e1'), pg_temp.u('b4'), null),
-  (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d3')),
-  (pg_temp.u('e1'), pg_temp.u('b6'), pg_temp.u('d1')),
-  (pg_temp.u('e6'), pg_temp.u('b8'), pg_temp.u('d4')),
-  (pg_temp.u('e6'), pg_temp.u('b9'), pg_temp.u('d4')),
-  (pg_temp.u('e6'), pg_temp.u('ba'), pg_temp.u('d4'));
+-- Cada colportor cuenta desde el día de su inscripción: las de Cierre y En curso son anteriores a
+-- todas sus jornadas (más abajo, bb y bc prueban lo contrario).
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1'), '2026-08-01 12:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1'), '2026-08-01 12:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2'), '2026-08-01 12:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b4'), null,            '2026-08-01 12:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d3'), '2026-08-01 12:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b6'), pg_temp.u('d1'), '2026-08-01 12:00-03'),
+  (pg_temp.u('e6'), pg_temp.u('b8'), pg_temp.u('d4'), (pg_temp.hoy() - 90)::timestamptz),
+  (pg_temp.u('e6'), pg_temp.u('b9'), pg_temp.u('d4'), (pg_temp.hoy() - 90)::timestamptz),
+  (pg_temp.u('e6'), pg_temp.u('ba'), pg_temp.u('d4'), (pg_temp.hoy() - 90)::timestamptz);
 -- La zona de b5 se da de baja; la inscripción de b6 se da de baja el 15/09 a mediodía.
 update public.zona set deleted_at = now() where id = pg_temp.u('d3');
 update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
@@ -171,6 +173,48 @@ select pg_temp.u(x.s), x.i::timestamptz, x.f::timestamptz,
     ('b6', '2026-09-20 09:00-03', '2026-09-20 12:00-03', false, null),
     ('b7', '2026-09-07 09:00-03', '2026-09-07 18:00-03', false, null)
   ) x(s, i, f, acomp, baja);
+
+-- Reasignación e inscripción tardía (sin zona: ciudad null), campañas e7 Destino y e8 Origen, las
+-- dos desde el 03/08 y sin fin, del coordinador a1.
+--   bb: inscripto en Origen desde el 01/08, dado de baja el 15/09 a las 09:00 (Montevideo) y
+--       reasignado a Destino a las 09:30 de ese día. Jornadas: 10/09 4 h (de Origen); 15/09 09:00
+--       1 h (empieza justo en el instante de la baja: ya no es de Origen) y 10:00 2 h (después de la
+--       baja, el día de la inscripción en Destino: de Destino); 16/09 3 h (de Destino).
+--   bc: inscripto en Destino el 09/09 a las 10:00. Jornadas: 07/09 y 08/09 1 h cada una (días
+--       anteriores: no cuentan), 09/09 2 h (desde las 08:00, el mismo día: cuenta, el corte es por
+--       día), 10/09 3 h.
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
+       'authenticated', 'authenticated', 'horas-' || s || '@example.com', 'x', now(), now(), now()
+  from unnest(array['bb','bc']) s;
+update public.usuario u set nombre = x.n, apellido = x.a
+  from (values ('bb','Kira','Kent'), ('bc','Lola','Lara')) x(s, n, a)
+ where u.id = pg_temp.u(x.s);
+insert into public.usuario_rol (usuario_id, rol_id)
+select pg_temp.u(x.s), r.id
+  from (values ('bb'), ('bc')) x(s) join public.rol r on r.codigo = 'COLPORTOR';
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
+  (pg_temp.u('e7'), 'Destino', 'VERANO', '2026-08-03', null, pg_temp.u('a1')),
+  (pg_temp.u('e8'), 'Origen',  'VERANO', '2026-08-03', null, pg_temp.u('a1'));
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e8'), pg_temp.u('bb'), null, '2026-08-01 12:00-03');
+update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
+ where campania_id = pg_temp.u('e8') and usuario_id = pg_temp.u('bb');
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e7'), pg_temp.u('bb'), null, '2026-09-15 12:30:00+00'),
+  (pg_temp.u('e7'), pg_temp.u('bc'), null, '2026-09-09 10:00-03');
+insert into public.jornada (colportor_id, inicio, fin)
+select pg_temp.u(x.s), x.i::timestamptz, x.f::timestamptz
+  from (values
+    ('bb', '2026-09-10 09:00-03', '2026-09-10 13:00-03'),
+    ('bb', '2026-09-15 09:00-03', '2026-09-15 10:00-03'),
+    ('bb', '2026-09-15 10:00-03', '2026-09-15 12:00-03'),
+    ('bb', '2026-09-16 09:00-03', '2026-09-16 12:00-03'),
+    ('bc', '2026-09-07 09:00-03', '2026-09-07 10:00-03'),
+    ('bc', '2026-09-08 09:00-03', '2026-09-08 10:00-03'),
+    ('bc', '2026-09-09 08:00-03', '2026-09-09 10:00-03'),
+    ('bc', '2026-09-10 09:00-03', '2026-09-10 12:00-03')
+  ) x(s, i, f);
 
 -- Jornadas de En curso (relativas a hoy, para lo en curso):
 --   b8: hoy 1 h, y hace 7 días 3 h.   ba: ayer 2 h (hoy nada).
@@ -348,6 +392,36 @@ select is(pg_temp.fila('e1', '2026-09-07', '2026-09-16', 'dia', '2026-09-10', 'b
 select is(pg_temp.fila('e1', '2026-09-18', '2026-09-22', 'dia', '2026-09-20', 'b6'),
           'sin fila', 'b6 el 20: después de la baja de la inscripción, no cuenta');
 
+-- Cada colportor cuenta desde el día de su inscripción en la campaña (HU-CAM-005: reasignar).
+select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bb'),
+          '4.00|1|1|0|false|0.00|0', 'bb en Origen: sus 4 h del 10/09, antes de la baja');
+select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bb'),
+          '0.00|0|0|0|false|4.00|1', 'bb en Origen: lo posterior a la baja (15 y 16/09) no suma; queda la semana anterior');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bb'),
+          'sin fila', 'bb en Destino: las 4 h del 10/09 son de Origen, no se cuentan dos veces');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bb'),
+          '6.00|3|2|0|false|0.00|0', 'bb en Destino: desde el día de su inscripción (15/09, aunque la jornada empezó antes de la hora) y el 16/09');
+select is((select sum(horas) from (
+             select horas from public.horas_por_ciudad_y_colportor(pg_temp.u('e7'), '2026-09-07', '2026-09-20', 'semana', null, array[pg_temp.u('bb')])
+             union all
+             select horas from public.horas_por_ciudad_y_colportor(pg_temp.u('e8'), '2026-09-07', '2026-09-20', 'semana', null, array[pg_temp.u('bb')])
+           ) t),
+          10.00, 'la reasignación no duplica: Origen + Destino suman las 10 h que trabajó bb, ni una más (la jornada justo en el instante de la baja es de Destino)');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-15', 'bb'),
+          '3.00|2|1|0|false|0.00|0', 'por día: el 15/09 (día de la inscripción) cuenta en Destino, también la jornada que empezó justo en la baja');
+select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'dia', '2026-09-15', 'bb'),
+          'sin fila', 'por día: el 15/09, jornada posterior a la baja, no cuenta en Origen');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
+          '5.00|2|2|0|false|0.00|0', 'bc, inscripto el 09/09 a las 10:00: no cuenta el 07/09; el 09/09 desde las 08:00 sí (el corte es por día) y el 10/09');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bc'),
+          '0.00|0|0|0|false|5.00|2', 'bc: la semana siguiente compara contra lo que sí cuenta');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-07', 'bc'),
+          'sin fila', 'bc el 07/09: antes de su inscripción, sin fila');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-08', 'bc'),
+          'sin fila', 'bc el 08/09, el día anterior a su inscripción: sin fila');
+select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'mes', '2026-09-01', 'bc'),
+          '5.00|2|2|0|false|0.00|0', 'por mes: también desde el día de la inscripción');
+
 -- La zona horaria de la sesión no mueve el día.
 select set_config('TimeZone', 'Pacific/Kiritimati', true);
 select is(pg_temp.fila('e1', '2026-09-07', '2026-09-16', 'dia', '2026-09-15', 'b1'),
@@ -520,6 +594,8 @@ select pg_temp.actuar_como_servidor();
 -- ---------------------------------------------------------------------------
 select is((select count(*)::int from public.jornada where colportor_id = pg_temp.u('b1')),
           9, 'las jornadas de b1 siguen siendo las 9 del fixture');
+select is((select count(*)::int from public.jornada where colportor_id in (pg_temp.u('bb'), pg_temp.u('bc'))),
+          8, 'y las de bb y bc, las 8 del fixture: el corte por inscripción no borra nada');
 
 select * from finish();
 rollback;
