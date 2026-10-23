@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0048 · zonas_por_colportor() suma `casas_registradas` (backend-supabase#98, HU-CAM-006, vista 33)
+-- 0062 · zonas_por_colportor() suma `casas_registradas` (backend-supabase#98, HU-CAM-006, vista 33)
 --
 -- La 0047 (PR #118) trajo la zona de hoy y las zonas anteriores de cada colportor para la pestaña
 -- Zonas de Equipo, pero dejó afuera la columna «Casas registradas» del canvas: ni la HU ni el canvas
@@ -14,7 +14,14 @@
 -- Un número, sin direcciones: las ubicaciones VIVAS cuyo `created_by` es el colportor, de una ciudad
 -- VIVA de esta campaña (`campania_ciudad`), creadas desde el comienzo de su inscripción
 -- (`campania_colportor.created_at`, el mismo inicio que usan los acompañamientos, 0043; el límite es
--- inclusivo). No mira la zona: la ubicación no guarda zona ni campaña (R-UB06), así que cambiar de
+-- inclusivo) y hasta el último día de la campaña (día de Montevideo de `ubicacion.created_at` <=
+-- `campania.fecha_fin`, también inclusivo; sin fecha de fin, sin tope: el mismo corte que la 0043).
+-- Sin ese tope, lo que el colportor carga hoy para la campaña siguiente, en la misma ciudad, subiría
+-- el número de una campaña ya terminada (la ubicación no guarda campaña). Consecuencia: lo cargado
+-- en los días de gracia de escritura después del cierre no cuenta, igual que en los acompañamientos.
+-- Si dos inscripciones vivas del colportor tienen campañas que se superponen en la misma ciudad, las
+-- mismas casas figuran en las dos: es el caso de «campañas superpuestas» que la 0043 ya deja como
+-- decisión pendiente, y esta lectura queda atada a lo que se decida allá. No mira la zona: la ubicación no guarda zona ni campaña (R-UB06), así que cambiar de
 -- zona, quitársela o que la zona se dé de baja no le resta casas a nadie. No cuentan una ubicación
 -- dada de baja (p. ej. la B de una unión de duplicados), lo cargado antes de inscribirse a ESTA
 -- campaña ni lo de una ciudad que no es de ella.
@@ -80,12 +87,14 @@ begin
              where ub.created_by = i.usuario_id
                and ub.deleted_at is null
                and ub.created_at >= i.created_at
+               and public.hoy_montevideo(ub.created_at) <= coalesce(camp.fecha_fin, 'infinity'::date)
                and exists (select 1
                              from public.campania_ciudad cx
                             where cx.campania_id = p_campania_id
                               and cx.ciudad_id = ub.ciudad_id
                               and cx.deleted_at is null))
       from public.campania_colportor i
+      join public.campania camp on camp.id = i.campania_id
       join public.usuario usr on usr.id = i.usuario_id
       -- La zona de hoy, y su ciudad (decisión del 21/10, «Ciudad colp.»); sin zona, todo null.
       left join public.zona z on z.id = i.zona_id and z.deleted_at is null
@@ -107,13 +116,13 @@ end;
 $$;
 
 comment on function public.zonas_por_colportor(uuid) is
-  'Vista 33 «Equipo», HU-CAM-006 (0047 y 0048, backend-supabase#98): por inscripto vivo de la campaña, su '
+  'Vista 33 «Equipo», HU-CAM-006 (0047 y 0062, backend-supabase#98): por inscripto vivo de la campaña, su '
   'zona de hoy (con la ciudad y desde qué día; zona_desde_inicial = el día es una cota, no la '
   'asignación real) y sus zonas_anteriores con las fechas (jsonb [{zona_id, nombre, ciudad_id, '
   'ciudad_nombre, desde, hasta, inicial, eliminada}], del más viejo al más nuevo; día de Montevideo). '
   'Sale del historial de la 0022. casas_registradas: ubicaciones vivas que creó el colportor en las '
-  'ciudades vivas de la campaña desde que se inscribió, sin mirar la zona (las de una zona anterior '
-  'siguen contando). Una campaña por empezar o terminada se lee. Errores: 42501 sin permiso; CZ001 '
+  'ciudades vivas de la campaña desde que se inscribió y hasta el último día de la campaña, sin mirar '
+  'la zona (las de una zona anterior siguen contando). Una campaña por empezar o terminada se lee. Errores: 42501 sin permiso; CZ001 '
   'campaña inexistente. Sin email ni clientes.';
 
 revoke all on function public.zonas_por_colportor(uuid)

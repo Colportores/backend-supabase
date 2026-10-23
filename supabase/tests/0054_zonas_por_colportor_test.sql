@@ -1,7 +1,7 @@
--- pgTAP · las zonas de cada colportor para Equipo (migraciones 0047 y 0048, backend-supabase#98, HU-CAM-006)
+-- pgTAP · las zonas de cada colportor para Equipo (migraciones 0047 y 0062, backend-supabase#98, HU-CAM-006)
 -- zonas_por_colportor(): forma y privilegios; el permiso primero (sin JWT, anon, colportor, sin rol,
 -- rol vencido, coordinador de otra campaña) y que una campaña por empezar o terminada se lee; la
--- zona de hoy con su ciudad y desde cuándo; las casas registradas (no dependen de la zona); las zonas anteriores con sus fechas, en orden, con el
+-- zona de hoy con su ciudad y desde cuándo; las casas registradas (no dependen de la zona; tampoco suman las de después del cierre de la campaña); las zonas anteriores con sus fechas, en orden, con el
 -- día de Montevideo (también con otra zona horaria de sesión); la misma zona dos veces, la de otra
 -- ciudad con el mismo nombre, la dada de baja, el tramo inicial y el tramo dado de baja; quién figura
 -- (los mismos inscriptos que colportores_de_campania()) y quién no (inscripción de baja, cuenta
@@ -112,6 +112,13 @@ returns void language sql as $$
           case when p_baja then now() end)
 $$;
 
+-- Una ubicación creada por un colportor en un instante exacto (p. ej. el borde del último día de una campaña).
+create or replace function pg_temp.ubic_en(p_colp text, p_ciudad text, p_cuando timestamptz)
+returns void language sql as $$
+  insert into public.ubicacion (tipo, lat, lon, ciudad_id, created_by, created_at)
+  values ('CASA', -34.90, -56.16, pg_temp.u(p_ciudad), pg_temp.u(p_colp), p_cuando)
+$$;
+
 -- Las casas registradas de un colportor en una campaña, como texto.
 create or replace function pg_temp.casas(p_camp text, p_colp text) returns text language sql as $$
   select coalesce((select r.casas_registradas::text from public.zonas_por_colportor(pg_temp.u(p_camp)) r
@@ -193,7 +200,8 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('72'), pg_temp.u('e1'), pg_temp.u('c2')),
   (pg_temp.u('73'), pg_temp.u('e2'), pg_temp.u('c1')),
   (pg_temp.u('74'), pg_temp.u('e3'), pg_temp.u('c1')),
-  (pg_temp.u('75'), pg_temp.u('e5'), pg_temp.u('c1'));
+  (pg_temp.u('75'), pg_temp.u('e5'), pg_temp.u('c1')),
+  (pg_temp.u('77'), pg_temp.u('e2'), pg_temp.u('c4'));
 -- Ciudad tres estuvo en En curso y se quitó de la campaña (fila dada de baja).
 insert into public.campania_ciudad (id, campania_id, ciudad_id, deleted_at)
 values (pg_temp.u('76'), pg_temp.u('e1'), pg_temp.u('c3'), now());
@@ -212,12 +220,14 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat,
 insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted_at, created_at)
 select pg_temp.u(x.e), pg_temp.u(x.b), case when x.d is null then null else pg_temp.u(x.d) end,
        case when x.baja then now() end,
-       case when x.e = 'e1' then pg_temp.t(60) else now() end
+       case when x.e = 'e1' then pg_temp.t(60)
+            when x.e = 'e2' and x.b = 'b3' then timestamptz '2026-08-05 12:00-03'
+            else now() end
   from (values ('e1','b1','d1',false), ('e1','b2','d1',false), ('e1','b3',null,false),
                ('e1','b4',null,false), ('e1','b5','d2',false), ('e1','b6','d1',false),
                ('e1','b7',null,true),  ('e1','b9','d1',false),
                ('e1','ba','d3',false), ('e1','bb','d1',false),
-               ('e5','b1','d6',false), ('e2','b2',null,false), ('e3','b2','d7',false)) x(e, b, d, baja);
+               ('e5','b1','d6',false), ('e2','b2',null,false), ('e2','b3',null,false), ('e3','b2','d7',false)) x(e, b, d, baja);
 
 delete from public.campania_colportor_zona_historial h
  using public.campania_colportor cc
@@ -259,6 +269,13 @@ select pg_temp.ubic('b2', 'c2', 5);
 select pg_temp.ubic('b2', 'c1', 60);
 select pg_temp.ubic('b3', 'c1', 5);
 select pg_temp.ubic('b4', 'c1', 5);
+-- b3 también estuvo inscripto en Cierre (03/08 al 30/09) desde el 05/08. En Ciudad cuatro, que es de
+-- Cierre y no de En curso: una casa del 15/09 y otra del 30/09 a las 23:30 (último día: cuentan) y una
+-- del 01/10 a las 00:30 (el día siguiente al cierre: no cuenta). La de hace 5 días en Ciudad uno (de
+-- En curso, también ciudad de Cierre) es de después del cierre: tampoco cuenta en Cierre.
+select pg_temp.ubic_en('b3', 'c4', timestamptz '2026-09-15 12:00-03');
+select pg_temp.ubic_en('b3', 'c4', timestamptz '2026-09-30 23:30-03');
+select pg_temp.ubic_en('b3', 'c4', timestamptz '2026-10-01 00:30-03');
 -- Otras campañas
 select pg_temp.tramo('e5', 'b1', 'd6', pg_temp.t(1), null);
 select pg_temp.tramo('e2', 'b2', 'd5', pg_temp.t(100), pg_temp.t(70));
@@ -419,8 +436,13 @@ select is(pg_temp.casas('e5', 'b1'), '0',
           'casas: b1 se inscribió en Futura hoy: lo que cargó antes (en En curso) no cuenta ahí');
 select is(pg_temp.fila('e2', 'b2'), '-|-|-|-|Vieja@Ciudad uno q98:-100..-70',
           'Cierre (terminada) se lee: el historial se consulta también al cierre');
-select is(pg_temp.lista('e2'), 'Bravo', 'Cierre: solo b2');
+select is(pg_temp.lista('e2'), 'Bravo,Cruz', 'Cierre: b2 y b3');
 select is(pg_temp.casas('e2', 'b2'), '0', 'casas: b2 se inscribió en Cierre hoy: lo anterior no cuenta');
+select is(pg_temp.casas('e2', 'b3'), '2',
+          'casas: Cierre terminó el 30/09: cuentan las de b3 hasta ese día (también la de las 23:30) y no la del 01/10 '
+          'ni la de hace 5 días, que son de la campaña siguiente en la misma ciudad');
+select is(pg_temp.casas('e1', 'b3'), '1',
+          'casas: b3 en En curso (sin fecha de fin): sigue en 1, lo suyo de Cierre es de otra ciudad de campaña');
 select is(pg_temp.fila('e1', 'b2'),
           'Centro|Ciudad uno q98|-10|false|Centro@Ciudad uno q98:-40..-35,Centro@Ciudad dos q98:-35..-12',
           'lo de b2 en otras campañas no se mezcla con En curso');
