@@ -12,7 +12,9 @@ Esta guía cubre las dos etapas de backend-supabase#42:
   lo tienen, sin ninguna lista en el repo) y **los paquetes de las zonas** se publican **fuera del catálogo público**,
   cada uno con su enlace en `public.zona.paquete_mapa` ([§ Mapas de las zonas](#mapas-de-las-zonas)).
 
-Departamento y Uruguay quedan fuera: backend-supabase#68, con el plan Pro.
+Departamento y Uruguay quedan fuera del publicador: backend-supabase#68, con el plan Pro. Hoy el **catálogo y su
+validación ya los aceptan** ([§ El catálogo](#el-catálogo)); lo que falta (de dónde sale el área de cada uno, el tope de
+tamaño con Pro y los permisos del bucket) está en [§ Qué falta](#qué-falta).
 
 ## Qué hay en el bucket
 
@@ -122,7 +124,7 @@ El panel (navegador) lee lo mismo directo del bucket: por eso el CORS ([§ CORS 
 | `generado_en` | cuándo se publicó el catálogo (ISO 8601, UTC) |
 | `estilo.version` | SHA-256 del `estilo/colportores.json` publicado; si cambia, la app vuelve a pedir el estilo |
 | `paquetes[].nivel` | `ciudad` < `departamento` < `uruguay` (como `NivelCobertura` de la app). **`zona` no va**: el validador lo rechaza ([§ Privacidad](#privacidad)) |
-| `paquetes[].ambito_id` | id de la ciudad en `public.ciudad`; **obligatorio en las ciudades**, la app elige el paquete por él |
+| `paquetes[].ambito_id` | id de la ciudad en `public.ciudad`; **obligatorio en las ciudades y en los departamentos** (la app descarta un departamento sin él y lo compara con el de la ciudad del colportor), la app elige el paquete por él. **El de todo Uruguay no lo lleva** (cubre cualquier lugar) y hay uno solo; `validar` lo exige |
 | `paquetes[].zoom_min/zoom_max` | zooms que trae el archivo; más allá, MapLibre amplía el último |
 | `paquetes[].tamano_bytes` | suma de las partes |
 | `paquetes[].version` | qué cambió: SHA-256 de la parte única, o de los SHA-256 de las partes unidos con `\n` |
@@ -513,6 +515,13 @@ Storage (hoy la 0036): sin red, sin recorte y sin cargar Montevideo. Es lo que c
 
 ## Qué falta
 
+- **Departamento y todo Uruguay (backend-supabase#68, con el paso a Pro del S11)**. Hecho: `public.ciudad.departamento`
+  (backend-supabase#92, migración 0048: texto opcional, hoy cargado solo para Montevideo) y la validación del catálogo
+  (nivel `departamento` con `ambito_id`, `uruguay` sin él y uno solo). Sin hacer, a la espera de decisiones de Cristian
+  (la ruta del archivo está en el PR): de dónde sale el **rectángulo** de un departamento y del país, qué es el
+  `ambito_id` de un departamento (no es una entidad: es un texto de `ciudad`), el **tope de tamaño** por archivo con Pro
+  (el de 50 MB está en `politica.mjs`, en la 0029, en `config.toml` y en `bucket.mjs`) y la revisión de la transferencia
+  (*egress*). Hasta entonces el publicador no corta ni sube estos niveles.
 - **Las demás ciudades**: cargarlas en `public.ciudad` con su rectángulo (guía de carga manual § 2) y medir cuánto
   pesa cada una; la política de tamaño se ocupa del resto.
 - **El contrato del sync**: `zona.paquete_mapa` (y `ciudad.bbox_*`) ya viajan en el pull, porque el pull serializa todas

@@ -87,6 +87,51 @@ test('un paquete de ciudad sin ambito_id no es válido (la app elige su paquete 
   assert.deepEqual(validar(sinAmbito, { exigirAmbito: false }), [], 'solo un simulacro sin clave lo deja pasar');
 });
 
+const deDepartamento = (sobrescribir = {}) =>
+  paquete({
+    nivel: 'departamento',
+    clave: 'salto',
+    nombre: 'Salto',
+    ambitoId: 'salto',
+    partes: [parte('d', 150_000_000, 'departamento', 'salto')],
+    ...sobrescribir,
+  });
+
+const deUruguay = (sobrescribir = {}) =>
+  paquete({
+    nivel: 'uruguay',
+    clave: 'uruguay',
+    nombre: 'Uruguay',
+    ambitoId: null,
+    partes: [parte('e', 700_000_000, 'uruguay', 'uruguay')],
+    ...sobrescribir,
+  });
+
+// Sin Pro un archivo no pasa de 50 MB; el tope de los niveles grandes lo define #68 (pendiente), así que acá se
+// valida con un tope amplio solo para aislar la regla del ámbito.
+const TOPE_PRO = 2_000_000_000;
+
+test('un paquete de departamento sin ambito_id no es válido (la app lo descarta); uno de Uruguay no lleva ámbito', () => {
+  const sinAmbito = fusionar(null, [deDepartamento({ ambitoId: null })], { ahora: AHORA });
+  assert.match(validar(sinAmbito, { maxBytes: TOPE_PRO }).join('\n'), /departamento-salto: ambito_id falta/);
+  assert.deepEqual(validar(sinAmbito, { maxBytes: TOPE_PRO, exigirAmbito: false }), [], 'un simulacro sin clave lo deja pasar');
+
+  const conAmbito = fusionar(null, [deUruguay({ ambitoId: 'uy' })], { ahora: AHORA });
+  assert.match(validar(conAmbito, { maxBytes: TOPE_PRO }).join('\n'), /uruguay-uruguay: un paquete de todo Uruguay no lleva ambito_id/);
+});
+
+test('un catálogo con ciudad, departamento y Uruguay valida, y lo que pasa del tope de 50 MB se rechaza', () => {
+  const completo = fusionar(null, [paquete(), deDepartamento(), deUruguay()], { ahora: AHORA });
+  assert.deepEqual(validar(completo, { maxBytes: TOPE_PRO }), []);
+  assert.deepEqual(completo.paquetes.map((p) => p.nivel), ['ciudad', 'departamento', 'uruguay'], 'del más chico al más grande');
+  assert.match(validar(completo).join('\n'), /departamento-salto: una parte pesa 150000000 bytes y el tope es 50000000/, 'sin Pro no entra');
+});
+
+test('no puede haber dos paquetes de todo Uruguay', () => {
+  const dos = fusionar(null, [deUruguay(), deUruguay({ clave: 'pais', partes: [parte('f', 600_000_000, 'uruguay', 'pais')] })], { ahora: AHORA });
+  assert.match(validar(dos, { maxBytes: TOPE_PRO }).join('\n'), /hay más de un paquete de todo Uruguay \(uruguay-pais\)/);
+});
+
 test('un paquete de ciudad lleva nivel, ámbito, tamaño, SHA-256 y partes', () => {
   const p = paquete();
   assert.equal(p.id, 'ciudad-montevideo');
