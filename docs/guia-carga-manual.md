@@ -303,7 +303,9 @@ values (null, '<id del combo>', '<id de campania_ciudad>', 110000, public.hoy_mo
   Las ventas hechas **no cambian**: guardan el ítem del combo y el precio con que
   se vendió (`venta_item.coleccion_id`, `precio_unitario`, `subtotal`).
 - **Si un componente se da de baja** (`producto.deleted_at`), el combo deja de
-  ofrecerse hasta corregirlo. Para ver qué combos quedaron afectados:
+  ofrecerse hasta corregirlo (el teléfono lo decide con lo que baja por el pull; el precio
+  no se quita). `public.precios_de_la_ciudad(...)` lo cuenta en `componentes_de_baja`
+  (desde la `0057`; 0 si ninguno). Para ver qué combos quedaron afectados con una consulta:
   ```sql
   select c.id, c.nombre, p.nombre as componente_de_baja
     from public.coleccion c
