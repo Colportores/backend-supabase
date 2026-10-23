@@ -11,6 +11,7 @@
 --   9. El metro de tolerancia al recorrer un tramo, y las calles de otra ciudad del catálogo no cuentan.
 --  10. Una zona grande sobre una ciudad ya dividida en muchas zonas no pasa el statement_timeout (8 s).
 --  11. Un tramo de menos de 1 m en una esquina donde dos zonas solo se tocan no cuenta como calle compartida.
+-- (La 0059 pasa las esquinas a la interna y cuenta solo los tramos del camino entre ellas: ver el test 0064.)
 begin;
 select * from no_plan();
 
@@ -212,12 +213,12 @@ select has_function('public', f, 'existe ' || f)
   from unnest(array['zonas_que_se_superponen', 'zonas_que_comparten_calle']) f;
 select ok(not has_function_privilege(r, f, 'execute'), r || ' NO ejecuta ' || f)
   from unnest(array['anon', 'authenticated']) r,
-       unnest(array['public.zonas_que_se_superponen(uuid,jsonb,uuid)', 'public.zonas_que_comparten_calle(uuid,jsonb,uuid)']) f;
+       unnest(array['public.zonas_que_se_superponen(uuid,jsonb,uuid)', 'public.zonas_que_comparten_calle(uuid,jsonb,uuid,jsonb)']) f;
 select ok(has_function_privilege('service_role', f, 'execute'), 'service_role ejecuta ' || f)
-  from unnest(array['public.zonas_que_se_superponen(uuid,jsonb,uuid)', 'public.zonas_que_comparten_calle(uuid,jsonb,uuid)']) f;
+  from unnest(array['public.zonas_que_se_superponen(uuid,jsonb,uuid)', 'public.zonas_que_comparten_calle(uuid,jsonb,uuid,jsonb)']) f;
 select is((select p.proconfig from pg_proc p where p.oid = f::regprocedure), array['search_path=""'],
           f || ' fija search_path vacío')
-  from unnest(array['public.zonas_que_se_superponen(uuid,jsonb,uuid)', 'public.zonas_que_comparten_calle(uuid,jsonb,uuid)',
+  from unnest(array['public.zonas_que_se_superponen(uuid,jsonb,uuid)', 'public.zonas_que_comparten_calle(uuid,jsonb,uuid,jsonb)',
                     'public.guardar_zona(uuid,text,text,text,double precision,double precision,integer,jsonb,jsonb,uuid,boolean)']) f;
 select is((select p.prosecdef from pg_proc p
             where p.oid = 'public.guardar_zona(uuid,text,text,text,double precision,double precision,integer,jsonb,jsonb,uuid,boolean)'::regprocedure),
@@ -476,7 +477,7 @@ select is(pg_temp.codigo('select public.guardar_zona(p_campania_ciudad_id => ''0
 select is(pg_temp.codigo('select public.zonas_que_se_superponen(''01920000-0000-7000-8000-000000004871'', ''{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}'', null)'),
           '42501', 'anon no ejecuta la interna de superposiciones');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000048a1');
-select is(pg_temp.codigo('select public.zonas_que_comparten_calle(''01920000-0000-7000-8000-000000004871'', ''{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}'', null)'),
+select is(pg_temp.codigo('select public.zonas_que_comparten_calle(''01920000-0000-7000-8000-000000004871'', ''{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}'', null, ''[]'')'),
           '42501', 'el coordinador tampoco ejecuta las internas directo: solo por guardar_zona()');
 
 -- El ADMIN y el coordinador de la campaña sí; lo que ven es lo mismo.
@@ -562,7 +563,12 @@ create temp table grande on commit drop as
   select public.zonas_que_comparten_calle('01920000-0000-7000-8000-000000004876',
     jsonb_build_object('type', 'Polygon', 'coordinates', jsonb_build_array(jsonb_build_array(
       pg_temp.pt(-56.5, -34.5, 0, 0), pg_temp.pt(-56.5, -34.5, 100, 0), pg_temp.pt(-56.5, -34.5, 100, 100),
-      pg_temp.pt(-56.5, -34.5, 0, 100), pg_temp.pt(-56.5, -34.5, 0, 0)))), null) r;
+      pg_temp.pt(-56.5, -34.5, 0, 100), pg_temp.pt(-56.5, -34.5, 0, 0)))), null,
+    jsonb_build_array(
+      jsonb_build_object('orden', 1, 'lon', pg_temp.pt(-56.5, -34.5, 0, 0) -> 0, 'lat', pg_temp.pt(-56.5, -34.5, 0, 0) -> 1),
+      jsonb_build_object('orden', 2, 'lon', pg_temp.pt(-56.5, -34.5, 100, 0) -> 0, 'lat', pg_temp.pt(-56.5, -34.5, 100, 0) -> 1),
+      jsonb_build_object('orden', 3, 'lon', pg_temp.pt(-56.5, -34.5, 100, 100) -> 0, 'lat', pg_temp.pt(-56.5, -34.5, 100, 100) -> 1),
+      jsonb_build_object('orden', 4, 'lon', pg_temp.pt(-56.5, -34.5, 0, 100) -> 0, 'lat', pg_temp.pt(-56.5, -34.5, 0, 100) -> 1))) r;
 select ok((select clock_timestamp() - t0 < interval '3 seconds' from grande_t0),
           'una zona de 10 km sobre 100 zonas y 20 200 tramos se calcula en menos de 3 s (el tope de Supabase es 8 s)');
 -- Las 36 zonas de la orilla comparten calles con el borde del cuadrado grande; las 64 de adentro, ninguna.
@@ -630,9 +636,10 @@ create temp table zb on commit drop as
   select pg_temp.zona('01920000-0000-7000-8000-000000004878', 'B',
                       jsonb_build_array(pg_temp.pt(-56.6, -34.8, 1, 0), pg_temp.pt(-56.6, -34.8, 2, 0),
                                        pg_temp.pt(-56.6, -34.8, 2, 2), pg_temp.pt(-56.6, -34.8, 1, 2)), true) r;
--- (Los pasajes que salen de la columna, a 0,46 m de ella, también quedan a 1 m de los dos bordes: es el metro de tolerancia.)
-select ok(string_to_array(pg_temp.calles((select r from zb)), '; ') @> array['A / Col 1 N', 'A / Col 1 S', 'A / Corta'],
-          'un tramo corto a mitad de un borde en común sigue contando (Corta, de 0,44 m, entre Col 1 N y Col 1 S)');
+-- (Desde la 0059 la lista se compara entera: «Fila 1» y «Pasaje E» salen del borde a 0,46 m y quedan dentro del metro, pero no son
+-- parte del camino entre las esquinas de B; ver el test 0064.)
+select is(pg_temp.calles((select r from zb)), 'A / Col 1 N; A / Col 1 S; A / Corta',
+          'un tramo corto a mitad de un borde en común sigue contando (Corta, de 0,44 m, entre Col 1 N y Col 1 S), y no suma ninguna calle más');
 select is((select r -> 'superposiciones' from zb), '[]'::jsonb, 'y compartir la columna no es superponerse');
 
 select * from finish();

@@ -117,7 +117,9 @@ insert into public.zona_vertice (id, zona_id, orden, lat, lon, calle_a, calle_b)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
--- 4. Catálogo — un producto por tipo, más una colección con dos productos
+-- 4. Catálogo — un producto por tipo, más dos colecciones: una serie de dos libros y un
+--    combo («Pack Familiar»: 1 libro y 2 revistas), que es una colección con precio propio
+--    y se vende como un solo ítem (migración 0056, backend-supabase#99, HU-CAT-009)
 -- ----------------------------------------------------------------------------
 
 insert into public.producto
@@ -136,14 +138,20 @@ insert into public.producto
 on conflict do nothing;
 
 insert into public.coleccion (id, nombre) values
-  ('09990000-0000-7000-8006-000000000001', 'Colección de Ejemplo — Serie A')
+  ('09990000-0000-7000-8006-000000000001', 'Colección de Ejemplo — Serie A'),
+  ('09990000-0000-7000-8006-000000000002', 'Pack Familiar de Ejemplo')
 on conflict do nothing;
 
-insert into public.producto_coleccion (id, producto_id, coleccion_id) values
+-- cantidad = unidades del producto que lleva la colección (el combo lleva 1 libro y 2 revistas).
+insert into public.producto_coleccion (id, producto_id, coleccion_id, cantidad) values
   ('09990000-0000-7000-8007-000000000001',
-    '09990000-0000-7000-8005-000000000001', '09990000-0000-7000-8006-000000000001'),
+    '09990000-0000-7000-8005-000000000001', '09990000-0000-7000-8006-000000000001', 1),
   ('09990000-0000-7000-8007-000000000002',
-    '09990000-0000-7000-8005-000000000002', '09990000-0000-7000-8006-000000000001')
+    '09990000-0000-7000-8005-000000000002', '09990000-0000-7000-8006-000000000001', 1),
+  ('09990000-0000-7000-8007-000000000003',
+    '09990000-0000-7000-8005-000000000001', '09990000-0000-7000-8006-000000000002', 1),
+  ('09990000-0000-7000-8007-000000000004',
+    '09990000-0000-7000-8005-000000000003', '09990000-0000-7000-8006-000000000002', 2)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
@@ -169,7 +177,10 @@ insert into public.precio_general
   ('09990000-0000-7000-800b-000000000005',
     '09990000-0000-7000-8005-000000000005', null, 0, '2026-01-01', null),
   ('09990000-0000-7000-800b-000000000006',
-    null, '09990000-0000-7000-8006-000000000001', 44000, '2026-01-01', null)
+    null, '09990000-0000-7000-8006-000000000001', 44000, '2026-01-01', null),
+  -- El combo vale menos que sus partes (24000 + 2 x 7500 = 39000): su precio es propio, no una suma.
+  ('09990000-0000-7000-800b-000000000007',
+    null, '09990000-0000-7000-8006-000000000002', 36000, '2026-01-01', null)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
@@ -198,5 +209,9 @@ insert into public.precio_por_ciudad
     15000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000006',
     '09990000-0000-7000-8005-000000000005', null, '09990000-0000-7000-8009-000000000003',
-    0, '2026-01-01', null)
+    0, '2026-01-01', null),
+  -- El combo tiene su propia excepción en la segunda ciudad de campaña; en las otras rige su general.
+  ('09990000-0000-7000-8008-000000000007',
+    null, '09990000-0000-7000-8006-000000000002', '09990000-0000-7000-8009-000000000002',
+    38000, '2026-01-01', null)
 on conflict do nothing;
