@@ -413,6 +413,17 @@ select public.tablero_de_inicio(campania_id, '2026-10-21'); -- un día anterior 
 - **Pendientes.** `pendientes` es `[]` hasta que V2 conecte los tickets por validar y los pedidos por autorizar.
 - **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; `CZ001` si la campaña no existe; una campaña terminada se lee. Solo cifras: ni clientes, ni ubicaciones, ni talonarios, ni emails.
 
+## La agenda única (0068)
+
+Desde la migración `0068` (backend-supabase#131, decisiones de Cristian del 23/10 en front-colportores-mobile#151, #166 y #160) la agenda es **una sola tabla** con un tipo y con lo que la origina; no hay tablas de plan ni de cuotas. La deuda sigue siendo la venta menos sus cobros, así que mover una cita no pierde nada.
+
+- **Estados** (`agenda.estado`): `PROGRAMADA`, `CUMPLIDA`, `NO_CUMPLIDA`, `CANCELADA`, los mismos nombres en el teléfono, el servidor y el panel. La migración renombró `PENDIENTE` → `PROGRAMADA` y `COMPLETADA` → `CUMPLIDA`. Una cita vencida sin resultado sigue `PROGRAMADA` (la app la muestra en «Pendientes»): `NO_CUMPLIDA` es un resultado que se registra, no un vencimiento.
+- **Tipos** (`agenda.tipo`): `ENTREVISTA`, `COBRANZA`, `ENTREGA`. Para sumar otro se amplía ese CHECK (y, si pide origen, una rama de `tg_agenda_origen()`); la tabla y el push no se tocan.
+- **Lo que la origina**, opcional: `venta_id` (la venta de la que sale una cuota) y `entrega_id` (solo una cita `ENTREGA`; si viene también la venta, es la de esa entrega). Las dos tienen que ser de quien agenda (`42501`). `monto_previsto` (centavos) solo en una cobranza con venta y mayor que cero.
+- **Sin persona.** `espacio_id` es obligatorio y `espacio_persona_id` opcional: la cita cuelga de la casa o el depto. Con persona, el espacio es el de su vínculo (el trigger lo completa si el teléfono no lo manda y lo corrige si no coincide). Cuando dos casas se unen (HU-UBI-006), las citas siguen al espacio de A, con o sin persona.
+- **Topes del reparto de cuotas** (una cuota es una cita `COBRANZA` con venta y monto; el servidor los aplica al recibirla y vuelven como `invalid` con su código, sin tumbar el lote): `AG001` más de 12 cuotas en una venta (cuentan las `PROGRAMADA` y `CUMPLIDA`), `AG002` una cuota `PROGRAMADA` que supera el saldo de la venta (`monto_total` menos los cobros vivos), `AG003` crear una cuota con un día anterior al día en que se creó. Lo que el servidor no verifica (mínimo de 2 cuotas, frecuencia, reparto en partes iguales con el redondeo en la última) lo hace la app: ver el archivo de pendientes del PR.
+- **Entrega.** `entrega.fecha_prevista` (opcional) es la fecha acordada; `fecha_entrega` queda como la fecha real. La cita de esa entrega es una fila de `agenda` tipo `ENTREGA` con su `entrega_id`.
+
 ## Stock y cuenta (V2): el esquema, sin reglas todavía
 
 Desde la migración `0067` (backend-supabase#100, [docs#69](https://github.com/Colportores/docs-organizacion/issues/69), decisiones del 21/10) están las tablas y columnas de la V2; se conectan después del 20/11 (plan-sprints §5). **Es solo esquema**: ninguna regla de negocio corre todavía (ni la deuda al autorizar un pedido, ni el stock al recibirlo, ni acreditar al validar un ticket).
