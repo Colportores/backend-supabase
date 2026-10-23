@@ -146,6 +146,15 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 
 `suspendido_en` la fija el servidor: un trigger descarta en silencio cualquier cambio que venga con JWT, incluido el de un ADMIN. Quién suspende y reactiva es de HU-ADM-003, que todavía no está decidido.
 
+### Términos y Política de Privacidad aceptados
+
+Al registrarse, la persona acepta los Términos y la Política de Privacidad (HU-AUTH-001, R-AU04, Ley 18.331) y el servidor guarda **qué versión** aceptó y **cuándo** (`0065`). Una fila por (usuario, versión) en `public.consentimiento_terminos`: un historial, para que la v2 sume una fila y la v1 quede como prueba.
+
+- **Cómo llega:** el móvil manda la versión en los metadatos del registro, `signUp(data: {'terminos_version': 'v1'})` (front-colportores-mobile#386). El trigger que crea el perfil (`tg_auth_usuario_nuevo`) crea también la fila, con la hora del servidor: ni la fecha ni el usuario salen del cliente.
+- **Forma y versiones publicadas:** `v1`, `v2`… (`^v[1-9][0-9]{0,8}$`), la de la dirección del documento, y además tiene que ser una versión **publicada**: hoy solo `v1`, con la lista en un solo lugar, `public.terminos_versiones_publicadas()`. Una versión nueva se suma ahí, con su migración, cuando se publica su texto. Sin la clave (o con null) el registro sigue igual y no se guarda nada; con otra forma, o con la forma correcta pero no publicada (`v7`), el registro se rechaza con `TC001`.
+- **Quién lo ve:** cada persona lee solo lo suyo (`select` por la API, `consentimiento_terminos`); nadie lo escribe con su JWT, ni un ADMIN. Lo escribe el trigger del registro o el servidor (`service_role`). No está en `sync.entidad`: no baja al teléfono.
+- Las cuentas que ya existían quedan sin fila: no se inventa qué aceptaron.
+
 ## Inscripción en campaña
 
 `select public.inscribir_colportor(campania_id, usuario_id);` inscribe a un colportor en una campaña y devuelve la fila de `campania_colportor` (HU-CAM-004). Con eso su cuenta pasa sola de `PENDIENTE_ASIGNACION` a `ACTIVA`. Lo consume `bff-coordinadores`; por PostgREST es `POST /rest/v1/rpc/inscribir_colportor`.
