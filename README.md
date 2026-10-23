@@ -210,6 +210,15 @@ select * from public.precios_de_la_ciudad(campania_ciudad_id, '2026-03-01');  --
 - **Quién.** Escribe el general solo el **ADMIN** (no hay `DELETE`: la baja es `deleted_at`). Lo lee el ADMIN y quien hoy lee los precios de una campaña (el coordinador que la lleva y el colportor inscripto en una que no terminó); un colportor sin campaña no lo lee. `precio_vigente()` es `SECURITY INVOKER`: la RLS sigue siendo la autoridad, y una ciudad de campaña que el usuario no ve no devuelve nada. `EXECUTE` solo para `authenticated` y `service_role`.
 - **Todavía no.** El general no se sincroniza al teléfono ni se publica por Realtime: eso cambia el contrato de sync y la publicación de Realtime ([ADR-012](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-012-backend-supabase-sa-east-1.md)), y va en un PR de docs aparte que revisa Bruno. Tampoco existe la pantalla de Administración: hasta entonces se carga con el seed y con [`docs/guia-carga-manual.md` § 8](./docs/guia-carga-manual.md).
 
+## Combos: una colección con precio propio
+
+Desde la migración `0056` (backend-supabase#99, HU-CAT-009 y HU-VEN-001, decisión de Cristian del 21/10, C10): un **combo** es una `coleccion` de productos con **su propio precio** y se vende como **un solo ítem**.
+
+- **El precio** es el de cualquier producto: `precio_general` (todo el país) y `precio_por_ciudad` (excepciones) aceptan `coleccion_id` desde la `0027`/`0034`, y `precio_vigente(campania_ciudad, null, coleccion_id)` y `precios_de_la_ciudad()` (`tipo = 'COLECCION'`) lo resuelven. El precio del combo no sale de sumar los componentes. Sin precio general ni excepción en la ciudad, no se ofrece.
+- **Los componentes** son `producto_coleccion` con su `cantidad` (entero `> 0`, `1` por defecto): «1 libro y 2 revistas» son dos filas. Un combo no puede incluir otro combo: `producto_id` es una FK a `producto`.
+- **La venta.** `venta_item` lleva `producto_id` **o** `coleccion_id` (exactamente uno, `23514` si vienen los dos o ninguno) con `cantidad`, `precio_unitario` (la foto del precio del combo) y `subtotal`. El teléfono lo sube por `sync_push` como cualquier ítem. La venta no se rechaza por el estado del catálogo: se hizo sin conexión y nunca se pierde.
+- **Todavía no.** El stock de cada producto del combo se descuenta en V2 (HU-STK-007, necesita la tabla `stock`). Hasta que exista la pantalla de Administración los combos se arman a mano con [`docs/guia-carga-manual.md` § 7b](./docs/guia-carga-manual.md); `supabase/seed.sql` trae «Pack Familiar de Ejemplo».
+
 ## Mapa de la campaña
 
 Una campaña abarca una o más ciudades (`campania_ciudad`) y cada ciudad se divide en zonas dibujadas sobre el mapa (vista 24 del panel, migración `0008`). Una zona es `RADIAL` (centro y radio; el polígono lo calcula el servidor) o `ESQUINAS` (esquinas en `zona_vertice` y el borde que sigue las calles, que llega ya calculado). `zona.poligono_geojson` es la geometría que dibujan la app y el panel.

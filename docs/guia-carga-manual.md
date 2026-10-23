@@ -56,9 +56,9 @@ producto ───────────────────────�
                                     │   (FK a campania_ciudad y, directa, a producto O a
 coleccion ─────────────────────────┘    coleccion — NO pasa por la zona ni por producto_coleccion)
    │
-   └→ producto_coleccion   (vínculo M:N producto↔colección; solo agrupa
-                             para mostrar/vender junto, no es prerequisito
-                             de un precio de colección)
+   └→ producto_coleccion   (vínculo M:N producto↔colección con su cantidad; agrupa
+                             para mostrar/vender junto —un combo, § 7b— y no es
+                             prerequisito de un precio de colección)
 
 producto ──┬→ precio_general   (el precio de todo el país, de Administración: FK directa a
 coleccion ─┘                    producto O a coleccion; no cuelga de ninguna campaña ni ciudad)
@@ -256,12 +256,66 @@ insert into public.coleccion (nombre) values ('<nombre real>');
 ### 7. `producto_coleccion` (solo si usaste `coleccion`)
 
 ```sql
-insert into public.producto_coleccion (producto_id, coleccion_id)
-values ('<id de producto>', '<id de coleccion>');
+insert into public.producto_coleccion (producto_id, coleccion_id, cantidad)
+values ('<id de producto>', '<id de coleccion>', 1);
 ```
 
 - El par `(producto_id, coleccion_id)` es único: cargarlo dos veces lo
-  rechaza.
+  rechaza. Para cambiar cuántas unidades lleva, se modifica la fila (§ 7b).
+- `cantidad` (desde la migración `0056`) es cuántas unidades de ese producto
+  lleva la colección: entero `> 0`, `1` si no lo mandás. Cero, negativo o
+  `null` los rechaza la base.
+- `producto_id` es siempre un **producto**: una colección no puede ser
+  componente de otra (un combo no puede incluir otro combo).
+
+### 7b. Combos (una colección con precio propio, desde la migración `0056`)
+
+Un **combo** es una `coleccion` con productos (§ 7) y **su propio precio**
+(decisión de Cristian del 21/10, HU-CAT-009): el colportor lo vende como **un
+solo ítem** de la venta, con el precio del combo en su ciudad, y no el de cada
+producto. Hasta que exista la pantalla de Administración (después del 20/11) se
+arma acá, en este orden:
+
+```sql
+-- 1. El combo (§ 6) y sus componentes (§ 7): 1 libro y 2 revistas.
+insert into public.coleccion (nombre) values ('Pack Familiar') returning id;
+insert into public.producto_coleccion (producto_id, coleccion_id, cantidad) values
+  ('<id del libro>',   '<id del combo>', 1),
+  ('<id de la revista>', '<id del combo>', 2);
+
+-- 2. Su precio general, para todo el país (§ 8; la columna producto_id va en null):
+insert into public.precio_general (producto_id, coleccion_id, precio_venta, valido_desde, valido_hasta)
+values (null, '<id del combo>', 120000, public.hoy_montevideo(), null);
+
+-- 3. Si una ciudad se aparta, su excepción (§ 9):
+insert into public.precio_por_ciudad (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta)
+values (null, '<id del combo>', '<id de campania_ciudad>', 110000, public.hoy_montevideo(), null);
+```
+
+- **El precio del combo es suyo**, no la suma de los componentes: cargalo
+  como cualquier otro precio (centavos, entero). Un combo sin precio general
+  ni excepción en la ciudad **no se ofrece** allí.
+- **Verificá** lo que ve una ciudad: `select * from public.precio_vigente('<id de campania_ciudad>', null, '<id del combo>');`
+  (una fila con `GENERAL` o `MODIFICADO`) o, para todo el catálogo,
+  `public.precios_de_la_ciudad(...)` (el combo sale con `tipo = 'COLECCION'`).
+- **Cambiar la cantidad de un componente** es un `update` de su fila
+  (`update public.producto_coleccion set cantidad = 3 where id = '<id>';`).
+  Las ventas hechas **no cambian**: guardan el ítem del combo y el precio con que
+  se vendió (`venta_item.coleccion_id`, `precio_unitario`, `subtotal`).
+- **Si un componente se da de baja** (`producto.deleted_at`), el combo deja de
+  ofrecerse hasta corregirlo. Para ver qué combos quedaron afectados:
+  ```sql
+  select c.id, c.nombre, p.nombre as componente_de_baja
+    from public.coleccion c
+    join public.producto_coleccion pc on pc.coleccion_id = c.id and pc.deleted_at is null
+    join public.producto p on p.id = pc.producto_id and p.deleted_at is not null
+   where c.deleted_at is null;
+  ```
+  Se corrige quitando el componente (`update public.producto_coleccion set deleted_at = now() where id = '...'`)
+  o poniendo uno vivo. El combo se da de baja como cualquier fila: `update public.coleccion set deleted_at = now()`.
+- **Vender un combo.** El teléfono sube un `venta_item` con `coleccion_id` y sin
+  `producto_id` (exactamente uno de los dos; si vienen los dos o ninguno, `23514`).
+  El stock de cada producto del combo se descuenta recién en V2.
 
 ### 8. `precio_general` (el precio de venta de todo el país, de Administración)
 
