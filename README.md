@@ -413,6 +413,15 @@ select public.tablero_de_inicio(campania_id, '2026-10-21'); -- un día anterior 
 - **Pendientes.** `pendientes` es `[]` hasta que V2 conecte los tickets por validar y los pedidos por autorizar.
 - **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; `CZ001` si la campaña no existe; una campaña terminada se lee. Solo cifras: ni clientes, ni ubicaciones, ni talonarios, ni emails.
 
+## Stock y cuenta (V2): el esquema, sin reglas todavía
+
+Desde la migración `0067` (backend-supabase#100, [docs#69](https://github.com/Colportores/docs-organizacion/issues/69), decisiones del 21/10) están las tablas y columnas de la V2; se conectan después del 20/11 (plan-sprints §5). **Es solo esquema**: ninguna regla de negocio corre todavía (ni la deuda al autorizar un pedido, ni el stock al recibirlo, ni acreditar al validar un ticket).
+
+- **Columnas nuevas, opcionales.** `campania.alquiler_monto` (centavos; `null` = no cobra alquiler), y en `campania_colportor`: `tipo_beca` (`null` / `MEDIA` / `COMPLETA`), `meta_monto_ces` y `limite_pedido` (centavos; `null` = sin límite). Bajan al teléfono con la inscripción y la campaña. La beca, la meta y el límite solo los cambian el ADMIN o el coordinador **de esa campaña** (`42501` para otro coordinador o el propio colportor); el servidor, sin restricción. Se cargan a mano con un `update` mientras no exista la pantalla de Equipo.
+- **Tablas nuevas, vacías:** `stock`, `pedido_casa_editora` (con `origen` y `excede_limite`) y `pedido_item`, `movimiento_stock`, `transferencia_stock` y `transferencia_item`, `deposito` (con `destino` y `concepto`), `ticket` y `estado_cuenta` (con `deuda_alquiler`). Estados del pedido: `BORRADOR`, `PENDIENTE_AUTORIZACION`, `AUTORIZADO`, `DESPACHADO`, `RECIBIDO`, `RECHAZADO`, `CANCELADO`; de la transferencia: `PENDIENTE_AUTORIZACION`, `AUTORIZADO`, `EJECUTADO`, `RECHAZADO`, `CANCELADO`; del ticket: `PENDIENTE`, `VALIDADO`, `RECHAZADO` (rechazar exige motivo; un ticket resuelto no se edita, `TK001`, salvo la foto, que vence a los 4 meses).
+- **Quién lee.** El dueño, el ADMIN y el coordinador de una campaña donde el colportor está o estuvo inscripto (`coordina_al_colportor()`); una transferencia la ven las dos puntas. **Quién escribe:** nadie con un JWT (sin políticas de INSERT/UPDATE): lo decide la conexión de V2. Ninguna tabla está en `sync.entidad` ni en Realtime hasta que el contrato de sync las incluya.
+- **Ojo con el nombre.** La tabla `estado_cuenta` convive con la función `estado_cuenta()` de la `0004` (ACTIVA / PENDIENTE_ASIGNACION / SUSPENDIDA): no se pisan, pero conviene renombrar una.
+
 ## Privacidad
 
 Los datos personales de clientes (`persona.nombre`, `persona.apellido`, `persona.telefono`, `nota.texto`) son **local-only**: viven solo en el dispositivo del colportor y nunca llegan al cloud, por la Ley 18.331 de Uruguay. Ver [`02-restricciones.md`](https://github.com/Colportores/docs-organizacion/blob/main/docs/02-restricciones.md).

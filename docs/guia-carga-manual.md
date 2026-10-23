@@ -242,6 +242,11 @@ values ('<nombre real>', 'VERANO', '2026-01-05', '2026-02-20', null);
   registrado antes en la app — este dato no se puede anticipar acá).
 - Las ciudades de la campaña van aparte, en `campania_ciudad` (una campaña
   abarca una o más ciudades, migración `0008`).
+- `alquiler_monto` (opcional, desde la migración `0067`): el alquiler de la
+  campaña **en centavos**, el mismo para todos los inscriptos; `null` (o no
+  ponerlo) si la campaña no cobra alquiler. Se puede cargar o cambiar después:
+  `update public.campania set alquiler_monto = 150000 where id = '<id>';`
+  (`>= 0`). Es V2: todavía nada lo usa.
 
 ### 4. `campania_ciudad` y `zona`
 
