@@ -1,18 +1,19 @@
 -- ============================================================================
--- 0045 · Ventas y presentaciones por ciudad y colportor, por día, semana o mes, con la
+-- 0061 · Ventas y presentaciones por ciudad y colportor, por día, semana o mes, con la
 --        tendencia contra el período anterior (backend-supabase#96, HU-REP-002, vista 32)
 --
 -- Origen: cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C3 y C15): el reporte de
 -- ventas se agrupa por ciudad, suma las presentaciones del equipo y, en el diseño de la vista 32,
 -- trae el selector Días / Semanas / Meses con la comparación contra el período anterior y una
--- columna «% por cobrar» que se conecta en V2.
+-- columna «% por cobrar» que se conecta en V2: la lectura devuelve lo COBRADO (decisión del
+-- orquestador del 21/10, origen front-coordinadores-web#73 P3) y el panel calcula el % del período.
 --
 --   ventas_por_ciudad_y_colportor(p_campania_id, p_desde, p_hasta, p_agrupar,
 --                                 p_ciudad_id, p_colportor_ids)
 --     -> (periodo_inicio, periodo_fin, ciudad_id, ciudad_nombre, colportor_id, nombre, apellido,
 --         ventas, monto_total, presentaciones, en_curso,
 --         ventas_anterior, monto_anterior, presentaciones_anterior,
---         por_cobrar_pct, por_cobrar_pct_anterior)
+--         cobrado, cobrado_anterior)
 --
 -- Es la hermana de horas_por_ciudad_y_colportor() (#95): mismos parámetros, mismo permiso,
 -- mismas reglas de período, de rango y de comparación, y la misma ciudad del colportor. Lo único
@@ -42,19 +43,24 @@
 --                                  NO_CONTESTO no cuenta (nadie atendió). RECHAZO tampoco, de
 --                                  forma PROVISORIA: confirmarlo es el supuesto S62 de la HU,
 --                                  de Cristian; si cuenta, es agregar 'RECHAZO' a la lista
---                                  `c_presentacion` de abajo y a pgTAP 0051. La cobranza no es
+--                                  `c_presentacion` de abajo y a pgTAP 0065. La cobranza no es
 --                                  una visita de la nube (no tiene tipo_resultado COBRANZA).
 --   en_curso                       el período incluye hoy (el día de Montevideo).
 --   ventas_anterior, monto_anterior, presentaciones_anterior
 --                                  lo mismo del período contra el que se compara (abajo). null
 --                                  cuando ese período no se compara.
---   por_cobrar_pct,                el % por cobrar, en puntos: SIEMPRE null por ahora. Depende de
---   por_cobrar_pct_anterior        los cobros y de Cuentas (HU-COB-005, HU-CTA-005), que son V2
---                                  (se conectan después del 20/11, plan-sprints §5). La vista
---                                  oculta la columna mientras venga null. Las columnas existen
---                                  desde ya para que la firma no cambie cuando se calculen
---                                  (con un `create or replace` y sin tocar al panel).
---
+--   cobrado,                       lo cobrado del período y del período contra el que se compara,
+--   cobrado_anterior               en CENTAVOS (bigint), como monto_total: SIEMPRE null por ahora
+--                                  («sin conectar»). Depende de los cobros y de Cuentas
+--                                  (HU-COB-005, HU-CTA-005), que son V2 (se conectan después del
+--                                  20/11, plan-sprints §5). Se devuelve el cobrado y NO el % hecho
+--                                  porque un porcentaje por fila no se puede sumar por ciudad ni
+--                                  reagrupar en el navegador: el panel suma monto y cobrado de todo
+--                                  el período y saca el % por cobrar de ahí, sin promediar
+--                                  porcentajes. Mientras venga null el panel oculta la columna.
+--                                  Las columnas existen desde ya con su tipo definitivo: cuando se
+--                                  calculen alcanza con un `create or replace` (mismas columnas).
+
 -- Nunca devuelve clientes, personas visitadas, espacios, ubicaciones, medios de pago, cobros ni
 -- números de talonario: solo totales (el coordinador ve montos, no clientes). Columnas
 -- explícitas, nunca `to_jsonb`.
@@ -78,8 +84,14 @@
 --
 --   · De la campaña: solo ventas y visitas de colportores INSCRIPTOS en p_campania_id, y solo
 --     las de los días entre fecha_inicio y fecha_fin de la campaña (días de Montevideo, ambos
---     incluidos). Lo de otra campaña del mismo colportor no se mezcla. Una inscripción dada de
---     baja sigue contando lo anterior a la baja (lo vendido no desaparece); lo posterior no.
+--     incluidos) y desde el día en que se inscribió en ESTA campaña (el día de Montevideo de
+--     `campania_colportor.created_at`; decisión del orquestador del 22/10, la misma regla que 0044
+--     y el tablero de Inicio 0054/0055). Una inscripción dada de baja sigue contando lo anterior a
+--     la baja (lo vendido no desaparece); lo posterior no.
+--     Así, un colportor inscripto en dos campañas cuyas fechas se pisan no cuenta lo mismo en las
+--     dos. Queda sin cubrir un caso raro: si dejó la campaña B, trabajó en A y volvió a B, la
+--     reactivación conserva el `created_at` original y los días del hueco cuentan en las dos
+--     (taparlo exige guardar la fecha de la reactivación, un dato nuevo; queda anotado para Cristian).
 --   · El día es el de la `fecha` de la venta o de la visita en America/Montevideo, sin depender
 --     de la zona horaria de la sesión (hoy_montevideo(timestamptz), 0024).
 --   · No cuentan las dadas de baja (deleted_at). Cada venta y cada visita cuenta para el colportor
@@ -104,8 +116,9 @@
 --     con p_campania_id, p_desde, p_hasta, p_agrupar ('dia' | 'semana' | 'mes') y, si filtra,
 --     p_ciudad_id y p_colportor_ids. Las cifras con tendencia («▲ 10 %») salen de ventas /
 --     presentaciones y sus «_anterior», sumando las filas que se muestran. El total de la
---     campaña es la suma de todas las filas del período. Mientras por_cobrar_pct sea null en
---     todas las filas, la columna «% por cobrar» se oculta.
+--     campaña es la suma de todas las filas del período. El % por cobrar es sum(cobrado) /
+--     sum(monto_total) de las filas que se muestran (VentasDelDia.cobrado: number | null en el
+--     contrato del panel); mientras `cobrado` sea null en todas las filas, la columna se oculta.
 --   · docs-organizacion: el filtro «departamento → ciudad» no se puede servir todavía (hay que
 --     filtrar por ciudad: public.ciudad no tiene `departamento`, ver el pendiente de 0033). La
 --     «comparativa contra el promedio del grupo» y el «% rechazo / % no contesta» de la HU no
@@ -125,7 +138,7 @@ returns table (periodo_inicio date, periodo_fin date, ciudad_id uuid, ciudad_nom
                colportor_id uuid, nombre text, apellido text, ventas integer, monto_total bigint,
                presentaciones integer, en_curso boolean,
                ventas_anterior integer, monto_anterior bigint, presentaciones_anterior integer,
-               por_cobrar_pct numeric, por_cobrar_pct_anterior numeric)
+               cobrado bigint, cobrado_anterior bigint)
 language plpgsql
 volatile
 security definer
@@ -187,9 +200,11 @@ begin
     with inscripcion as materialized (
       -- Una por colportor de la campaña (unique campania_id, usuario_id). La ciudad sale de la
       -- zona actual; una zona o una ciudad de campaña dadas de baja no cuentan. Sin ciudad: el
-      -- uuid cero, para poder unir sin `is not distinct from`.
+      -- uuid cero, para poder unir sin `is not distinct from`. `desde_dia`: el día en que se
+      -- inscribió en esta campaña; antes de eso lo hecho no es de ella.
       select i.usuario_id,
              i.deleted_at as baja,
+             public.hoy_montevideo(i.created_at) as desde_dia,
              coalesce(ci.ciudad_id, c_sin_ciudad) as ciudad_k
         from public.campania_colportor i
         left join public.zona z
@@ -226,6 +241,7 @@ begin
          and x.cuando <  ((v_fin + 1)::timestamp at time zone 'America/Montevideo')
          and x.dia >= v_campania.fecha_inicio
          and x.dia <= coalesce(v_campania.fecha_fin, 'infinity'::date)
+         and x.dia >= ins.desde_dia
          and (ins.baja is null or x.cuando < ins.baja)
          and (p_ciudad_id is null
               or (ins.ciudad_k = p_ciudad_id and p_ciudad_id <> c_sin_ciudad))
@@ -322,9 +338,9 @@ begin
                 else coalesce(f.monto_ant, 0)::bigint end,
            case when f.en_curso and p_agrupar <> 'mes' then null
                 else coalesce(f.pres_ant, 0) end,
-           -- V2: el % por cobrar depende de los cobros (HU-COB-005, HU-CTA-005).
-           null::numeric,
-           null::numeric
+           -- V2: lo cobrado depende de los cobros (HU-COB-005, HU-CTA-005): null = sin conectar.
+           null::bigint,
+           null::bigint
       from final f
       left join public.ciudad ciu on ciu.id = nullif(f.ciudad_k, c_sin_ciudad)
       join public.usuario usr on usr.id = f.usuario_id
@@ -338,12 +354,13 @@ end;
 $$;
 
 comment on function public.ventas_por_ciudad_y_colportor(uuid, date, date, text, uuid, uuid[]) is
-  'Vista 32, HU-REP-002 (0045, backend-supabase#96): ventas (cantidad y monto en centavos) y '
+  'Vista 32, HU-REP-002 (0061, backend-supabase#96): ventas (cantidad y monto en centavos) y '
   'presentaciones (visitas VENTA o ENTREVISTA) por período (p_agrupar = dia | semana | mes) × '
   'ciudad (la de la zona actual del colportor; sin zona, ciudad null) × colportor, de la '
-  'campaña, y lo del período anterior para la tendencia (el día anterior, el lunes contra el '
-  'sábado; la semana anterior; el mismo tramo del mes pasado; lo en curso no se compara salvo '
-  'el mes a la fecha). por_cobrar_pct es null hasta V2. El rango sube a períodos completos; '
+  'campaña (desde el día en que se inscribió en ella), y lo del período anterior para la '
+  'tendencia (el día anterior, el lunes contra el sábado; la semana anterior; el mismo tramo '
+  'del mes pasado; lo en curso no se compara salvo el mes a la fecha). cobrado y '
+  'cobrado_anterior (centavos) son null hasta V2: el panel saca el % por cobrar. El rango sube a períodos completos; '
   'hasta 366 días. Solo totales: ni clientes, ni cobros, ni ubicaciones. Errores: 42501 sin '
   'permiso; CZ001 campaña inexistente; 22023 agrupación, fechas o rango inválidos. Una campaña '
   'terminada se lee.';

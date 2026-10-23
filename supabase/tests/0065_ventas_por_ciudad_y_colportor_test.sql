@@ -1,11 +1,13 @@
--- pgTAP · ventas y presentaciones por ciudad y colportor (migración 0045, backend-supabase#96, HU-REP-002)
+-- pgTAP · ventas y presentaciones por ciudad y colportor (migración 0061, backend-supabase#96, HU-REP-002)
 -- ventas_por_ciudad_y_colportor(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña) y que una campaña terminada se lee; los errores de campaña y de
 -- parámetros; las ventas, los montos y las presentaciones por día, semana y mes (qué visitas cuentan,
 -- las dadas de baja, el día de Montevideo, los bordes de la campaña, la baja de la inscripción, la
 -- ciudad de la zona actual y «sin ciudad»); el período anterior (el lunes contra el sábado, la semana
 -- anterior, el mes contra el mes pasado, lo en curso sin comparar salvo el mes a la fecha); el rango a
--- períodos completos y su tope; los filtros; el % por cobrar nulo; que la respuesta no trae nada de más.
+-- períodos completos y su tope; los filtros; que un colportor cuenta desde el día en que se inscribió
+-- en la campaña (dos campañas con fechas superpuestas no cuentan lo mismo dos veces); lo cobrado
+-- nulo hasta V2; que la respuesta no trae nada de más.
 begin;
 select * from no_plan();
 
@@ -72,7 +74,8 @@ $$;
 -- Colportores: b1 Alfa (zona Centro, c1)  b2 Bravo (Centro, c1)  b3 Cruz (zona Costa, c2)
 --        b4 Duarte (sin zona)  b5 Eguren (su zona se dio de baja)  b6 Fuentes (inscripción de
 --        baja el 15/09)  b7 Gómez (NO inscripto)  b8, b9, ba (de En curso, zona Cerro, c1)
---        bb Hache (su campania_ciudad se da de baja).
+--        bb Hache (su campania_ciudad se da de baja)  bc Lima (de Otra, se inscribe el 09/09).
+--        b1 también está en Otra, inscripto el 14/09.
 -- Campañas: e1 Cierre (03/08/2026 a 30/09/2026, terminada, a1)  e2 Otra (a2)  e4 Borrada (a1)
 --        e6 En curso (desde hoy - 90, sin fin, a1)
 -- Ciudades: c1 «Ciudad uno q96» y c2 «Ciudad dos q96» (en ese orden alfabético: dos antes que uno).
@@ -82,13 +85,13 @@ $$;
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'ventas-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7','b8','b9','ba','bb']) s;
+  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7','b8','b9','ba','bb','bc']) s;
 
 update public.usuario u set nombre = x.n, apellido = x.a
   from (values ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz'),
                ('b4','Diego','Duarte'), ('b5','Elena','Eguren'), ('b6','Fede','Fuentes'),
                ('b7','Gabi','Gómez'), ('b8','Hugo','Haedo'), ('b9','Iris','Ibarra'),
-               ('ba','Juan','Jara'), ('bb','Kari','Hache')) x(s, n, a)
+               ('ba','Juan','Jara'), ('bb','Kari','Hache'), ('bc','Lola','Lima')) x(s, n, a)
  where u.id = pg_temp.u(x.s);
 
 insert into public.usuario_rol (usuario_id, rol_id)
@@ -130,17 +133,22 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poli
   (pg_temp.u('d5'), 'Tres',   pg_temp.u('75'), 'ESQUINAS', null,
    '{"type":"Polygon","coordinates":[[[-56.19,-35.00],[-56.17,-35.00],[-56.17,-34.99],[-56.19,-34.99],[-56.19,-35.00]]]}'::jsonb);
 
-insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
-  (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2')),
-  (pg_temp.u('e1'), pg_temp.u('b4'), null),
-  (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d3')),
-  (pg_temp.u('e1'), pg_temp.u('b6'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('bb'), pg_temp.u('d5')),
-  (pg_temp.u('e6'), pg_temp.u('b8'), pg_temp.u('d4')),
-  (pg_temp.u('e6'), pg_temp.u('b9'), pg_temp.u('d4')),
-  (pg_temp.u('e6'), pg_temp.u('ba'), pg_temp.u('d4'));
+-- `created_at` explícito: un colportor cuenta desde el día en que se inscribió en la campaña. Los de
+-- Cierre, desde el 01/08 (antes de que empiece); los de En curso, desde hace 100 días.
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1'), '2026-08-01 10:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1'), '2026-08-01 10:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2'), '2026-08-01 10:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b4'), null,            '2026-08-01 10:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d3'), '2026-08-01 10:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('b6'), pg_temp.u('d1'), '2026-08-01 10:00-03'),
+  (pg_temp.u('e1'), pg_temp.u('bb'), pg_temp.u('d5'), '2026-08-01 10:00-03'),
+  (pg_temp.u('e6'), pg_temp.u('b8'), pg_temp.u('d4'), now() - interval '100 days'),
+  (pg_temp.u('e6'), pg_temp.u('b9'), pg_temp.u('d4'), now() - interval '100 days'),
+  (pg_temp.u('e6'), pg_temp.u('ba'), pg_temp.u('d4'), now() - interval '100 days'),
+  -- Otra (a2): bc se inscribe el 09/09 a las 15:00 y b1, que ya trabajó en Cierre, el 14/09 a las 12:00.
+  (pg_temp.u('e2'), pg_temp.u('bc'), null,            '2026-09-09 15:00-03'),
+  (pg_temp.u('e2'), pg_temp.u('b1'), null,            '2026-09-14 12:00-03');
 -- La zona de b5 se da de baja, la ciudad de la campaña de bb también; la inscripción de b6 se da de baja
 -- el 15/09 a mediodía.
 update public.zona set deleted_at = now() where id = pg_temp.u('d3');
@@ -164,6 +172,9 @@ values (pg_temp.u('f3'), pg_temp.u('f2'), pg_temp.u('f4'));
 --   bb: 08/09: 800.
 --   b6: jue 10/09: 2000 (antes de la baja); dom 20/09: 3000 (después: no cuenta).
 --   b7: lun 07/09: 99999 (no está inscripto en Cierre).
+--   bc (de Otra, inscripto el 09/09 15:00): mar 08/09: 5000 y una ENTREVISTA (antes de inscribirse: no
+--       cuentan); mié 09/09 08:00: 1000 y una ENTREVISTA 09:00 (el mismo día, antes de la hora: cuentan,
+--       la regla es por día); jue 10/09: 2000.
 insert into public.venta (espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, deleted_at)
 select pg_temp.u('f3'), 'T-' || row_number() over (), x.m, x.f::timestamptz, pg_temp.u(x.s), x.baja
   from (values
@@ -190,7 +201,10 @@ select pg_temp.u('f3'), 'T-' || row_number() over (), x.m, x.f::timestamptz, pg_
     ('b5', '2026-09-08 10:00-03', 1000,   null),
     ('b6', '2026-09-10 10:00-03', 2000,   null),
     ('b6', '2026-09-20 10:00-03', 3000,   null),
-    ('b7', '2026-09-07 09:00-03', 99999,  null)
+    ('b7', '2026-09-07 09:00-03', 99999,  null),
+    ('bc', '2026-09-08 10:00-03', 5000,   null),
+    ('bc', '2026-09-09 08:00-03', 1000,   null),
+    ('bc', '2026-09-10 10:00-03', 2000,   null)
   ) x(s, f, m, baja);
 
 -- Visitas de Cierre. Presentación = VENTA o ENTREVISTA; NO_CONTESTO y RECHAZO no cuentan.
@@ -224,7 +238,9 @@ select pg_temp.u('f3'), x.f::timestamptz, x.t, pg_temp.u(x.s), x.baja
     ('b3', '2026-09-07 13:00-03', 'ENTREVISTA',  null),
     ('b3', '2026-08-20 10:00-03', 'ENTREVISTA',  null),
     ('b4', '2026-09-08 10:00-03', 'ENTREVISTA',  null),
-    ('b7', '2026-09-07 09:00-03', 'ENTREVISTA',  null)
+    ('b7', '2026-09-07 09:00-03', 'ENTREVISTA',  null),
+    ('bc', '2026-09-08 11:00-03', 'ENTREVISTA',  null),
+    ('bc', '2026-09-09 09:00-03', 'ENTREVISTA',  null)
   ) x(s, f, t, baja);
 
 -- Lo de En curso (relativo a hoy, para lo en curso):
@@ -252,10 +268,9 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000051a1');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.ventas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-09-07', '2026-09-07', 'dia') r limit 1)) k
                  order by k collate "C")),
-          array['apellido','ciudad_id','ciudad_nombre','colportor_id','en_curso','monto_anterior',
-                'monto_total','nombre','periodo_fin','periodo_inicio','por_cobrar_pct',
-                'por_cobrar_pct_anterior','presentaciones','presentaciones_anterior','ventas',
-                'ventas_anterior'],
+          array['apellido','ciudad_id','ciudad_nombre','cobrado','cobrado_anterior','colportor_id',
+                'en_curso','monto_anterior','monto_total','nombre','periodo_fin','periodo_inicio',
+                'presentaciones','presentaciones_anterior','ventas','ventas_anterior'],
           'la forma de la respuesta: solo totales (sin clientes, cobros, talonarios, ubicaciones ni emails)');
 select pg_temp.actuar_como_servidor();
 
@@ -570,6 +585,37 @@ select is((select count(*)::int
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
+-- 9b. Un colportor cuenta desde el día en que se inscribió en ESTA campaña
+-- ---------------------------------------------------------------------------
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000051a2');
+select is(pg_temp.fila('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
+          '2|3000|1|false|0|0|0',
+          'bc, inscripto el 09/09 a las 15:00: la venta y la presentación del 08/09 no cuentan; las del 09/09 (antes de la hora, el mismo día) y la del 10/09 sí');
+select is(pg_temp.fila('e2', '2026-09-08', '2026-09-08', 'dia', '2026-09-08', 'bc'),
+          'sin fila', 'bc el 08/09, el día anterior a su inscripción: sin fila');
+select is(pg_temp.fila('e2', '2026-09-09', '2026-09-10', 'dia', '2026-09-09', 'bc'),
+          '1|1000|1|false|0|0|0', 'bc el 09/09, el día de su inscripción: cuenta entero, aunque antes de la hora');
+select is(pg_temp.fila('e2', '2026-09-09', '2026-09-10', 'dia', '2026-09-10', 'bc'),
+          '1|2000|0|false|1|1000|1', 'bc el 10/09, contra el 09/09');
+select is(pg_temp.ciudad_de('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
+          '(sin ciudad)/null', 'bc, sin zona: sin ciudad');
+-- b1 ya trabajó en Cierre y se inscribió en Otra el 14/09: la otra campaña no le ve lo de antes.
+select is(pg_temp.fila('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'b1'),
+          'sin fila', 'b1 en Otra, semana del 07/09 (antes de inscribirse en Otra): sin fila, sus ventas son de Cierre');
+select is(pg_temp.fila('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'b1'),
+          '2|40000|2|false|0|0|0',
+          'b1 en Otra, semana del 14/09: el 14 (el día de su inscripción) y el 15 cuentan, y la semana anterior no se le atribuye');
+select is((select count(*)::int from public.ventas_por_ciudad_y_colportor(pg_temp.u('e2'), '2026-09-07', '2026-09-13', 'dia')
+            where colportor_id = pg_temp.u('b1')),
+          0, 'b1 en Otra, del 07 al 13/09: ninguna fila (ni vacía)');
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000051a1');
+select is(pg_temp.fila('e1', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'b1'),
+          '3|170000|6|false|0|0|0', 'y en Cierre b1 sigue igual (la inscripción en Otra no le saca nada)');
+select is(pg_temp.fila('e1', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'b1'),
+          '2|40000|2|false|3|170000|6', 'incluida la semana del 14/09');
+select pg_temp.actuar_como_servidor();
+
+-- ---------------------------------------------------------------------------
 -- 10. Lo en curso (e6, fechas relativas a hoy)
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000051a1');
@@ -610,14 +656,17 @@ select is((select count(*)::int
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
--- 11. El % por cobrar viene nulo hasta V2, y la función no escribe nada
+-- 11. Lo cobrado viene nulo hasta V2, y la función no escribe nada
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000051a1');
 select is((select count(*)::int from public.ventas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-08-01', '2026-09-30', 'semana')
-            where por_cobrar_pct is not null or por_cobrar_pct_anterior is not null),
-          0, 'por_cobrar_pct y por_cobrar_pct_anterior son null en todas las filas (V2)');
+            where cobrado is not null or cobrado_anterior is not null),
+          0, 'cobrado y cobrado_anterior son null en todas las filas (V2: sin conectar)');
 select cmp_ok((select count(*)::int from public.ventas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-08-01', '2026-09-30', 'semana')),
               '>', 0, 'y sí hay filas (el null no es una respuesta vacía)');
+select is((select pg_typeof(r.cobrado)::text || ',' || pg_typeof(r.cobrado_anterior)::text
+             from public.ventas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-09-07', '2026-09-07', 'dia') r limit 1),
+          'bigint,bigint', 'cobrado y cobrado_anterior son bigint (centavos, como monto_total)');
 select pg_temp.actuar_como_servidor();
 
 select is((select count(*)::int from public.venta where colportor_id = pg_temp.u('b1')),
