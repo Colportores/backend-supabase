@@ -197,8 +197,8 @@ select throws_ok($$ select * from public.buscar_candidatos(pg_temp.u('e5'), 'ana
   'CI001', null, 'campaña borrada: CI001');
 select throws_ok($$ select * from public.buscar_candidatos(pg_temp.u('e4'), 'ana') $$,
   'CI002', null, 'campaña terminada: CI002');
-select throws_ok($$ select * from public.buscar_candidatos(pg_temp.u('e3'), 'ana') $$,
-  'CI002', null, 'campaña futura: CI002');
+-- Una campaña futura (e3) ya no es CI002: se busca desde que la campaña existe (0058, backend#103);
+-- lo cubre 0063_inscribir_y_asignar_zona_antes_del_inicio_test.
 
 -- ---------------------------------------------------------------------------
 -- 4. Sugeridos: sin texto, las 5 pendientes más nuevas
