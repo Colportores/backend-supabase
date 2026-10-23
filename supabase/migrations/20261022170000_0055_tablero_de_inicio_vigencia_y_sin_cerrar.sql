@@ -12,7 +12,9 @@
 --     dio de baja después va donde lo pone 0044: sin ciudad (la baja lo deja sin zona), en
 --     `sin_zona` y fuera de las cifras; solo cuentan sus jornadas anteriores a la baja (de ahí sale
 --     su estado). `sin_zona[]` suma `inscripcion_de_baja` (boolean) para que el panel no le ofrezca
---     «Asignar zona» a quien ya no está en la campaña.
+--     «Asignar zona» a quien ya no está en la campaña, e `inscripto_at` (timestamptz, el
+--     `created_at` de la inscripción: decisión del 22/10) para «se sumó hoy a las 11:02» de la
+--     tarjeta «Colportora sin zona asignada» del canvas 31.
 --   · P3, decir la verdad. Un día ANTERIOR a hoy en que el colportor empezó una jornada que quedó
 --     abierta: estado 'SIN_CERRAR' (antes 'FINALIZADA' con 0 h). Las horas siguen sumando solo las
 --     cerradas (nada inventa un `fin`, HU-JOR-002) y el día siguiente sigue 'SIN_INICIAR'. El panel
@@ -75,7 +77,7 @@ begin
     -- comienzo del día. La ciudad sale de la zona actual; una zona o una ciudad de campaña dadas
     -- de baja no cuentan, y una inscripción de baja no tiene ciudad, como en 0044 (ciudad_id null
     -- = sin zona asignada). `baja` limita la actividad que cuenta: solo la anterior a la baja.
-    select i.usuario_id, i.deleted_at as baja, ci.ciudad_id
+    select i.usuario_id, i.deleted_at as baja, i.created_at as inscripto_at, ci.ciudad_id
       from public.campania_colportor i
       left join public.zona z
              on z.id = i.zona_id and z.deleted_at is null and i.deleted_at is null
@@ -129,6 +131,7 @@ begin
     select ins.usuario_id,
            ins.ciudad_id,
            (ins.baja is not null) as de_baja,
+           ins.inscripto_at,
            usr.nombre,
            usr.apellido,
            usr.ultimo_push_at,
@@ -209,6 +212,7 @@ begin
                         'apellido', c.apellido,
                         'estado', c.estado,
                         'inscripcion_de_baja', c.de_baja,
+                        'inscripto_at', c.inscripto_at,
                         'ultimo_push_at', c.ultimo_push_at)
                       order by c.apellido, c.nombre, c.usuario_id), '[]'::jsonb)
                from colportor c
@@ -225,7 +229,7 @@ comment on function public.tablero_de_inicio(uuid, date) is
   'no puede ser futuro) de la campaña en un jsonb: total, ciudades (cada una con sus cifras y sus '
   'colportores: estado EN_JORNADA | SIN_CERRAR | FINALIZADA | SIN_INICIAR, horas, presentaciones = visitas '
   'VENTA o ENTREVISTA, ventas, monto en centavos y ultimo_push_at), sin_zona (fuera de las '
-  'cifras, con inscripcion_de_baja) y pendientes (vacío hasta V2). La ciudad es la de la zona actual del colportor; los colportores son los de las inscripciones '
+  'cifras, con inscripcion_de_baja e inscripto_at = cuándo se inscribió) y pendientes (vacío hasta V2). La ciudad es la de la zona actual del colportor; los colportores son los de las inscripciones '
   'vigentes ese día. Solo '
   'totales: ni clientes, ni ubicaciones, ni talonarios. Errores: 42501 sin permiso; CZ001 '
   'campaña inexistente; 22023 fecha futura. Una campaña terminada se lee.';

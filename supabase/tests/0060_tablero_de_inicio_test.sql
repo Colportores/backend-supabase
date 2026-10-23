@@ -319,7 +319,7 @@ select is((select array(select k from jsonb_object_keys(pg_temp.tab('e1') -> 'ci
           array['apellido','colportor_id','estado','horas','monto_total','nombre','presentaciones','ultimo_push_at','ventas'],
           'la forma de un colportor: solo cifras (sin clientes, ubicaciones, talonarios ni emails)');
 select is((select array(select k from jsonb_object_keys(pg_temp.tab('e1') -> 'sin_zona' -> 0) k order by k collate "C")),
-          array['apellido','colportor_id','estado','inscripcion_de_baja','nombre','ultimo_push_at'],
+          array['apellido','colportor_id','estado','inscripcion_de_baja','inscripto_at','nombre','ultimo_push_at'],
           'la forma de un colportor sin zona: sin cifras');
 select pg_temp.actuar_como_servidor();
 
@@ -496,6 +496,23 @@ select is(pg_temp.sin_zona('e1', null, 'bb'), 'no está', 'bb (inscripción dada
 select is(pg_temp.sin_zona('e1', null, 'bc'), 'SIN_INICIAR', 'bc (se inscribió hoy a las 00:00:00) figura hoy');
 select is(pg_temp.sin_zona('e1', null, 'bd'), 'SIN_INICIAR', 'bd (se inscribió ayer a las 23:59:59) figura hoy');
 select is(pg_temp.sin_zona_baja('e1', null, 'b4'), 'false', 'b4 no está de baja');
+-- inscripto_at: el created_at de la inscripción («se sumó hoy a las 11:02»).
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('bc')),
+          pg_temp.a(pg_temp.hoy(), '00:00:00'), 'inscripto_at de bc: cuándo se inscribió (hoy 00:00:00)');
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('bd')),
+          pg_temp.a(pg_temp.hoy() - 1, '23:59:59'), 'inscripto_at de bd: ayer 23:59:59');
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('b4')),
+          '2026-01-01'::timestamptz, 'inscripto_at de b4: 01/01/2026');
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1', pg_temp.hoy() - 1) -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('b6')),
+          '2026-01-01'::timestamptz, 'inscripto_at de b6 (de baja): también está');
 select is(pg_temp.sin_zona('e1', null, 'b7'), 'no está', 'b7 (no inscripto) no figura en sin_zona');
 select is(jsonb_array_length(pg_temp.tab('e1') -> 'sin_zona'), 5, 'sin_zona tiene 5 (b4, b5, b8, bc y bd)');
 -- Sus ventas, su jornada y sus visitas no están en ninguna cifra: el total de arriba (25000, 4, 5) ya lo prueba;
