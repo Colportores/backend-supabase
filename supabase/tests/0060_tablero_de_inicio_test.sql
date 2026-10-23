@@ -1,4 +1,4 @@
--- pgTAP · tablero de Inicio del panel (migración 0054, backend-supabase#94, HU-CAM-008, vista 31)
+-- pgTAP · tablero de Inicio del panel (migraciones 0054 y 0055, backend-supabase#94, HU-CAM-008, vista 31)
 -- tablero_de_inicio(): la forma de la respuesta (solo totales); el permiso primero (sin JWT, anon,
 -- colportor, sin rol, rol vencido, coordinador de otra campaña) y que una campaña terminada se lee;
 -- CZ001 y la fecha futura (22023); las cifras de hoy y de un día anterior por colportor, por ciudad y
@@ -77,6 +77,15 @@ create or replace function pg_temp.sin_zona(p_camp text, p_fecha date, p_colp te
      where (s.value ->> 'colportor_id')::uuid = pg_temp.u(p_colp)), 'no está')
 $$;
 
+-- La bandera inscripcion_de_baja de un colportor de sin_zona ('no está' si no figura).
+create or replace function pg_temp.sin_zona_baja(p_camp text, p_fecha date, p_colp text) returns text language sql as $$
+  select coalesce((
+    select s.value ->> 'inscripcion_de_baja'
+      from (select pg_temp.tab(p_camp, p_fecha) as j) q,
+           jsonb_array_elements(q.j -> 'sin_zona') s(value)
+     where (s.value ->> 'colportor_id')::uuid = pg_temp.u(p_colp)), 'no está')
+$$;
+
 -- Las cifras de una ciudad: cantidad|en_jornada|horas|presentaciones|ventas|monto_total|colportores
 -- ('sin ciudad' si no figura).
 create or replace function pg_temp.ciudad(p_camp text, p_fecha date, p_ciudad text) returns text language sql as $$
@@ -104,6 +113,9 @@ $$;
 -- Colportores: b1 Alfa (zona Centro, c1)  b2 Bravo (Centro, c1)  b3 Cruz (zona Costa, c2)
 --        b4 Duarte (sin zona)  b5 Eguren (su zona se dio de baja)  b6 Fuentes (inscripción de baja)
 --        b7 Gómez (NO inscripto)  b8 Haedo (la ciudad de su zona se dio de baja en la campaña)
+--        bb Kappa (inscripción de baja ayer 12:00; su única jornada es de ayer 13:00)
+--        bc Lara (sin zona; se inscribió hoy 00:00:00, justo después de que terminó ayer)
+--        bd Mora (sin zona; se inscribió ayer 23:59:59, el último segundo de ayer)
 --        b9 Ibarra (Costa, c2; sin nada)  ba Jara (Costa, c2; jornada abierta que empieza a las 23:59:59, en el futuro)
 -- Campañas: e1 En curso (hoy - 30, sin fin, a1)  e2 Otra (a2)  e4 Borrada (a1)
 --        e5 Cierre (03/08/2026 a 30/09/2026, terminada, a1)
@@ -115,13 +127,13 @@ $$;
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'tablero-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7','b8','b9','ba']) s;
+  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7','b8','b9','ba','bb','bc','bd']) s;
 
 update public.usuario u set nombre = x.n, apellido = x.a
   from (values ('b1','Ana','Alfa'), ('b2','Abel','Bravo'), ('b3','Carla','Cruz'),
                ('b4','Diego','Duarte'), ('b5','Aida','Eguren'), ('b6','Fede','Fuentes'),
                ('b7','Gabi','Gómez'), ('b8','Hugo','Haedo'), ('b9','Iris','Ibarra'),
-               ('ba','Juan','Jara')) x(s, n, a)
+               ('ba','Juan','Jara'), ('bb','Kari','Kappa'), ('bc','Luis','Lara'), ('bd','Mara','Mora')) x(s, n, a)
  where u.id = pg_temp.u(x.s);
 
 insert into public.usuario_rol (usuario_id, rol_id)
@@ -165,23 +177,28 @@ insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poli
   (pg_temp.u('d5'), 'Cierre',   pg_temp.u('76'), 'ESQUINAS', null,
    '{"type":"Polygon","coordinates":[[[-56.19,-35.00],[-56.17,-35.00],[-56.17,-34.99],[-56.19,-34.99],[-56.19,-35.00]]]}'::jsonb);
 
-insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
-  (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2')),
-  (pg_temp.u('e1'), pg_temp.u('b4'), null),
-  (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d3')),
-  (pg_temp.u('e1'), pg_temp.u('b6'), pg_temp.u('d1')),
-  (pg_temp.u('e1'), pg_temp.u('b8'), pg_temp.u('d4')),
-  (pg_temp.u('e1'), pg_temp.u('b9'), pg_temp.u('d2')),
-  (pg_temp.u('e1'), pg_temp.u('ba'), pg_temp.u('d2')),
-  (pg_temp.u('e5'), pg_temp.u('b1'), pg_temp.u('d5')),
-  (pg_temp.u('e5'), pg_temp.u('b2'), null);
--- La zona de b5 se da de baja, la ciudad de la campaña de b8 también; la inscripción de b6 se da de baja.
+-- Todas se inscribieron el 01/01/2026, salvo bc y bd (inscripciones de los bordes de ayer y hoy).
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e1'), pg_temp.u('b1'), pg_temp.u('d1'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b2'), pg_temp.u('d1'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b4'), null,            '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d3'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b6'), pg_temp.u('d1'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('bb'), pg_temp.u('d1'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b8'), pg_temp.u('d4'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('b9'), pg_temp.u('d2'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('ba'), pg_temp.u('d2'), '2026-01-01'),
+  (pg_temp.u('e1'), pg_temp.u('bc'), null,            pg_temp.a(pg_temp.hoy(), '00:00:00')),
+  (pg_temp.u('e1'), pg_temp.u('bd'), null,            pg_temp.a(pg_temp.hoy() - 1, '23:59:59')),
+  (pg_temp.u('e5'), pg_temp.u('b1'), pg_temp.u('d5'), '2026-01-01'),
+  (pg_temp.u('e5'), pg_temp.u('b2'), null,            '2026-01-01');
+-- La zona de b5 se da de baja, la ciudad de la campaña de b8 también; las inscripciones de b6 y bb se dan
+-- de baja ayer a las 12:00 (la baja de la inscripción la deja sin zona, 0009).
 update public.zona set deleted_at = now() where id = pg_temp.u('d3');
 update public.campania_ciudad set deleted_at = now() where id = pg_temp.u('74');
-update public.campania_colportor set deleted_at = now()
- where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b6');
+update public.campania_colportor set deleted_at = pg_temp.a(pg_temp.hoy() - 1, '12:00')
+ where campania_id = pg_temp.u('e1') and usuario_id in (pg_temp.u('b6'), pg_temp.u('bb'));
 
 -- Último push recibido: b1 hace 12 minutos, b2 hace 4 días, b4 (sin zona) hace 1 día; los demás, nunca (null).
 update public.usuario set ultimo_push_at = now() - interval '12 minutes' where id = pg_temp.u('b1');
@@ -199,7 +216,9 @@ values (pg_temp.u('f3'), pg_temp.u('f2'), pg_temp.u('f4'));
 --   b1: hoy una ABIERTA desde las 00:00 y una cerrada de 00:00 a 01:30; ayer 10:00 a 13:00.
 --   b2: hoy 00:00 a 02:00; ayer 23:00 a las 01:00 de hoy (cruza la medianoche: cuenta entera ayer).
 --   b3: una ABIERTA desde ayer 22:00 (quedó abierta: nada de hoy).   b4 (sin zona): abierta hoy 00:00.
---   b6 (inscripción de baja) y b7 (no inscripto): una cerrada hoy cada uno.
+--   b6 (inscripción de baja ayer 12:00): ayer 09:00 a 11:00 (antes de la baja) y una cerrada hoy; bb (baja ayer 12:00):
+--   solo ayer 13:00 a 14:00 (después de la baja); b7 (no inscripto): una cerrada hoy.
+--   b2 también tiene ayer una ABIERTA desde las 08:00 (quedó sin cerrar: suma solo la cerrada).
 --   ba: una ABIERTA que empieza hoy a las 23:59:59 (el reloj de su teléfono adelantado: suma 0 h, nunca negativas).
 insert into public.jornada (colportor_id, inicio, fin)
 select pg_temp.u(x.s), x.i, x.f
@@ -213,6 +232,9 @@ select pg_temp.u(x.s), x.i, x.f
     ('b4', pg_temp.a(pg_temp.hoy(), '00:00'),     null),
     ('ba', pg_temp.a(pg_temp.hoy(), '23:59:59'),  null),
     ('b6', pg_temp.a(pg_temp.hoy(), '00:00'),     pg_temp.a(pg_temp.hoy(), '03:00')),
+    ('b6', pg_temp.a(pg_temp.hoy() - 1, '09:00'), pg_temp.a(pg_temp.hoy() - 1, '11:00')),
+    ('bb', pg_temp.a(pg_temp.hoy() - 1, '13:00'), pg_temp.a(pg_temp.hoy() - 1, '14:00')),
+    ('b2', pg_temp.a(pg_temp.hoy() - 1, '08:00'), null),
     ('b7', pg_temp.a(pg_temp.hoy(), '00:00'),     pg_temp.a(pg_temp.hoy(), '03:00'))
   ) x(s, i, f);
 -- Una jornada dada de baja de b2 hoy (no cuenta).
@@ -297,7 +319,7 @@ select is((select array(select k from jsonb_object_keys(pg_temp.tab('e1') -> 'ci
           array['apellido','colportor_id','estado','horas','monto_total','nombre','presentaciones','ultimo_push_at','ventas'],
           'la forma de un colportor: solo cifras (sin clientes, ubicaciones, talonarios ni emails)');
 select is((select array(select k from jsonb_object_keys(pg_temp.tab('e1') -> 'sin_zona' -> 0) k order by k collate "C")),
-          array['apellido','colportor_id','estado','nombre','ultimo_push_at'],
+          array['apellido','colportor_id','estado','inscripcion_de_baja','inscripto_at','nombre','ultimo_push_at'],
           'la forma de un colportor sin zona: sin cifras');
 select pg_temp.actuar_como_servidor();
 
@@ -469,9 +491,30 @@ select is(pg_temp.sin_zona('e1', null, 'b4'), 'EN_JORNADA', 'b4 (sin zona) figur
 select is(pg_temp.sin_zona('e1', null, 'b5'), 'SIN_INICIAR', 'b5 (zona dada de baja) figura en sin_zona');
 select is(pg_temp.sin_zona('e1', null, 'b8'), 'SIN_INICIAR', 'b8 (ciudad de campaña dada de baja) figura en sin_zona');
 select is(pg_temp.sin_zona('e1', null, 'b1'), 'no está', 'uno con zona no figura en sin_zona');
-select is(pg_temp.sin_zona('e1', null, 'b6'), 'no está', 'b6 (inscripción de baja) no figura en sin_zona');
+select is(pg_temp.sin_zona('e1', null, 'b6'), 'no está', 'b6 (inscripción dada de baja ayer) no figura hoy en sin_zona');
+select is(pg_temp.sin_zona('e1', null, 'bb'), 'no está', 'bb (inscripción dada de baja ayer) tampoco');
+select is(pg_temp.sin_zona('e1', null, 'bc'), 'SIN_INICIAR', 'bc (se inscribió hoy a las 00:00:00) figura hoy');
+select is(pg_temp.sin_zona('e1', null, 'bd'), 'SIN_INICIAR', 'bd (se inscribió ayer a las 23:59:59) figura hoy');
+select is(pg_temp.sin_zona_baja('e1', null, 'b4'), 'false', 'b4 no está de baja');
+-- inscripto_at: el created_at de la inscripción («se sumó hoy a las 11:02»).
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('bc')),
+          pg_temp.a(pg_temp.hoy(), '00:00:00'), 'inscripto_at de bc: cuándo se inscribió (hoy 00:00:00)');
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('bd')),
+          pg_temp.a(pg_temp.hoy() - 1, '23:59:59'), 'inscripto_at de bd: ayer 23:59:59');
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('b4')),
+          '2026-01-01'::timestamptz, 'inscripto_at de b4: 01/01/2026');
+select is((select (s.value ->> 'inscripto_at')::timestamptz
+             from jsonb_array_elements(pg_temp.tab('e1', pg_temp.hoy() - 1) -> 'sin_zona') s(value)
+            where (s.value ->> 'colportor_id')::uuid = pg_temp.u('b6')),
+          '2026-01-01'::timestamptz, 'inscripto_at de b6 (de baja): también está');
 select is(pg_temp.sin_zona('e1', null, 'b7'), 'no está', 'b7 (no inscripto) no figura en sin_zona');
-select is(jsonb_array_length(pg_temp.tab('e1') -> 'sin_zona'), 3, 'sin_zona tiene 3 (b4, b5 y b8)');
+select is(jsonb_array_length(pg_temp.tab('e1') -> 'sin_zona'), 5, 'sin_zona tiene 5 (b4, b5, b8, bc y bd)');
 -- Sus ventas, su jornada y sus visitas no están en ninguna cifra: el total de arriba (25000, 4, 5) ya lo prueba;
 -- además, ninguna ciudad los cuenta.
 select is((select sum((ciu.value ->> 'cantidad_colportores')::int)::int
@@ -480,7 +523,7 @@ select is((select sum((ciu.value ->> 'cantidad_colportores')::int)::int
 -- El orden de sin_zona: por apellido.
 select is((select array_agg(s.value ->> 'apellido' order by s.ord)
              from jsonb_array_elements(pg_temp.tab('e1') -> 'sin_zona') with ordinality s(value, ord)),
-          array['Duarte', 'Eguren', 'Haedo'], 'sin_zona por apellido');
+          array['Duarte', 'Eguren', 'Haedo', 'Lara', 'Mora'], 'sin_zona por apellido (no por nombre)');
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
@@ -492,12 +535,21 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b1'), 'FINALIZADA|3|2|2|5000|Ciudad uno q94',
           'b1 ayer: finalizada, 3 h, 2 presentaciones, 2 ventas (bordes de la medianoche de Montevideo)');
 -- b2 ayer: la jornada que cruza la medianoche cuenta entera en el día en que empezó (2 h).
-select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b2'), 'FINALIZADA|2|0|0|0|Ciudad uno q94',
-          'b2 ayer: la jornada de las 23:00 a la 01:00 cuenta entera ayer');
+select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b2'), 'SIN_CERRAR|2|0|0|0|Ciudad uno q94',
+          'b2 ayer: la jornada de las 23:00 a la 01:00 cuenta entera ayer (2 h); la abierta de las 08:00 no suma y lo deja sin cerrar');
 -- b3 ayer: la jornada abierta de un día anterior no suma horas (nada inventa un fin) y no está «en jornada».
-select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b3'), 'FINALIZADA|0|0|0|0|Ciudad dos q94',
-          'b3 ayer: su jornada sigue abierta, pero un día anterior no está en jornada ni suma horas');
+select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b3'), 'SIN_CERRAR|0|0|0|0|Ciudad dos q94',
+          'b3 ayer: su jornada sigue abierta: sin cerrar, no «en jornada», y no suma horas (nadie inventa un fin)');
 select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b9'), 'SIN_INICIAR|0|0|0|0|Ciudad dos q94', 'b9 ayer: sin iniciar');
+-- Las inscripciones de ayer: bd (23:59:59) estaba; bc (hoy 00:00:00) todavía no; b6 y bb (baja ayer 12:00) estaban.
+select is(pg_temp.sin_zona('e1', pg_temp.hoy() - 1, 'bd'), 'SIN_INICIAR', 'bd ya estaba inscripto ayer (a las 23:59:59)');
+select is(pg_temp.sin_zona('e1', pg_temp.hoy() - 1, 'bc'), 'no está', 'bc no estaba inscripto ayer (se inscribió hoy a las 00:00:00)');
+select is(pg_temp.sin_zona('e1', pg_temp.hoy() - 1, 'b6'), 'FINALIZADA', 'b6, dado de baja ayer a las 12:00, ayer figura sin zona y su jornada de las 09:00 cuenta');
+select is(pg_temp.sin_zona_baja('e1', pg_temp.hoy() - 1, 'b6'), 'true', 'y se marca como inscripción de baja');
+select is(pg_temp.fila('e1', pg_temp.hoy() - 1, 'b6'), 'sin fila', 'b6 de baja no está en ninguna ciudad');
+select is(pg_temp.sin_zona('e1', pg_temp.hoy() - 1, 'bb'), 'SIN_INICIAR', 'bb: su única jornada de ayer es posterior a la baja (13:00): no cuenta');
+select is(pg_temp.sin_zona('e1', pg_temp.hoy() - 2, 'b6'), 'SIN_INICIAR', 'antes de ayer b6 estaba inscripto (sin zona, de baja después): sin iniciar');
+select is(pg_temp.sin_zona('e1', pg_temp.hoy() - 2, 'bd'), 'no está', 'antes de ayer bd no estaba inscripto');
 select is(pg_temp.ciudad('e1', pg_temp.hoy() - 1, 'c1'), '2|0|5|2|2|5000|2',
           'Ciudad uno ayer: 5 h (3 + 2), 2 presentaciones, 2 ventas por 5000, nadie en jornada');
 select is(pg_temp.total('e1', pg_temp.hoy() - 1), '5|0|5|2|2|5000', 'el total de ayer');
@@ -579,8 +631,8 @@ select pg_temp.actuar_como_servidor();
 -- ---------------------------------------------------------------------------
 select is((select count(*)::int from public.venta where colportor_id = pg_temp.u('b1')), 12,
           'las ventas de b1 siguen siendo las 12 del fixture');
-select is((select count(*)::int from public.jornada where colportor_id = pg_temp.u('b2')), 3,
-          'las jornadas de b2 siguen siendo las 3 del fixture');
+select is((select count(*)::int from public.jornada where colportor_id = pg_temp.u('b2')), 4,
+          'las jornadas de b2 siguen siendo las 4 del fixture');
 select is((select count(*)::int from public.visita where colportor_id = pg_temp.u('b1')), 8,
           'las visitas de b1 siguen siendo las 8 del fixture');
 
