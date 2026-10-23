@@ -92,10 +92,10 @@ select pg_temp.u(x.s), r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais general43', 'ZG');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad c1 general43', pg_temp.u('c0'), -34.90, -56.16),
-  (pg_temp.u('c2'), 'Ciudad c2 general43', pg_temp.u('c0'), -34.70, -56.20),
-  (pg_temp.u('c3'), 'Ciudad c3 general43', pg_temp.u('c0'), -34.50, -56.30);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad c1 general43', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16),
+  (pg_temp.u('c2'), 'Ciudad c2 general43', 'Departamento de prueba', pg_temp.u('c0'), -34.70, -56.20),
+  (pg_temp.u('c3'), 'Ciudad c3 general43', 'Departamento de prueba', pg_temp.u('c0'), -34.50, -56.30);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 general43', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'e2 general43', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a2')),

@@ -102,10 +102,10 @@ select pg_temp.u('a4'), r.id, now() - interval '10 days', now() - interval '1 da
 update public.usuario set deleted_at = now() where id = pg_temp.u('a5');
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais precios47', 'ZQ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Montevideo precios47', pg_temp.u('c0'), -34.90, -56.16),
-  (pg_temp.u('c2'), 'Salto precios47',      pg_temp.u('c0'), -31.40, -57.96),
-  (pg_temp.u('c3'), 'Paysandu precios47',   pg_temp.u('c0'), -32.32, -58.08);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Montevideo precios47', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16),
+  (pg_temp.u('c2'), 'Salto precios47', 'Departamento de prueba',      pg_temp.u('c0'), -31.40, -57.96),
+  (pg_temp.u('c3'), 'Paysandu precios47', 'Departamento de prueba',   pg_temp.u('c0'), -32.32, -58.08);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   (pg_temp.u('e1'), 'e1 precios47', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a1'), null),
   (pg_temp.u('e2'), 'e2 precios47', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a2'), null),

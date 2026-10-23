@@ -54,9 +54,9 @@ select pg_temp.u(x.s), r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais bbox39', 'ZV');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-  (pg_temp.u('c1'), 'Ciudad c1 bbox39', pg_temp.u('c0'), -34.9, -56.2, -56.433, -34.945, -55.948, -34.701),
-  (pg_temp.u('c2'), 'Ciudad c2 bbox39', pg_temp.u('c0'), -34.7, -56.1, null, null, null, null);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+  (pg_temp.u('c1'), 'Ciudad c1 bbox39', 'Departamento de prueba', pg_temp.u('c0'), -34.9, -56.2, -56.433, -34.945, -55.948, -34.701),
+  (pg_temp.u('c2'), 'Ciudad c2 bbox39', 'Departamento de prueba', pg_temp.u('c0'), -34.7, -56.1, null, null, null, null);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
   (pg_temp.u('e1'), 'e1 bbox39', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30),
   (pg_temp.u('e2'), 'e2 bbox39', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);

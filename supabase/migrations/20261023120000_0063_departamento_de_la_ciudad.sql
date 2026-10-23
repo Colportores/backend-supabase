@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0048 · El departamento de cada ciudad: columna, carga de Montevideo y lectura
+-- 0063 · El departamento de cada ciudad: columna, carga de Montevideo y lectura
 --        (backend-supabase#92, HU-ADM-005, HU-CAM-008, C14)
 --
 -- Origen: el cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C14 y C15). El panel agrupa las
@@ -14,11 +14,13 @@
 --
 -- ## Qué cambia
 --
---   · public.ciudad.departamento (text, opcional en la base; ver «Obligatorio»): el departamento al que
---     pertenece la ciudad («Artigas», «Rivera»…). Es un dato de la ciudad, no una entidad aparte. Una
---     restricción lo cuida: si está, no puede quedar en blanco, ni con espacios (o saltos de línea) en los
---     costados, ni pasar de 60 caracteres (así «Salto» y «Salto » no son dos grupos distintos en el
---     filtro del panel).
+--   · public.ciudad.departamento (text; la columna admite null por las ciudades que ya estaban, ver
+--     «Obligatorio»): el departamento al que pertenece la ciudad («Artigas», «Rivera»…). Es un dato de la
+--     ciudad, no una entidad aparte. Una restricción lo cuida: si está, no puede quedar en blanco, ni con
+--     espacios (o saltos de línea) en los costados, ni pasar de 60 caracteres (así «Salto» y «Salto » no
+--     son dos grupos distintos en el filtro del panel).
+--   · Un trigger lo exige hacia adelante (CD001, «Cargá el departamento de la ciudad»): una ciudad nueva
+--     sin departamento no se carga y a una que ya lo tenía no se le puede borrar. Ver «Obligatorio».
 --   · Montevideo: si la base ya la tiene (una sola, viva, del país UY y con su centro adentro del
 --     rectángulo de la 0031), se le carga 'Montevideo'. El UPDATE pasa por el trigger de auditoría: sube
 --     su `sync_version` y llega a los teléfonos por delta. Las demás ciudades NO se tocan: el
@@ -41,12 +43,25 @@
 --
 -- ## Obligatorio (HU-ADM-005: «es obligatorio en toda ciudad»)
 --
--- La columna queda opcional en la base por ahora (pendiente, `mapa §2: validación`): un NOT NULL (o una
--- restricción NOT VALID) rompería los INSERT de ~50 pruebas del repo y los de los PR abiertos que
--- cargan ciudades sin departamento, y no se puede exigir sobre las filas que ya están sin inventar el
--- dato. Mientras tanto la lectura devuelve `departamento` null para una ciudad sin cargar y el panel
--- tiene que cubrirlo; la guía de carga manual lo pide siempre en el alta y trae la consulta para
--- encontrar las que faltan.
+-- Decisión del orquestador (21/10), por el mapa de decisiones (datos de antes de producción: la regla nueva se
+-- aplica hacia adelante, sin inventar ni limpiar lo viejo; y el mismo tope en el servidor que en la UI):
+-- ni un NOT NULL ni un CHECK ... NOT VALID (este último traba también cualquier UPDATE de una ciudad
+-- vieja sin departamento, hasta su baja o la carga del bbox). En su lugar, el trigger
+-- `ciudad_departamento_obligatorio` (BEFORE INSERT OR UPDATE OF departamento) rechaza con el SQLSTATE
+-- `CD001` y el texto «Cargá el departamento de la ciudad»:
+--
+--   · un INSERT de una ciudad sin departamento (null);
+--   · un UPDATE que le borra el departamento (de no-null a null) a una ciudad que ya lo tenía.
+--
+-- Lo que NO rechaza: las ciudades viejas que siguen sin departamento se pueden actualizar (nombre,
+-- centro, rectángulo, zoom) y dar de baja como siempre; un UPDATE que no nombra `departamento` ni siquiera
+-- dispara el trigger, y uno que lo deja en null donde ya era null pasa. Se completan con la consulta de
+-- docs/guia-carga-manual.md (§ 2, «Ciudades sin departamento»). Un departamento en blanco, con espacios
+-- en los costados o de más de 60 caracteres lo sigue rechazando `ciudad_departamento_check` (23514). La
+-- ciudad no viaja desde el teléfono (`sync.entidad.permite_push = false`), así que exigirlo no hace
+-- perder nada que suba tarde. La lectura devuelve `departamento` null para una ciudad vieja sin cargar y
+-- el panel tiene que cubrirlo. Cuando no quede ninguna ciudad sin cargar, pasar a NOT NULL es opcional
+-- (no hace falta un issue aparte).
 --
 -- ## Los datos
 --
@@ -80,10 +95,11 @@ alter table public.ciudad
   );
 
 comment on column public.ciudad.departamento is
-  'Departamento al que pertenece la ciudad («Artigas», «Rivera»…; 0048, backend-supabase#92, decisión de '
+  'Departamento al que pertenece la ciudad («Artigas», «Rivera»…; 0063, backend-supabase#92, decisión de '
   'Cristian del 21/10, «Departamento»). El panel agrupa y filtra departamento -> ciudad y el buscador de '
   '«+ Agregar ciudad» busca también por él. Obligatorio en toda ciudad (HU-ADM-005), pero opcional en la '
-  'base hasta que todas las ciudades lo tengan cargado (null = todavía sin cargar). Sin espacios en los '
+  'base solo por las ciudades que ya estaban (null = todavía sin cargar): el trigger ciudad_departamento_obligatorio '
+  'rechaza (CD001) una ciudad nueva sin él y que se le borre a una que lo tenía. Sin espacios en los '
   'costados ni en blanco, hasta 60 caracteres. Baja en el pull con la ciudad.';
 
 -- Montevideo, si ya está cargada y es una sola. Mismo criterio que el rectángulo de la 0031 (UY, viva,
@@ -143,7 +159,7 @@ end;
 $$;
 
 comment on function public.ciudades_de_campania(uuid) is
-  'Vista 24 (0033, con departamento desde 0048): las ciudades vivas de p_campania_id con su departamento '
+  'Vista 24 (0033, con departamento desde 0063): las ciudades vivas de p_campania_id con su departamento '
   '(null = sin cargar), centro, zoom y cantidad de zonas vivas. campania_ciudad_id es el id de la pestaña; '
   'ciudad_id, el del catálogo. Errores: 42501 sin permiso; CZ001 inexistente; CZ011 terminada.';
 
@@ -185,13 +201,49 @@ end;
 $$;
 
 comment on function public.ciudades_del_catalogo(uuid, text) is
-  'Vista 24, «+ Agregar ciudad» (0033, con departamento desde 0048): ciudades vivas del catálogo que no '
+  'Vista 24, «+ Agregar ciudad» (0033, con departamento desde 0063): ciudades vivas del catálogo que no '
   'están en p_campania_id, con su departamento (null = sin cargar); las cuyo nombre o departamento '
   'contienen p_texto (sin mayúsculas ni tildes; sin texto, todas), primero las cuyo nombre empieza con él '
   'y después A-Z por nombre y departamento. Errores: 42501 sin permiso; CZ001 inexistente; CZ011 terminada.';
 
 -- ----------------------------------------------------------------------------
--- 4. Privilegios (como la 0033: solo `authenticated`)
+-- 4. El departamento es obligatorio hacia adelante (CD001)
+-- ----------------------------------------------------------------------------
+
+create function public.tg_ciudad_departamento_obligatorio()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- INSERT: la ciudad nueva trae departamento. UPDATE OF departamento: no se lo borra a una que lo tenía
+  -- (null -> null, la ciudad vieja, pasa).
+  if new.departamento is null
+     and (tg_op = 'INSERT' or old.departamento is not null) then
+    raise exception using
+      errcode = 'CD001',
+      message = 'Cargá el departamento de la ciudad',
+      hint = 'Toda ciudad lleva su departamento (HU-ADM-005); ver docs/guia-carga-manual.md, § 2.';
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_ciudad_departamento_obligatorio() is
+  'BEFORE INSERT OR UPDATE OF departamento de ciudad (0063, backend-supabase#92): CD001 si una ciudad nueva '
+  'no trae departamento o si se le borra a una que lo tenía. Las ciudades viejas sin departamento se siguen '
+  'actualizando y dando de baja (un UPDATE que no nombra la columna no dispara el trigger).';
+
+create trigger ciudad_departamento_obligatorio
+  before insert or update of departamento on public.ciudad
+  for each row execute function public.tg_ciudad_departamento_obligatorio();
+
+-- Un trigger corre igual sin EXECUTE: ni siquiera authenticated.
+revoke all on function public.tg_ciudad_departamento_obligatorio()
+  from public, anon, authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 5. Privilegios (como la 0033: solo `authenticated`)
 -- ----------------------------------------------------------------------------
 
 -- `authenticated` y `service_role` también en el revoke: en una base creada desde cero los default

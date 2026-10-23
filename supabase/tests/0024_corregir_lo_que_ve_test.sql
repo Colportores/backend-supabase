@@ -60,9 +60,9 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'lovisto-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3']) s;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais lo visto', 'ZV');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad lo visto', pg_temp.u('c0'), -34.9, -56.2),
-  (pg_temp.u('c2'), 'Ciudad fuera de la campaña', pg_temp.u('c0'), -33.0, -55.0);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad lo visto', 'Departamento de prueba', pg_temp.u('c0'), -34.9, -56.2),
+  (pg_temp.u('c2'), 'Ciudad fuera de la campaña', 'Departamento de prueba', pg_temp.u('c0'), -33.0, -55.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
 values (pg_temp.u('e1'), 'Verano lo visto', 'VERANO', current_date + 3, current_date + 60);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));

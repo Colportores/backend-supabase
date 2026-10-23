@@ -146,11 +146,11 @@ select ('01920000-0000-7000-8000-0000000048' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000048c0', 'Pais superpone', 'ZQ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
-  ('01920000-0000-7000-8000-0000000048c1', 'Cuadrícula q87',   '01920000-0000-7000-8000-0000000048c0', -34.90, -56.20, 15),
-  ('01920000-0000-7000-8000-0000000048c2', 'Sin nombres q87',  '01920000-0000-7000-8000-0000000048c0', -34.80, -56.30, 15),
-  ('01920000-0000-7000-8000-0000000048c3', 'Sin calles q87',   '01920000-0000-7000-8000-0000000048c0', -33.00, -56.00, 15),
-  ('01920000-0000-7000-8000-0000000048c4', 'Repetidas q87',    '01920000-0000-7000-8000-0000000048c0', -34.90, -56.20, 15);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial) values
+  ('01920000-0000-7000-8000-0000000048c1', 'Cuadrícula q87', 'Departamento de prueba',   '01920000-0000-7000-8000-0000000048c0', -34.90, -56.20, 15),
+  ('01920000-0000-7000-8000-0000000048c2', 'Sin nombres q87', 'Departamento de prueba',  '01920000-0000-7000-8000-0000000048c0', -34.80, -56.30, 15),
+  ('01920000-0000-7000-8000-0000000048c3', 'Sin calles q87', 'Departamento de prueba',   '01920000-0000-7000-8000-0000000048c0', -33.00, -56.00, 15),
+  ('01920000-0000-7000-8000-0000000048c4', 'Repetidas q87', 'Departamento de prueba',    '01920000-0000-7000-8000-0000000048c0', -34.90, -56.20, 15);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000048e1', 'Verano', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, '01920000-0000-7000-8000-0000000048a1'),
   ('01920000-0000-7000-8000-0000000048e2', 'Otra',   'VERANO', public.hoy_montevideo() - 10, null,                         '01920000-0000-7000-8000-0000000048a2'),
@@ -535,8 +535,8 @@ select is(pg_temp.sup((select r from tolerancia)), 'Corrida 0,4 m; Corrida 3 m',
 -- Sin `materialized` (y con st_coveredby) esto tardaba 20 s o más y pasaba el statement_timeout de 8 s de Supabase: la
 -- vista previa y el guardado, que nunca se rechazan, fallaban con 57014. Tarda ~0,1 s; el tope de acá (3 s) es 30 veces eso.
 select pg_temp.actuar_como_servidor();
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial)
-values ('01920000-0000-7000-8000-0000000048c5', 'Grande q87', '01920000-0000-7000-8000-0000000048c0', -35.0, -56.45, 12);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial)
+values ('01920000-0000-7000-8000-0000000048c5', 'Grande q87', 'Departamento de prueba', '01920000-0000-7000-8000-0000000048c0', -35.0, -56.45, 12);
 insert into public.campania_ciudad (id, campania_id, ciudad_id)
 values ('01920000-0000-7000-8000-000000004876', '01920000-0000-7000-8000-0000000048e1', '01920000-0000-7000-8000-0000000048c5');
 select ruteo.cargar_red('01920000-0000-7000-8000-0000000048c5', jsonb_build_object('elements',
@@ -583,8 +583,8 @@ select is((select count(distinct e ->> 'zona_id')::int from grande, jsonb_array_
 --   · al norte, sobre la columna 1, donde se junta «Pasaje N»: la columna 1 son tres vías («Col 1 N», «Corta» y
 --     «Col 1 S»), y «Corta» es un tramo de 0,44 m.
 select pg_temp.actuar_como_servidor();
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial)
-values ('01920000-0000-7000-8000-0000000048c6', 'Esquina corta q87', '01920000-0000-7000-8000-0000000048c0', -34.8, -56.6, 15);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial)
+values ('01920000-0000-7000-8000-0000000048c6', 'Esquina corta q87', 'Departamento de prueba', '01920000-0000-7000-8000-0000000048c0', -34.8, -56.6, 15);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   ('01920000-0000-7000-8000-000000004877', '01920000-0000-7000-8000-0000000048e1', '01920000-0000-7000-8000-0000000048c6'),
   ('01920000-0000-7000-8000-000000004878', '01920000-0000-7000-8000-0000000048e3', '01920000-0000-7000-8000-0000000048c6');

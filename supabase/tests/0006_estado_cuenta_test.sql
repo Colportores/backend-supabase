@@ -38,8 +38,8 @@ select ('01920000-0000-7000-8000-0000000006' || s)::uuid, '00000000-0000-0000-00
 delete from public.usuario where id = '01920000-0000-7000-8000-0000000006bd';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000006c0', 'Pais estado', 'ZE');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000006c1', 'Ciudad estado', '01920000-0000-7000-8000-0000000006c0', -34.9, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000006c1', 'Ciudad estado', 'Departamento de prueba', '01920000-0000-7000-8000-0000000006c0', -34.9, -56.16);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, deleted_at) values
   ('01920000-0000-7000-8000-0000000006e1', 'Vigente', 'VERANO', current_date - 10, current_date + 10, null),

@@ -81,11 +81,11 @@ select pg_temp.u(x.s), r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais dia29', 'ZD');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad e1 dia29', pg_temp.u('c0'), -34.90, -56.16),
-  (pg_temp.u('c2'), 'Ciudad e2 dia29', pg_temp.u('c0'), -34.70, -56.20),
-  (pg_temp.u('c3'), 'Ciudad e3 dia29', pg_temp.u('c0'), -34.50, -56.30),
-  (pg_temp.u('c4'), 'Ciudad e4 dia29', pg_temp.u('c0'), -34.30, -56.40);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad e1 dia29', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16),
+  (pg_temp.u('c2'), 'Ciudad e2 dia29', 'Departamento de prueba', pg_temp.u('c0'), -34.70, -56.20),
+  (pg_temp.u('c3'), 'Ciudad e3 dia29', 'Departamento de prueba', pg_temp.u('c0'), -34.50, -56.30),
+  (pg_temp.u('c4'), 'Ciudad e4 dia29', 'Departamento de prueba', pg_temp.u('c0'), -34.30, -56.40);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'Termina hoy dia29',    'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo(),      pg_temp.u('a1')),
   (pg_temp.u('e2'), 'Terminó ayer dia29',   'VERANO', public.hoy_montevideo() - 20, public.hoy_montevideo() - 1,  pg_temp.u('a1')),

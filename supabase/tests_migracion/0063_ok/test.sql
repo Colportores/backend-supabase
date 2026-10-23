@@ -1,4 +1,4 @@
--- pgTAP · 0048 agrega el departamento de la ciudad SIN tocar los datos, y carga 'Montevideo' en la única
+-- pgTAP · 0063 agrega el departamento de la ciudad SIN tocar los datos, y carga 'Montevideo' en la única
 -- Montevideo viva de UY (con el centro adentro de su rectángulo). Ver scripts/db-test-migracion.sh y
 -- los datos de datos.sql.
 begin;
@@ -7,16 +7,16 @@ select * from no_plan();
 -- --- los datos de antes siguen --------------------------------------------------------------
 select is((select count(*)::int from public.ciudad), 4, 'las 4 ciudades siguen: no se perdió ninguna');
 select is((select count(*)::int from public.zona), 1, 'la zona sigue');
-select is((select count(*)::int from public.campania_ciudad cc join public.prueba_0048_campania_ciudad s using (id)
+select is((select count(*)::int from public.campania_ciudad cc join public.prueba_0063_campania_ciudad s using (id)
             where to_jsonb(cc) = to_jsonb(s)), 2, 'las dos ciudades de la campaña siguen idénticas');
-select is((select count(*)::int from public.zona z join public.prueba_0048_zona s using (id)
+select is((select count(*)::int from public.zona z join public.prueba_0063_zona s using (id)
             where to_jsonb(z) = to_jsonb(s)), 1, 'la zona quedó idéntica en todas sus columnas');
 
 -- Salto, Maldonado y la Montevideo de Chile idénticas en todo (sync_version y xmin_w incluidos), con la
 -- columna nueva en null.
 select is((select count(*)::int
              from public.ciudad c
-             join public.prueba_0048_ciudad s on s.id = c.id
+             join public.prueba_0063_ciudad s on s.id = c.id
             where c.id <> '01920000-0000-7000-8000-0000000048c1'
               and (to_jsonb(c) - 'departamento') is distinct from to_jsonb(s)), 0,
           'Salto, Maldonado y la Montevideo de Chile quedaron idénticas en todas sus columnas, sync_version y xmin_w incluidos');
@@ -24,7 +24,7 @@ select is((select count(*)::int from public.ciudad where id <> '01920000-0000-70
           'y ninguna de ellas recibió departamento: no se adivina');
 select is((select count(*)::int
              from public.ciudad c
-             join public.prueba_0048_ciudad s on s.id = c.id
+             join public.prueba_0063_ciudad s on s.id = c.id
             where c.id = '01920000-0000-7000-8000-0000000048c1'
               and (to_jsonb(c) - 'departamento' - 'updated_at' - 'sync_version' - 'xmin_w')
                   is distinct from (to_jsonb(s) - 'updated_at' - 'sync_version' - 'xmin_w')), 0,
@@ -36,15 +36,32 @@ select is((select deleted_at is not null from public.ciudad where id = '01920000
 select is((select departamento from public.ciudad where id = '01920000-0000-7000-8000-0000000048c1'), 'Montevideo',
           'la única Montevideo viva de UY recibió su departamento');
 select ok((select c.sync_version > s.sync_version and c.updated_at >= s.updated_at
-             from public.ciudad c join public.prueba_0048_ciudad s using (id)
+             from public.ciudad c join public.prueba_0063_ciudad s using (id)
             where c.id = '01920000-0000-7000-8000-0000000048c1'),
           'el UPDATE pasó por la auditoría: sube su sync_version y los teléfonos la bajan por delta');
 select is((select c.xmin_w::text::bigint > s.xmin_w::text::bigint
-             from public.ciudad c join public.prueba_0048_ciudad s using (id)
+             from public.ciudad c join public.prueba_0063_ciudad s using (id)
             where c.id = '01920000-0000-7000-8000-0000000048c1'), true,
           'su xmin_w avanzó: el delta del pull la incluye');
 select is((select count(*)::int from public.ciudad where departamento is not null), 1,
           'es la única ciudad con departamento');
+
+-- --- el departamento es obligatorio hacia adelante, no sobre lo ya cargado (CD001) -------------
+select throws_ok($$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro)
+                    values ('Nueva sin departamento', '01920000-0000-7000-8000-0000000048a1', -32.0, -56.0) $$,
+                 'CD001', 'Cargá el departamento de la ciudad', 'una ciudad nueva sin departamento se rechaza');
+select lives_ok($$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro)
+                   values ('Nueva con departamento', 'Durazno', '01920000-0000-7000-8000-0000000048a1', -33.4, -56.5) $$,
+                'y una con departamento se carga');
+select throws_ok($$ update public.ciudad set departamento = null where id = '01920000-0000-7000-8000-0000000048c1' $$,
+                 'CD001', 'Cargá el departamento de la ciudad', 'a Montevideo (que lo recibió de la migración) no se le puede borrar');
+select lives_ok($$ update public.ciudad set zoom_inicial = 12, departamento = departamento
+                    where id = '01920000-0000-7000-8000-0000000048c2' $$,
+                'una ciudad vieja sin departamento (Salto) se sigue actualizando');
+select lives_ok($$ update public.ciudad set deleted_at = now() where id = '01920000-0000-7000-8000-0000000048c4' $$,
+                'y dando de baja (la Montevideo de Chile)');
+select lives_ok($$ update public.ciudad set deleted_at = null where id = '01920000-0000-7000-8000-0000000048c4' $$,
+                'y reactivando');
 
 -- --- la restricción vale también sobre lo migrado -----------------------------------------------
 select throws_ok($$ update public.ciudad set departamento = ' Salto' where id = '01920000-0000-7000-8000-0000000048c2' $$,
