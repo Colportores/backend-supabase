@@ -99,10 +99,10 @@ select pg_temp.u('a4'), r.id, now() - interval '10 days', now() - interval '1 da
   from public.rol r where r.codigo = 'COORDINADOR';
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais horas', 'ZR');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
-  (pg_temp.u('c1'), 'Ciudad uno q95', pg_temp.u('c0'), -34.91, -56.18, 13),
-  (pg_temp.u('c2'), 'Ciudad dos q95', pg_temp.u('c0'), -34.91, -56.18, 13),
-  (pg_temp.u('c3'), 'Ciudad tres q95', pg_temp.u('c0'), -34.91, -56.18, 13);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial) values
+  (pg_temp.u('c1'), 'Ciudad uno q95', 'Departamento de prueba', pg_temp.u('c0'), -34.91, -56.18, 13),
+  (pg_temp.u('c2'), 'Ciudad dos q95', 'Departamento de prueba', pg_temp.u('c0'), -34.91, -56.18, 13),
+  (pg_temp.u('c3'), 'Ciudad tres q95', 'Departamento de prueba', pg_temp.u('c0'), -34.91, -56.18, 13);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   (pg_temp.u('e1'), 'Cierre',   'VERANO', '2026-08-03', '2026-09-30', pg_temp.u('a1'), null),
