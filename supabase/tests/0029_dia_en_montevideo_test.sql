@@ -11,7 +11,7 @@
 --      de Uruguay; UTC-12 de las 00:00 a las 09:00). Con el `current_date` de antes, siempre falla
 --      alguna.
 --   3. Las reglas que se enteraban del día por su cuenta (CZ011 al cambiar el mapa de una campaña
---      terminada, CI002 al inscribir fuera de fecha) también coinciden.
+--      terminada, CI002 al inscribir en una que ya terminó) también coinciden.
 begin;
 select * from no_plan();
 
@@ -248,8 +248,9 @@ select pg_temp.actuar_como_servidor();
 select pg_temp.zona_horaria('UTC');
 select is((select count(*) from public.zona where nombre = 'Zona dia29'), 0::bigint, 'la vista previa no dejó nada guardado');
 
--- Inscribir: una campaña que termina hoy o que empieza hoy admite inscripciones; la que terminó ayer o
--- empieza mañana, no (CI002). b5 y b6 con la sesión en UTC+14; b7 y b8 con la sesión en UTC-12.
+-- Inscribir: una campaña que termina hoy, que empieza hoy o que empieza mañana admite inscripciones; la
+-- que terminó ayer, no (CI002; desde 0058 la que empieza mañana sí). b5 y b6 con la sesión en UTC+14; b7
+-- y b8 con la sesión en UTC-12.
 select pg_temp.como('Pacific/Kiritimati', 'a1');
 select lives_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e1'), pg_temp.u('b5')),
                 'sesión en UTC+14: se inscribe en la campaña que termina hoy');
@@ -257,8 +258,8 @@ select lives_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e
                 'sesión en UTC+14: se inscribe en la campaña que empieza hoy');
 select throws_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e2'), pg_temp.u('b7')),
                  'CI002', null, 'sesión en UTC+14: no en la que terminó ayer (CI002)');
-select throws_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e4'), pg_temp.u('b7')),
-                 'CI002', null, 'sesión en UTC+14: no en la que empieza mañana (CI002)');
+select lives_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e4'), pg_temp.u('b7')),
+                'sesión en UTC+14: sí en la que empieza mañana (por empezar, 0058)');
 select pg_temp.como('Etc/GMT+12', 'a1');
 select lives_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e1'), pg_temp.u('b7')),
                 'sesión en UTC-12: se inscribe en la campaña que termina hoy');
@@ -266,8 +267,8 @@ select lives_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e
                 'sesión en UTC-12: se inscribe en la campaña que empieza hoy');
 select throws_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e2'), pg_temp.u('b5')),
                  'CI002', null, 'sesión en UTC-12: no en la que terminó ayer (CI002)');
-select throws_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e4'), pg_temp.u('b5')),
-                 'CI002', null, 'sesión en UTC-12: no en la que empieza mañana (CI002)');
+select lives_ok(format('select public.inscribir_colportor(%L, %L)', pg_temp.u('e4'), pg_temp.u('b5')),
+                'sesión en UTC-12: sí en la que empieza mañana (por empezar, 0058)');
 
 select * from finish();
 rollback;
