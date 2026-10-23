@@ -345,8 +345,9 @@ select throws_ok($$ select * from public.ciudades_de_campania('01920000-0000-700
   'CZ011', null, 'y a un ADMIN la terminada también le da CZ011');
 
 -- colportores_de_campania() y zonas_asignables() leen con el mismo criterio (0033): la vista 24 de
--- una campaña por empezar carga zonas, zonas asignables y colportores sin error. Inscribir exige que
--- la campaña haya empezado, así que la lista de colportores de una por empezar es vacía, no un error.
+-- una campaña por empezar carga zonas, zonas asignables y colportores sin error. En esta fixture nadie
+-- está inscripto en la campaña por empezar, así que su lista de colportores es vacía, no un error (desde
+-- 0058 se puede inscribir antes del inicio: 0063_inscribir_y_asignar_zona_antes_del_inicio_test).
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a1');
 select is_empty(
   $$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
@@ -376,10 +377,11 @@ select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-
   'CZ001', null, 'campaña dada de baja: CZ001 (colportores)');
 select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e4') $$,
   'CZ001', null, 'campaña dada de baja: CZ001 (zonas asignables)');
--- Asignar zona sigue pidiendo una campaña que empezó: la regla de escritura no cambia.
+-- Asignar zona ya no pide una campaña que empezó (0058): b1 no está en la campaña por empezar, así que la
+-- regla que lo frena es CZ003 y no CZ002.
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000042e5', '01920000-0000-7000-8000-0000000042b1', '01920000-0000-7000-8000-0000000042d6') $$,
-  'CZ002', null, 'asignar_zona() en una campaña por empezar sigue en CZ002');
+  'CZ003', null, 'asignar_zona() en una campaña por empezar ya no da CZ002: llega a CZ003 (no inscripto)');
 -- El permiso va primero: el coordinador de otra campaña, el colportor y quien no tiene sesión no
 -- leen una por empezar.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a2');
