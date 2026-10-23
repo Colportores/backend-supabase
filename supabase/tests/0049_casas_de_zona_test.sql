@@ -94,9 +94,9 @@ select '01920000-0000-7000-8000-0000000049a4'::uuid, r.id, now() - interval '10 
   from public.rol r where r.codigo = 'COORDINADOR';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000049c0', 'Pais casas', 'ZQ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
-  ('01920000-0000-7000-8000-0000000049c1', 'Ciudad uno q72', '01920000-0000-7000-8000-0000000049c0', -34.91, -56.18, 13),
-  ('01920000-0000-7000-8000-0000000049c2', 'Ciudad dos q72', '01920000-0000-7000-8000-0000000049c0', -34.91, -56.18, 13);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial) values
+  ('01920000-0000-7000-8000-0000000049c1', 'Ciudad uno q72', 'Departamento de prueba', '01920000-0000-7000-8000-0000000049c0', -34.91, -56.18, 13),
+  ('01920000-0000-7000-8000-0000000049c2', 'Ciudad dos q72', 'Departamento de prueba', '01920000-0000-7000-8000-0000000049c0', -34.91, -56.18, 13);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000049e1', 'Verano',  'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000049a1', null),

@@ -90,9 +90,9 @@ select pg_temp.u(x.s), r.id
   from (values ('ad','ADMIN'), ('b1','COLPORTOR'), ('b2','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais combos61', 'ZK');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad c1 combos61', pg_temp.u('c0'), -34.90, -56.16),
-  (pg_temp.u('c2'), 'Ciudad c2 combos61', pg_temp.u('c0'), -34.70, -56.20);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad c1 combos61', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16),
+  (pg_temp.u('c2'), 'Ciudad c2 combos61', 'Departamento de prueba', pg_temp.u('c0'), -34.70, -56.20);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
   (pg_temp.u('e1'), 'e1 combos61', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values

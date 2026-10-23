@@ -67,10 +67,10 @@ insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u('a1'), r.id from public.rol r where r.codigo = 'COORDINADOR';
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais fuera', 'ZF');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad fuera', pg_temp.u('c0'), -34.9, -56.2),
-  (pg_temp.u('c2'), 'Segunda fuera', pg_temp.u('c0'), -34.7, -56.1),
-  (pg_temp.u('c3'), 'Otra fuera', pg_temp.u('c0'), -34.8, -56.0);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad fuera', 'Departamento de prueba', pg_temp.u('c0'), -34.9, -56.2),
+  (pg_temp.u('c2'), 'Segunda fuera', 'Departamento de prueba', pg_temp.u('c0'), -34.7, -56.1),
+  (pg_temp.u('c3'), 'Otra fuera', 'Departamento de prueba', pg_temp.u('c0'), -34.8, -56.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'Verano', 'VERANO', current_date - 10, current_date + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'Otra', 'PERMANENTE', current_date - 10, null, null);

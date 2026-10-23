@@ -96,10 +96,10 @@ select ('01920000-0000-7000-8000-0000000050' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000050c0', 'Pais camino', 'ZR');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
-  ('01920000-0000-7000-8000-0000000050c6', 'Esquina corta q91', '01920000-0000-7000-8000-0000000050c0', -34.8, -56.6, 15),
-  ('01920000-0000-7000-8000-0000000050c7', 'Dos islas q91',     '01920000-0000-7000-8000-0000000050c0', -34.8, -56.7, 15),
-  ('01920000-0000-7000-8000-0000000050c8', 'Circuito q91',      '01920000-0000-7000-8000-0000000050c0', -34.8, -56.8, 15);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial) values
+  ('01920000-0000-7000-8000-0000000050c6', 'Esquina corta q91', 'Departamento de prueba', '01920000-0000-7000-8000-0000000050c0', -34.8, -56.6, 15),
+  ('01920000-0000-7000-8000-0000000050c7', 'Dos islas q91', 'Departamento de prueba',     '01920000-0000-7000-8000-0000000050c0', -34.8, -56.7, 15),
+  ('01920000-0000-7000-8000-0000000050c8', 'Circuito q91', 'Departamento de prueba',      '01920000-0000-7000-8000-0000000050c0', -34.8, -56.8, 15);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000050e1', 'Verano', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, '01920000-0000-7000-8000-0000000050a1'),
   ('01920000-0000-7000-8000-0000000050e2', 'Otra',   'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, '01920000-0000-7000-8000-0000000050a1'),

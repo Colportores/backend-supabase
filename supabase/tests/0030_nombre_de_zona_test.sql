@@ -69,8 +69,8 @@ select pg_temp.u(x.s), r.id
   from (values ('a1','COORDINADOR'), ('a2','COORDINADOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais nombre30', 'ZN');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad nombre30', pg_temp.u('c0'), -34.90, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad nombre30', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'Verano nombre30', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('a1'));
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values

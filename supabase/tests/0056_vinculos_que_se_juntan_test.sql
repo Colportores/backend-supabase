@@ -39,8 +39,8 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'juntan56-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2']) s;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais juntan56', 'ZJ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values (pg_temp.u('f1'), 'Ciudad juntan56', pg_temp.u('f0'), -34.9, -56.2);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values (pg_temp.u('f1'), 'Ciudad juntan56', 'Departamento de prueba', pg_temp.u('f0'), -34.9, -56.2);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
 values (pg_temp.u('f3'), 'Verano juntan56', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.u('f5'), pg_temp.u('f3'), pg_temp.u('f1'));

@@ -94,8 +94,8 @@ select pg_temp.u(x.s), r.id
 update public.usuario set suspendido_en = now() where id = pg_temp.u('b4');
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais reactivar', 'ZR');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad reactivar', pg_temp.u('c0'), -34.90, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad reactivar', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'Verano',  'VERANO',     current_date - 10, current_date + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'Salto',   'PERMANENTE', current_date - 10, null,              pg_temp.u('a2')),

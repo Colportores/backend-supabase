@@ -26,8 +26,8 @@ insert into auth.users (id, instance_id, aud, role, email, encrypted_password, c
 
 insert into public.pais (id, nombre, iso_code) values
   ('01920000-0000-7000-8000-0000000004c0', 'Uruguay', 'UY');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000004c1', 'Montevideo', '01920000-0000-7000-8000-0000000004c0', -34.9, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000004c1', 'Montevideo', 'Departamento de prueba', '01920000-0000-7000-8000-0000000004c0', -34.9, -56.16);
 -- Desde 0008 toda zona es de una ciudad de una campaña (campania_ciudad) y tiene forma.
 insert into public.campania (id, nombre, tipo, fecha_inicio) values
   ('01920000-0000-7000-8000-0000000004b0', 'Campaña sync', 'PERMANENTE', current_date - 30);

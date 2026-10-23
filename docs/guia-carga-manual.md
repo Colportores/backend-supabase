@@ -90,12 +90,35 @@ values ('Uruguay', 'UY');
 ### 2. `ciudad`
 
 ```sql
-insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, zoom_inicial,
+insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial,
                            bbox_oeste, bbox_sur, bbox_este, bbox_norte)
-values ('<nombre real>', '<id de pais>', <lat>, <lon>, 13,
+values ('<nombre real>', '<departamento>', '<id de pais>', <lat>, <lon>, 13,
         <oeste>, <sur>, <este>, <norte>);
 ```
 
+- **`departamento`** (desde la migración `0066`, decisión de Cristian del 21/10): el departamento
+  al que pertenece la ciudad, como texto («Artigas», «Salto», «Río Negro»…). **Cargalo siempre**:
+  es obligatorio en toda ciudad (HU-ADM-005) y la base lo exige: una ciudad nueva sin departamento se rechaza con `CD001` («Cargá el departamento de la ciudad») y a una que ya lo tiene no se le puede borrar. El panel agrupa
+  y filtra por él (departamento → ciudad) y el buscador de «+ Agregar ciudad» muestra cada ciudad
+  con su departamento y también busca por él; con dos «San José» es lo que las distingue.
+  - Escribilo siempre igual (misma ortografía, con tilde: «Paysandú», no «Paysandu»): el panel
+    agrupa por el texto exacto, y «Salto» y «salto» serían dos grupos. El esquema rechaza uno en
+    blanco, con espacios al principio o al final, o de más de 60 caracteres
+    (`ciudad_departamento_check`).
+  - Para cargarlo o corregirlo después (los teléfonos lo bajan por el sync):
+    ```sql
+    update public.ciudad set departamento = '<departamento>' where id = '<id de ciudad>';
+    ```
+  - **Ciudades sin departamento.** Las que se cargaron antes de la `0066` quedan con el
+    departamento vacío (la migración solo completa Montevideo; no adivina el de las demás).
+    Esas se siguen pudiendo actualizar y dar de baja sin departamento (la regla de `CD001` rige
+    para las nuevas y para no borrarlo, no sobre lo ya cargado).
+    Para encontrarlas y completarlas:
+    ```sql
+    select c.id, c.nombre from public.ciudad c
+     where c.deleted_at is null and c.departamento is null
+     order by c.nombre;
+    ```
 - `pais_id` tiene que ser el `id` real de la fila de `pais` (buscalo con
   `select id from public.pais where iso_code = 'UY';`).
 - `lat_centro`/`lon_centro` son obligatorios y sin rango validado por el
@@ -147,10 +170,18 @@ update public.ciudad c
    and c.nombre = 'Montevideo' and c.deleted_at is null
    and c.bbox_oeste is null;
 
+-- 1b. Si Montevideo ya estaba sin departamento (cargada antes de la migración 0066), se lo ponemos.
+update public.ciudad c
+   set departamento = 'Montevideo'
+  from public.pais p
+ where p.id = c.pais_id and p.iso_code = 'UY'
+   and c.nombre = 'Montevideo' and c.deleted_at is null
+   and c.departamento is null;
+
 -- 2. Si no había ninguna Montevideo viva, se carga (con el mismo rectángulo).
-insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, zoom_inicial,
+insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial,
                            bbox_oeste, bbox_sur, bbox_este, bbox_norte)
-select 'Montevideo', p.id, -34.9011, -56.1645, 13,
+select 'Montevideo', 'Montevideo', p.id, -34.9011, -56.1645, 13,
        -56.433, -34.945, -55.948, -34.701
   from public.pais p
  where p.iso_code = 'UY'
@@ -158,7 +189,7 @@ select 'Montevideo', p.id, -34.9011, -56.1645, 13,
                     where c.pais_id = p.id and c.nombre = 'Montevideo' and c.deleted_at is null);
 
 -- 3. Revisá: tiene que salir UNA fila, con los cuatro valores cargados.
-select c.id, c.nombre, p.iso_code, c.lat_centro, c.lon_centro,
+select c.id, c.nombre, c.departamento, p.iso_code, c.lat_centro, c.lon_centro,
        c.bbox_oeste, c.bbox_sur, c.bbox_este, c.bbox_norte
   from public.ciudad c join public.pais p on p.id = c.pais_id
  where p.iso_code = 'UY' and c.nombre = 'Montevideo' and c.deleted_at is null;
@@ -167,7 +198,7 @@ select c.id, c.nombre, p.iso_code, c.lat_centro, c.lon_centro,
 - **Este bloque no lleva `begin`/`commit` a propósito**: cada sentencia es atómica, el bloque se
   puede repetir sin duplicar nada y el SQL Editor corre todo junto, así que la revisión
   (el `select` final) se mira después y, si algo no cierra, se corrige repitiendo el bloque.
-- Qué tiene que salir: **una sola fila** con los cuatro `bbox_*` cargados. Si salen cero filas,
+- Qué tiene que salir: **una sola fila** con `departamento = 'Montevideo'` y los cuatro `bbox_*` cargados. Si salen cero filas,
   falta el país `UY` (cargalo con la [§ 1](#1-pais-normalmente-ya-existe--v1-es-solo-uruguay) y
   repetí el bloque). Si salen dos, había dos Montevideo vivas: no sigas, avisá a quien administra
   la base (el publicador se detiene cuando dos ciudades tienen el mismo nombre).
@@ -177,7 +208,8 @@ select c.id, c.nombre, p.iso_code, c.lat_centro, c.lon_centro,
   (y si ese centro cae fuera del rectángulo, el esquema lo rechaza y no se guarda nada).
 - Desde la migración `0031`, una base que ya tenía exactamente una Montevideo viva y
   sin rectángulo la recibe sola al aplicarla: en ese caso el bloque no hace nada (y la
-  revisión del paso 3 muestra el rectángulo igual).
+  revisión del paso 3 muestra el rectángulo igual). Lo mismo con el `departamento` desde la
+  `0066`: una Montevideo viva, única y con su centro adentro del rectángulo lo recibe sola.
 
 #### Después de cargar la ciudad: sus calles
 

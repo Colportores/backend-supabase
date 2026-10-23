@@ -72,16 +72,16 @@ select '01920000-0000-7000-8000-0000000042a4'::uuid, r.id, now() - interval '10 
 update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000042a5';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000042c0', 'Pais panel', 'ZP');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial, deleted_at) values
-  ('01920000-0000-7000-8000-0000000042c1', 'Montevideo q54',     '01920000-0000-7000-8000-0000000042c0', -34.90, -56.16, 13, null),
-  ('01920000-0000-7000-8000-0000000042c2', 'Salto q54',          '01920000-0000-7000-8000-0000000042c0', -31.40, -57.96, 12, null),
-  ('01920000-0000-7000-8000-0000000042c3', 'Paysandú q54',       '01920000-0000-7000-8000-0000000042c0', -32.32, -58.08, 12, null),
-  ('01920000-0000-7000-8000-0000000042c4', 'Baja q54',           '01920000-0000-7000-8000-0000000042c0', -33.00, -56.00, 11, now()),
-  ('01920000-0000-7000-8000-0000000042c5', 'Ñandú q54',          '01920000-0000-7000-8000-0000000042c0', -33.50, -56.50, 11, null),
-  ('01920000-0000-7000-8000-0000000042c6', 'Villa Salto q54',    '01920000-0000-7000-8000-0000000042c0', -31.50, -57.90, 11, null),
-  ('01920000-0000-7000-8000-0000000042c7', 'Borrada q54',        '01920000-0000-7000-8000-0000000042c0', -30.00, -56.00, 11, now()),
-  ('01920000-0000-7000-8000-0000000042c8', 'Azeta q54',          '01920000-0000-7000-8000-0000000042c0', -33.10, -55.90, 11, null),
-  ('01920000-0000-7000-8000-0000000042c9', 'Zeta q54',           '01920000-0000-7000-8000-0000000042c0', -33.20, -55.80, 11, null);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial, deleted_at) values
+  ('01920000-0000-7000-8000-0000000042c1', 'Montevideo q54', 'Departamento de prueba',     '01920000-0000-7000-8000-0000000042c0', -34.90, -56.16, 13, null),
+  ('01920000-0000-7000-8000-0000000042c2', 'Salto q54', 'Departamento de prueba',          '01920000-0000-7000-8000-0000000042c0', -31.40, -57.96, 12, null),
+  ('01920000-0000-7000-8000-0000000042c3', 'Paysandú q54', 'Departamento de prueba',       '01920000-0000-7000-8000-0000000042c0', -32.32, -58.08, 12, null),
+  ('01920000-0000-7000-8000-0000000042c4', 'Baja q54', 'Departamento de prueba',           '01920000-0000-7000-8000-0000000042c0', -33.00, -56.00, 11, now()),
+  ('01920000-0000-7000-8000-0000000042c5', 'Ñandú q54', 'Departamento de prueba',          '01920000-0000-7000-8000-0000000042c0', -33.50, -56.50, 11, null),
+  ('01920000-0000-7000-8000-0000000042c6', 'Villa Salto q54', 'Departamento de prueba',    '01920000-0000-7000-8000-0000000042c0', -31.50, -57.90, 11, null),
+  ('01920000-0000-7000-8000-0000000042c7', 'Borrada q54', 'Departamento de prueba',        '01920000-0000-7000-8000-0000000042c0', -30.00, -56.00, 11, now()),
+  ('01920000-0000-7000-8000-0000000042c8', 'Azeta q54', 'Departamento de prueba',          '01920000-0000-7000-8000-0000000042c0', -33.10, -55.90, 11, null),
+  ('01920000-0000-7000-8000-0000000042c9', 'Zeta q54', 'Departamento de prueba',           '01920000-0000-7000-8000-0000000042c0', -33.20, -55.80, 11, null);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000042e1', 'Verano',  'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000042a1', null),
@@ -152,10 +152,10 @@ select is((select pg_get_function_result('public.campanias_del_coordinador()'::r
           'TABLE(id uuid, nombre text, tipo text, fecha_inicio date, fecha_fin date)',
           'campanias_del_coordinador(): la forma de la respuesta');
 select is((select pg_get_function_result('public.ciudades_de_campania(uuid)'::regprocedure)),
-          'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
+          'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, departamento text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
           'ciudades_de_campania(): la forma de la respuesta');
 select is((select pg_get_function_result('public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
-          'TABLE(ciudad_id uuid, nombre text)', 'ciudades_del_catalogo(): la forma de la respuesta');
+          'TABLE(ciudad_id uuid, nombre text, departamento text)', 'ciudades_del_catalogo(): la forma de la respuesta');
 select is((select pg_get_function_result('public.zonas_de_ciudad(uuid,uuid)'::regprocedure)),
           'TABLE(zona_id uuid, nombre text, tipo_forma text, color text, centro_lat double precision, centro_lon double precision, radio_m integer, poligono_geojson jsonb, esquinas jsonb, colportores jsonb, ubicaciones_registradas integer)',
           'zonas_de_ciudad(): la forma de la respuesta (sin email, sin clientes, sin personas)');

@@ -26,8 +26,8 @@ delete from auth.users            where email like 'bench-%@bench.local';
 \echo '-- geografía'
 insert into public.pais (id, nombre, iso_code)
 values ('01920000-0000-7000-8000-0000000be000', 'BENCH', 'ZZ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values ('01920000-0000-7000-8000-0000000be001', 'BENCH ciudad',
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values ('01920000-0000-7000-8000-0000000be001', 'BENCH ciudad', 'Departamento de prueba',
         '01920000-0000-7000-8000-0000000be000', -34.9, -56.16);
 
 \echo '-- colportores y zonas'

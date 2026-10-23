@@ -69,8 +69,8 @@ select ('01920000-0000-7000-8000-0000000027' || x.s)::uuid, r.id
 update public.usuario set suspendido_en = now() where id = '01920000-0000-7000-8000-0000000027b6';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000027c0', 'Pais historial', 'ZH');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000027c1', 'Montevideo historial', '01920000-0000-7000-8000-0000000027c0', -34.90, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000027c1', 'Montevideo historial', 'Departamento de prueba', '01920000-0000-7000-8000-0000000027c0', -34.90, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000027e1', 'Verano', 'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000027a1'),
   ('01920000-0000-7000-8000-0000000027e2', 'Otra',   'PERMANENTE', current_date - 10, null,              '01920000-0000-7000-8000-0000000027a2');

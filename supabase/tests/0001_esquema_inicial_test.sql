@@ -153,8 +153,8 @@ select is(sync_version, 0::bigint, 'INSERT ignora el sync_version que manda el c
 from public.pais where id = '01920000-0000-7000-8000-0000000000ac';
 
 -- Dos precios abiertos para el mismo producto en la misma ciudad de la campaña harían ambiguo "el precio actual".
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', 'Departamento de prueba', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio)
 values ('01920000-0000-7000-8000-0000000000b0', 'Verano', 'VERANO', '2026-01-01');
 insert into public.campania_ciudad (id, campania_id, ciudad_id)

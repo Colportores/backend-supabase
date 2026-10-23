@@ -107,9 +107,9 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'marca57-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3']) s;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais marca57', 'ZM');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('f1'), 'Ciudad f1 marca57', pg_temp.u('f0'), -34.9, -56.2),
-  (pg_temp.u('f2'), 'Ciudad f2 marca57', pg_temp.u('f0'), -31.4, -57.9);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('f1'), 'Ciudad f1 marca57', 'Departamento de prueba', pg_temp.u('f0'), -34.9, -56.2),
+  (pg_temp.u('f2'), 'Ciudad f2 marca57', 'Departamento de prueba', pg_temp.u('f0'), -31.4, -57.9);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
   (pg_temp.u('f3'), 'Verano marca57', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30),
   (pg_temp.u('f4'), 'Otoño marca57',  'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);

@@ -76,9 +76,9 @@ values (pg_temp.u('b1'), '00000000-0000-0000-0000-000000000000', 'authenticated'
         'entrada-b1@example.com', 'x', now(), now(), now());
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais entrada', 'ZE');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad entrada', pg_temp.u('c0'), -34.9, -56.2),
-  (pg_temp.u('c2'), 'Otra entrada',   pg_temp.u('c0'), -34.8, -56.0);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad entrada', 'Departamento de prueba', pg_temp.u('c0'), -34.9, -56.2),
+  (pg_temp.u('c2'), 'Otra entrada', 'Departamento de prueba',   pg_temp.u('c0'), -34.8, -56.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
   (pg_temp.u('e1'), 'Verano entrada', 'VERANO',     current_date - 10, current_date + 30),
   (pg_temp.u('e2'), 'Otra entrada',   'PERMANENTE', current_date - 10, null);

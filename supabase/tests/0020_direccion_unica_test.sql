@@ -82,9 +82,9 @@ select ('01920000-0000-7000-8000-0000000020' || s)::uuid, '00000000-0000-0000-00
   from unnest(array['b1','b2']) s;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000020c0', 'Pais D1', 'ZD');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000020c1', 'Ciudad D1',      '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2),
-  ('01920000-0000-7000-8000-0000000020c2', 'Otra ciudad D1', '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000020c1', 'Ciudad D1', 'Departamento de prueba',      '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2),
+  ('01920000-0000-7000-8000-0000000020c2', 'Otra ciudad D1', 'Departamento de prueba', '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2);
 -- b1 está inscripto (sin zona) en una campaña vigente de c1: desde 0021 el autor de una casa carga
 -- espacios en ella solo con campaña en la que escribir.
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)

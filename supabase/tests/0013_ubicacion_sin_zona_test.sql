@@ -74,10 +74,10 @@ insert into public.usuario_rol (usuario_id, rol_id)
 select '01920000-0000-7000-8000-0000000013a1', r.id from public.rol r where r.codigo = 'COORDINADOR';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000013c0', 'Pais sin zona', 'ZP');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000013c1', 'Montevideo sz', '01920000-0000-7000-8000-0000000013c0', -34.9, -56.2),
-  ('01920000-0000-7000-8000-0000000013c2', 'Otra ciudad sz', '01920000-0000-7000-8000-0000000013c0', -34.8, -56.0),
-  ('01920000-0000-7000-8000-0000000013c3', 'Canelones sz',   '01920000-0000-7000-8000-0000000013c0', -34.7, -56.1);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000013c1', 'Montevideo sz', 'Departamento de prueba', '01920000-0000-7000-8000-0000000013c0', -34.9, -56.2),
+  ('01920000-0000-7000-8000-0000000013c2', 'Otra ciudad sz', 'Departamento de prueba', '01920000-0000-7000-8000-0000000013c0', -34.8, -56.0),
+  ('01920000-0000-7000-8000-0000000013c3', 'Canelones sz', 'Departamento de prueba',   '01920000-0000-7000-8000-0000000013c0', -34.7, -56.1);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000013e1', 'Verano', 'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000013a1'),
   ('01920000-0000-7000-8000-0000000013e2', 'Otra',   'PERMANENTE', current_date - 10, null,              null),
