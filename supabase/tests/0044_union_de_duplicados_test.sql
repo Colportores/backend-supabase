@@ -13,6 +13,9 @@
 --   5. ubicacion_par_decidido: reapuntada, reordenada (a < b), el par consigo mismo de baja, y la
 --      más reciente cuando el mismo colportor ya decidió el par nuevo.
 --   6. Permisos: quién lee y escribe el registro, quién ejecuta qué, y la unión por permiso.
+--   «Venta tarde» (0064, #105): el vínculo que llega de una persona que ya tiene uno en el espacio
+--   fundido se junta (`merged` en el push, espacio_persona_union), en la sección 2; la cadena de uniones
+--   está en 0056.
 begin;
 select * from no_plan();
 
@@ -273,8 +276,13 @@ select sync.push(jsonb_build_array(
               'persona_id', pg_temp.u('68'), 'ubicacion_cobranza_alt_id', pg_temp.u('02')))
 )) as r;
 select is((select pg_temp.resultados(r) from lote_tarde),
-          array['accepted', 'accepted', 'accepted', 'accepted', 'accepted', 'accepted', 'accepted', 'accepted'],
-          'el push de lo que llegó tarde se acepta entero: nada se rechaza');
+          array['accepted', 'accepted', 'accepted', 'merged', 'accepted', 'accepted', 'accepted', 'accepted'],
+          'el push de lo que llegó tarde se acepta entero: nada se rechaza (el vínculo de la persona que ya estaba en A se juntó)');
+select is((select r -> 'results' -> 3 ->> 'merged_into' from lote_tarde), pg_temp.u('73')::text,
+          'el que se juntó dice cuál es el vínculo que quedó: el de A con esa persona (73)');
+select is((select (r -> 'results' -> 3) - 'client_op_id' from lote_tarde),
+          jsonb_build_object('outcome', 'merged', 'merged_into', pg_temp.u('73')),
+          'y la respuesta es solo outcome y merged_into (más el client_op_id)');
 select pg_temp.actuar_como_servidor();
 select is((select espacio_persona_id from public.venta where id = pg_temp.u('e1')), pg_temp.u('70'),
           'la venta tardía en el vínculo de B ya fundido (71) quedó en el de A (70)');
@@ -283,8 +291,10 @@ select is((select espacio_persona_id from public.visita where id = pg_temp.u('e2
 select is((select espacio_id from public.espacio_persona where id = pg_temp.u('e3')), pg_temp.u('30'),
           'el vínculo nuevo en el único fundido de B (31) quedó en el único de A (30)');
 select is((select deleted_at is null from public.espacio_persona where id = pg_temp.u('e3')), true, 'y está vivo');
-select isnt((select deleted_at from public.espacio_persona where id = pg_temp.u('e4')), null,
-            'el vínculo de una persona que ya estaba en A (62) llegó dado de baja: se fundió en el de A');
+select is((select count(*) from public.espacio_persona where id = pg_temp.u('e4')), 0::bigint,
+          'el vínculo de una persona que ya estaba en A (62) no se guardó como otra fila: se juntó con el de A');
+select is((select destino_id from public.espacio_persona_union where duplicada_id = pg_temp.u('e4')), pg_temp.u('73'),
+          'y el registro dice que e4 es el 73');
 select is((select espacio_persona_id from public.visita where id = pg_temp.u('e5')), pg_temp.u('73'),
           'y su visita cuelga del vínculo de A con esa persona (73)');
 select is((select deleted_at from public.espacio_persona where id = pg_temp.u('73')), null, 'que sigue vivo');
@@ -324,13 +334,147 @@ select is(pg_temp.err(format('insert into public.espacio (id, ubicacion_id) valu
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.espacio where id = pg_temp.u('ea')), 0::bigint, 'y no quedó nada');
 
--- El límite documentado: otro vínculo de una persona que ya tiene uno (con otro id) en el espacio
--- fundido de B sigue chocando con el unique (espacio_id, persona_id): 23505, y vuelve `invalid`.
+-- «Venta tarde» (0064, #105): otro vínculo de una persona que ya tiene uno (con otro id) en el espacio
+-- fundido de B —la 60 tiene el 71, dado de baja, en el 31— antes chocaba con el unique (espacio_id,
+-- persona_id): 23505, `invalid`. Ahora se junta con el de A (70): no se guarda otra fila, y las visitas
+-- y ventas que lo nombran quedan en el de A.
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table lote_venta_tarde on commit drop as
+select sync.push(jsonb_build_array(
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('f8'), 'espacio_id', pg_temp.u('31'),
+              'persona_id', pg_temp.u('60'))),
+  pg_temp.job('visita', 'insert', jsonb_build_object('id', pg_temp.u('f9'), 'espacio_persona_id', pg_temp.u('f8'),
+              'fecha', now(), 'tipo_resultado', 'ENTREVISTA')),
+  pg_temp.job('venta', 'insert', jsonb_build_object('id', pg_temp.u('fa'), 'espacio_persona_id', pg_temp.u('f8'),
+              'numero_talonario', 'T-FA', 'monto_total', 75000, 'fecha', now()))
+)) as r;
+select is((select pg_temp.resultados(r) from lote_venta_tarde), array['merged', 'accepted', 'accepted'],
+          'otro vínculo de la persona 60 (que ya tiene el 71 en el espacio fundido): se junta, y su visita y su venta se aceptan');
+select is((select r -> 'results' -> 0 ->> 'merged_into' from lote_venta_tarde), pg_temp.u('70')::text,
+          'la respuesta dice que el vínculo que queda es el de A (70)');
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.espacio_persona where id = pg_temp.u('f8')), 0::bigint, 'no se guardó otra fila');
+select is((select espacio_persona_id from public.visita where id = pg_temp.u('f9')), pg_temp.u('70'), 'la visita tardía terminó en el vínculo de A');
+select is((select espacio_persona_id from public.venta where id = pg_temp.u('fa')), pg_temp.u('70'), 'y la venta también');
+select is((select colportor_id from public.venta where id = pg_temp.u('fa')), pg_temp.u('b2'), 'que sigue siendo de b2');
+select is((select deleted_at from public.espacio_persona where id = pg_temp.u('70')), null, 'el vínculo de A sigue vivo');
+select is((select deleted_at is not null from public.espacio_persona where id = pg_temp.u('71')), true,
+          'y el fundido por la unión (71), dado de baja: el segundo vínculo no lo toca');
+
+-- Reintentar el alta (con otro client_op_id, o el mismo job) vuelve a dar `merged`, sin tocar nada, y no
+-- es `duplicate`.
+create temp table foto_vt as select pg_temp.foto() f;
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table lote_reintento on commit drop as
+select sync.push(jsonb_build_array(
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('f8'), 'espacio_id', pg_temp.u('31'),
+              'persona_id', pg_temp.u('60')))
+)) as r;
+select is((select pg_temp.resultados(r) from lote_reintento), array['merged'], 'reintentar el alta vuelve a dar merged');
+select is((select r -> 'results' -> 0 ->> 'merged_into' from lote_reintento), pg_temp.u('70')::text, 'con el mismo destino');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.foto(), (select f from foto_vt), 'y no se tocó ni una fila');
+select is((select count(*) from public.espacio_persona_union where duplicada_id = pg_temp.u('f8')), 1::bigint,
+          'ni se repitió el registro');
+select results_eq(
+  $$ select aceptados, duplicados, conflictos, invalidos from sync.log where operacion = 'push' order by id desc limit 1 $$,
+  $$ values (1, 0, 0, 0) $$,
+  'el log del push cuenta el merged entre los aceptados');
+
+-- Un alta de un id que YA existe no es un merge, aunque nombre al espacio fundido y a una persona que
+-- ya está en A: es el reintento de un job (o un payload roto) y sigue siendo `duplicate`, sin registrar
+-- nada ni tocar al vínculo de A. (e3 existe en A con la persona 66; la 62 está en A con el 73.)
+create temp table foto_dup as select pg_temp.foto() f;
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table lote_id_existente on commit drop as
+select sync.push(jsonb_build_array(
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('e3'), 'espacio_id', pg_temp.u('31'),
+              'persona_id', pg_temp.u('62'))),
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('70'), 'espacio_id', pg_temp.u('30'),
+              'persona_id', pg_temp.u('60')))
+)) as r;
+select is((select pg_temp.resultados(r) from lote_id_existente), array['duplicate', 'duplicate'],
+          'un alta de un id que ya existe sigue siendo duplicate (no merged)');
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.espacio_persona_union where duplicada_id in (pg_temp.u('e3'), pg_temp.u('70'))), 0::bigint,
+          'y no se registra como juntado');
+select is(pg_temp.foto(), (select f from foto_dup), 'ni se tocó nada');
+
+-- Una visita que llega después, ya en otro lote, nombrando al id que no se guardó, también cae en A.
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is(pg_temp.err(format($$ insert into public.visita (id, espacio_persona_id, fecha, tipo_resultado)
+                              values (%L, %L, now(), 'RECHAZO') $$, pg_temp.u('fb'), pg_temp.u('f8'))), 'ok',
+          'una visita que llega más tarde nombrando a f8 (que no existe) se guarda por la API');
+select pg_temp.actuar_como_servidor();
+select is((select espacio_persona_id from public.visita where id = pg_temp.u('fb')), pg_temp.u('70'), 'en el vínculo de A');
+
+-- Por el INSERT directo (PostgREST) también se junta: no inserta y no falla.
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is(pg_temp.err(format($$ insert into public.espacio_persona (id, espacio_id, persona_id) values (%L, %L, %L) $$,
-                             pg_temp.u('f8'), pg_temp.u('31'), pg_temp.u('60'))), '23505',
-          'otro vínculo de la persona 60 (que ya tiene el 71 en el espacio fundido) choca: 23505, no se pierde en silencio');
+                             pg_temp.u('fc'), pg_temp.u('31'), pg_temp.u('60'))), 'ok',
+          'el INSERT directo de otro vínculo de la persona 60 ya no choca');
 select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.espacio_persona where id = pg_temp.u('fc')), 0::bigint, 'pero tampoco se guardó');
+select is((select destino_id from public.espacio_persona_union where duplicada_id = pg_temp.u('fc')), pg_temp.u('70'), 'se juntó con el 70');
+
+-- El que llega vivo reactiva al de A si estaba dado de baja, y le deja su cobranza alternativa; el que
+-- llega dado de baja no lo reactiva. (Persona 69 en A, dada de baja; 6a en A, viva, sin cobranza; 6b en
+-- A, dada de baja.)
+insert into public.espacio_persona (id, espacio_id, persona_id, created_by, deleted_at) values
+  (pg_temp.u('8a'), pg_temp.u('30'), pg_temp.u('69'), pg_temp.u('b1'), now()),
+  (pg_temp.u('8b'), pg_temp.u('30'), pg_temp.u('6a'), pg_temp.u('b1'), null),
+  (pg_temp.u('8c'), pg_temp.u('30'), pg_temp.u('6b'), pg_temp.u('b1'), now());
+select pg_temp.actuar_como(pg_temp.u('b2'));
+create temp table lote_reactiva on commit drop as
+select sync.push(jsonb_build_array(
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('fd'), 'espacio_id', pg_temp.u('31'), 'persona_id', pg_temp.u('69'))),
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('fe'), 'espacio_id', pg_temp.u('31'), 'persona_id', pg_temp.u('6a'),
+              'ubicacion_cobranza_alt_id', pg_temp.u('03'))),
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('ff'), 'espacio_id', pg_temp.u('31'), 'persona_id', pg_temp.u('6b'),
+              'deleted_at', now()))
+)) as r;
+select is((select pg_temp.resultados(r) from lote_reactiva), array['merged', 'merged', 'merged'], 'tres vínculos más se juntan');
+select pg_temp.actuar_como_servidor();
+select is((select deleted_at from public.espacio_persona where id = pg_temp.u('8a')), null, 'el de A dado de baja se reactivó con el que llegó vivo');
+select is((select ubicacion_cobranza_alt_id from public.espacio_persona where id = pg_temp.u('8b')), pg_temp.u('03'),
+          'el de A sin cobranza alternativa heredó la del que llegó');
+select isnt((select deleted_at from public.espacio_persona where id = pg_temp.u('8c')), null, 'el que llegó dado de baja no reactiva al de A');
+
+-- Si el de A tiene su propia cobranza alternativa, la del que llega no la pisa (aunque lo reactive).
+insert into public.espacio_persona (id, espacio_id, persona_id, created_by, deleted_at, ubicacion_cobranza_alt_id)
+values (pg_temp.u('9a'), pg_temp.u('30'), pg_temp.u('6c'), pg_temp.u('b1'), now(), pg_temp.u('04'));
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is((select pg_temp.resultados(sync.push(jsonb_build_array(
+  pg_temp.job('espacio_persona', 'insert', jsonb_build_object('id', pg_temp.u('9b'), 'espacio_id', pg_temp.u('31'),
+              'persona_id', pg_temp.u('6c'), 'ubicacion_cobranza_alt_id', pg_temp.u('03'))))))),
+          array['merged'], 'otro vínculo más se junta, con cobranza alternativa propia');
+select pg_temp.actuar_como_servidor();
+select is((select deleted_at from public.espacio_persona where id = pg_temp.u('9a')), null, 'el de A se reactivó');
+select is((select ubicacion_cobranza_alt_id from public.espacio_persona where id = pg_temp.u('9a')), pg_temp.u('04'),
+          'y conserva su cobranza alternativa: la del que llegó no la pisa');
+
+-- Un alta del servidor (sin usuario) también se junta, pero el registro queda sin dueño: ningún
+-- colportor ve a dónde fue (vinculo_juntado solo habla con quien lo subió o con el servidor).
+insert into public.espacio_persona (id, espacio_id, persona_id, created_by)
+values (pg_temp.u('9c'), pg_temp.u('31'), pg_temp.u('62'), pg_temp.u('b2'));
+select is((select count(*) from public.espacio_persona where id = pg_temp.u('9c')), 0::bigint, 'el alta del servidor tampoco se guarda');
+select is((select created_by from public.espacio_persona_union where duplicada_id = pg_temp.u('9c')), null, 'su registro no tiene dueño');
+select is(public.vinculo_juntado(pg_temp.u('9c')), pg_temp.u('73'), 'el servidor ve a dónde fue');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is(public.vinculo_juntado(pg_temp.u('9c')), null, 'b2 no: no lo subió él');
+select pg_temp.actuar_como_servidor();
+
+-- Mover un vínculo que YA existe al espacio fundido, cuando su persona ya está en A, no se junta (no hay
+-- un id nuevo que recordar): como en 0035, queda dado de baja donde llegó y el de A sigue vivo.
+insert into public.espacio_persona (id, espacio_id, persona_id, created_by)
+values (pg_temp.u('9d'), pg_temp.u('3d'), pg_temp.u('62'), pg_temp.u('b2'));
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is(pg_temp.err(format('update public.espacio_persona set espacio_id = %L where id = %L', pg_temp.u('31'), pg_temp.u('9d'))), 'ok',
+          'b2 mueve un vínculo suyo al espacio fundido, donde su persona (62) ya está en A');
+select pg_temp.actuar_como_servidor();
+select isnt((select deleted_at from public.espacio_persona where id = pg_temp.u('9d')), null, 'queda dado de baja donde llegó');
+select is((select deleted_at from public.espacio_persona where id = pg_temp.u('73')), null, 'y el de A sigue vivo');
+select is((select count(*) from public.espacio_persona_union where duplicada_id = pg_temp.u('9d')), 0::bigint, 'sin registro: el vínculo existe');
 
 -- Una vuelta más: nada de lo anterior cambia la unión.
 select is(pg_temp.dup('02', '01') ->> 'ya_unida', 'true', 'la unión sigue siendo ya_unida después de todo lo que llegó');
@@ -680,6 +824,36 @@ select has_table('public', 'espacio_union', 'espacio_union existe');
 select is((select count(*)::int from sync.entidad where tabla in ('public.ubicacion_union'::regclass, 'public.espacio_union'::regclass)), 0,
           'ninguna de las dos está en sync.entidad (no van al pull ni al push)');
 select is((select count(*)::int from sync.entidad), 23, 'sync.entidad sigue con sus 23 entidades');
+
+-- El registro de los vínculos que se juntaron (0064): solo ids, solo en la nube, lo lee el ADMIN y lo
+-- escribe únicamente el trigger; vinculo_juntado() solo cuenta a dónde fue a quien lo subió.
+select has_table('public', 'espacio_persona_union', 'espacio_persona_union existe');
+select is((select count(*)::int from sync.entidad where tabla = 'public.espacio_persona_union'::regclass), 0,
+          'espacio_persona_union no está en sync.entidad (no va al pull ni al push)');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select ok((select count(*) from public.espacio_persona_union) >= 5, 'el ADMIN lee espacio_persona_union');
+select is(pg_temp.err(format('insert into public.espacio_persona_union (duplicada_id, destino_id) values (%L, %L)',
+                             pg_temp.u('f0'), pg_temp.u('70'))), '42501', 'pero ni el ADMIN la escribe por la API');
+select is(pg_temp.err(format('delete from public.espacio_persona_union where duplicada_id = %L', pg_temp.u('e4'))), '42501', 'ni la borra');
+select is(public.vinculo_juntado(pg_temp.u('e4')), null, 'el ADMIN no subió el e4: vinculo_juntado no le dice a dónde fue');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select count(*) from public.espacio_persona_union), 0::bigint, 'un colportor no ve espacio_persona_union (la RLS esconde todo)');
+select is(public.vinculo_juntado(pg_temp.u('e4')), null, 'b1 tampoco subió el e4');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is(public.vinculo_juntado(pg_temp.u('e4')), pg_temp.u('73'), 'b2, que lo subió, sí: el 73');
+select is(public.vinculo_juntado(pg_temp.u('f8')), pg_temp.u('70'), 'y el f8: el 70');
+select is(public.vinculo_juntado(pg_temp.u('70')), null, 'un id que no se juntó (el 70 existe): null');
+select is(public.vinculo_juntado(null), null, 'null: null');
+select is(pg_temp.err(format('insert into public.espacio_persona_union (duplicada_id, destino_id) values (%L, %L)',
+                             pg_temp.u('f0'), pg_temp.u('70'))), '42501', 'b2 no escribe espacio_persona_union por la API');
+select pg_temp.actuar_como_anon();
+select is(pg_temp.err('select count(*) from public.espacio_persona_union'), '42501', 'anon: permission denied al leer espacio_persona_union');
+select is(pg_temp.err(format('select public.vinculo_juntado(%L)', pg_temp.u('e4'))), '42501', 'y no ejecuta vinculo_juntado');
+select pg_temp.actuar_como_servidor();
+select is(public.vinculo_juntado(pg_temp.u('e4')), pg_temp.u('73'), 'el servidor (sin usuario) ve a dónde fue cualquiera');
+select is((select created_by from public.espacio_persona_union where duplicada_id = pg_temp.u('e4')), pg_temp.u('b2'),
+          'el registro guarda quién subió el vínculo');
+select is((select count(*) from public.espacio_persona_union where destino_id = duplicada_id), 0::bigint, 'ninguno apunta a sí mismo');
 
 -- ---------------------------------------------------------------------------
 -- 7. La marca no abre los espacios ajenos de A (revisión de #85: la excepción de la 3b)
