@@ -8,7 +8,8 @@ import { MAX_BYTES } from './politica.mjs';
 export const VERSION_CATALOGO = 1;
 
 /**
- * Del más chico al más grande, como `NivelCobertura` de la app. Departamento y Uruguay: #68.
+ * Del más chico al más grande, como `NivelCobertura` de la app. El catálogo y su validación ya aceptan
+ * departamento y Uruguay; el publicador todavía no los corta (backend-supabase#68, con el plan Pro).
  * `zona` figura por orden, pero **el catálogo no lleva paquetes de zona**: el catálogo es público y el archivo
  * de una zona muestra su rectángulo a quien lo baje (decisión de Cristian del 06/10, «Zona pública»). Cada
  * zona guarda el enlace a su paquete en `public.zona.paquete_mapa` y le llega al colportor por el sync;
@@ -164,6 +165,7 @@ export function validar(catalogo, { maxBytes = MAX_BYTES, exigirAmbito = true } 
   }
 
   const ids = new Set();
+  let uruguay = null;
   for (const p of catalogo.paquetes) {
     const donde = `paquete ${p?.id ?? '(sin id)'}`;
     if (typeof p.id !== 'string' || p.id === '') falla(`${donde}: id falta`);
@@ -175,6 +177,14 @@ export function validar(catalogo, { maxBytes = MAX_BYTES, exigirAmbito = true } 
     if (p.ambito_id !== null && typeof p.ambito_id !== 'string') falla(`${donde}: ambito_id`);
     // La app elige su paquete por ambito_id: una ciudad sin él no la encontraría nadie.
     if (exigirAmbito && p.nivel === 'ciudad' && !p.ambito_id) falla(`${donde}: ambito_id falta (el id de public.ciudad)`);
+    // Departamento: la app (CatalogoTilesModel) lo descarta si no trae ambito_id, y lo compara con el departamento
+    // de la ciudad del colportor. Uruguay cubre cualquier lugar: no lleva ámbito (la app lo ignora) y hay uno solo.
+    if (exigirAmbito && p.nivel === 'departamento' && !p.ambito_id) falla(`${donde}: ambito_id falta (el departamento que cubre)`);
+    if (p.nivel === 'uruguay') {
+      if (p.ambito_id) falla(`${donde}: un paquete de todo Uruguay no lleva ambito_id`);
+      if (uruguay) falla(`${donde}: hay más de un paquete de todo Uruguay (${uruguay})`);
+      uruguay = p.id;
+    }
     if (!Array.isArray(p.partes) || p.partes.length < 1) {
       falla(`${donde}: sin partes`);
       continue;
