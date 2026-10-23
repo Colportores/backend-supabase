@@ -1,4 +1,4 @@
--- pgTAP · el departamento de cada ciudad (migración 0063, backend-supabase#92, HU-ADM-005, HU-CAM-008)
+-- pgTAP · el departamento de cada ciudad (migración 0066, backend-supabase#92, HU-ADM-005, HU-CAM-008)
 -- public.ciudad.departamento: la columna, su restricción (sin blancos ni espacios en los costados, hasta
 -- 60 caracteres) y el trigger que lo exige hacia adelante (CD001: una ciudad nueva sin departamento y
 -- borrárselo a una que lo tenía se rechazan; las ciudades viejas sin él se siguen actualizando y dando de
@@ -6,7 +6,7 @@
 -- ciudades_del_catalogo() además BUSCA por él (sin mayúsculas ni tildes, texto literal) y lo usa para
 -- distinguir dos ciudades con el mismo nombre; los privilegios y el permiso de la 0033 siguen igual; y el
 -- pull lo lleva con la ciudad. La carga de Montevideo y que no se pierda ni una fila de antes: en
--- supabase/tests_migracion/0063_*.
+-- supabase/tests_migracion/0066_*.
 begin;
 select * from no_plan();
 
@@ -44,7 +44,7 @@ begin
 end $$;
 
 -- Una sentencia con el trigger del departamento apagado: arma una ciudad «vieja» (sin departamento), como
--- las que ya estaban cargadas cuando llegó la 0063. Lo vuelve a prender siempre (también si falla).
+-- las que ya estaban cargadas cuando llegó la 0066. Lo vuelve a prender siempre (también si falla).
 create or replace function pg_temp.sin_trigger(p_sql text) returns void language plpgsql as $$
 begin
   alter table public.ciudad disable trigger ciudad_departamento_obligatorio;
@@ -136,7 +136,7 @@ select col_type_is('public', 'ciudad', 'departamento', 'text', 'es texto');
 select col_is_null('public', 'ciudad', 'departamento', 'y admite null en la base (las ciudades que ya estaban, todavía sin cargar)');
 select is((select col_description('public.ciudad'::regclass,
                                   (select attnum from pg_attribute where attrelid = 'public.ciudad'::regclass and attname = 'departamento')))
-          like '%0063%', true, 'la columna tiene su comentario');
+          like '%0066%', true, 'la columna tiene su comentario');
 
 select is(pg_temp.error_de($$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro)
                              values ('Z q55', 'Salto', '01920000-0000-7000-8000-0000000055c0', 0, 0) $$), 'ok',
@@ -275,7 +275,7 @@ select is((select bool_and(p.proconfig = array['search_path=""']) from pg_proc p
           true, 'con search_path vacío');
 select is((select count(*)::int from pg_proc p
             where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)
-              and obj_description(p.oid, 'pg_proc') like '%0063%'), 2, 'las dos tienen su comentario al día');
+              and obj_description(p.oid, 'pg_proc') like '%0066%'), 2, 'las dos tienen su comentario al día');
 
 -- ---------------------------------------------------------------------------
 -- 3. El permiso, primero (el de la 0033)

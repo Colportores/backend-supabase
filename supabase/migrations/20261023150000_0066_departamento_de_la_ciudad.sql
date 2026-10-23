@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0063 · El departamento de cada ciudad: columna, carga de Montevideo y lectura
+-- 0066 · El departamento de cada ciudad: columna, carga de Montevideo y lectura
 --        (backend-supabase#92, HU-ADM-005, HU-CAM-008, C14)
 --
 -- Origen: el cambio de requisitos del 21/10 (reunión del 05/10, docs#69, C14 y C15). El panel agrupa las
@@ -95,7 +95,7 @@ alter table public.ciudad
   );
 
 comment on column public.ciudad.departamento is
-  'Departamento al que pertenece la ciudad («Artigas», «Rivera»…; 0063, backend-supabase#92, decisión de '
+  'Departamento al que pertenece la ciudad («Artigas», «Rivera»…; 0066, backend-supabase#92, decisión de '
   'Cristian del 21/10, «Departamento»). El panel agrupa y filtra departamento -> ciudad y el buscador de '
   '«+ Agregar ciudad» busca también por él. Obligatorio en toda ciudad (HU-ADM-005), pero opcional en la '
   'base solo por las ciudades que ya estaban (null = todavía sin cargar): el trigger ciudad_departamento_obligatorio '
@@ -159,7 +159,7 @@ end;
 $$;
 
 comment on function public.ciudades_de_campania(uuid) is
-  'Vista 24 (0033, con departamento desde 0063): las ciudades vivas de p_campania_id con su departamento '
+  'Vista 24 (0033, con departamento desde 0066): las ciudades vivas de p_campania_id con su departamento '
   '(null = sin cargar), centro, zoom y cantidad de zonas vivas. campania_ciudad_id es el id de la pestaña; '
   'ciudad_id, el del catálogo. Errores: 42501 sin permiso; CZ001 inexistente; CZ011 terminada.';
 
@@ -201,7 +201,7 @@ end;
 $$;
 
 comment on function public.ciudades_del_catalogo(uuid, text) is
-  'Vista 24, «+ Agregar ciudad» (0033, con departamento desde 0063): ciudades vivas del catálogo que no '
+  'Vista 24, «+ Agregar ciudad» (0033, con departamento desde 0066): ciudades vivas del catálogo que no '
   'están en p_campania_id, con su departamento (null = sin cargar); las cuyo nombre o departamento '
   'contienen p_texto (sin mayúsculas ni tildes; sin texto, todas), primero las cuyo nombre empieza con él '
   'y después A-Z por nombre y departamento. Errores: 42501 sin permiso; CZ001 inexistente; CZ011 terminada.';
@@ -230,7 +230,7 @@ end;
 $$;
 
 comment on function public.tg_ciudad_departamento_obligatorio() is
-  'BEFORE INSERT OR UPDATE OF departamento de ciudad (0063, backend-supabase#92): CD001 si una ciudad nueva '
+  'BEFORE INSERT OR UPDATE OF departamento de ciudad (0066, backend-supabase#92): CD001 si una ciudad nueva '
   'no trae departamento o si se le borra a una que lo tenía. Las ciudades viejas sin departamento se siguen '
   'actualizando y dando de baja (un UPDATE que no nombra la columna no dispara el trigger).';
 

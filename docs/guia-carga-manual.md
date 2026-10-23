@@ -96,7 +96,7 @@ values ('<nombre real>', '<departamento>', '<id de pais>', <lat>, <lon>, 13,
         <oeste>, <sur>, <este>, <norte>);
 ```
 
-- **`departamento`** (desde la migración `0063`, decisión de Cristian del 21/10): el departamento
+- **`departamento`** (desde la migración `0066`, decisión de Cristian del 21/10): el departamento
   al que pertenece la ciudad, como texto («Artigas», «Salto», «Río Negro»…). **Cargalo siempre**:
   es obligatorio en toda ciudad (HU-ADM-005) y la base lo exige: una ciudad nueva sin departamento se rechaza con `CD001` («Cargá el departamento de la ciudad») y a una que ya lo tiene no se le puede borrar. El panel agrupa
   y filtra por él (departamento → ciudad) y el buscador de «+ Agregar ciudad» muestra cada ciudad
@@ -109,7 +109,7 @@ values ('<nombre real>', '<departamento>', '<id de pais>', <lat>, <lon>, 13,
     ```sql
     update public.ciudad set departamento = '<departamento>' where id = '<id de ciudad>';
     ```
-  - **Ciudades sin departamento.** Las que se cargaron antes de la `0063` quedan con el
+  - **Ciudades sin departamento.** Las que se cargaron antes de la `0066` quedan con el
     departamento vacío (la migración solo completa Montevideo; no adivina el de las demás).
     Esas se siguen pudiendo actualizar y dar de baja sin departamento (la regla de `CD001` rige
     para las nuevas y para no borrarlo, no sobre lo ya cargado).
@@ -170,7 +170,7 @@ update public.ciudad c
    and c.nombre = 'Montevideo' and c.deleted_at is null
    and c.bbox_oeste is null;
 
--- 1b. Si Montevideo ya estaba sin departamento (cargada antes de la migración 0063), se lo ponemos.
+-- 1b. Si Montevideo ya estaba sin departamento (cargada antes de la migración 0066), se lo ponemos.
 update public.ciudad c
    set departamento = 'Montevideo'
   from public.pais p
@@ -209,7 +209,7 @@ select c.id, c.nombre, c.departamento, p.iso_code, c.lat_centro, c.lon_centro,
 - Desde la migración `0031`, una base que ya tenía exactamente una Montevideo viva y
   sin rectángulo la recibe sola al aplicarla: en ese caso el bloque no hace nada (y la
   revisión del paso 3 muestra el rectángulo igual). Lo mismo con el `departamento` desde la
-  `0063`: una Montevideo viva, única y con su centro adentro del rectángulo lo recibe sola.
+  `0066`: una Montevideo viva, única y con su centro adentro del rectángulo lo recibe sola.
 
 #### Después de cargar la ciudad: sus calles
 

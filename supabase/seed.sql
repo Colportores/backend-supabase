@@ -45,7 +45,7 @@ insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_ce
   ('09990000-0000-7000-8002-000000000001', 'Ciudad Ejemplo Norte', 'Departamento Ejemplo Norte', '09990000-0000-7000-8001-000000000001', -33.0, -56.0, 13),
   ('09990000-0000-7000-8002-000000000002', 'Ciudad Ejemplo Sur',   'Departamento Ejemplo Sur',   '09990000-0000-7000-8001-000000000001', -34.0, -55.5, 13)
 on conflict do nothing;
--- El departamento de las dos de ejemplo es ficticio, como ellas (migración 0063, backend-supabase#92): el
+-- El departamento de las dos de ejemplo es ficticio, como ellas (migración 0066, backend-supabase#92): el
 -- de una ciudad real se carga con docs/guia-carga-manual.md §2.
 
 -- Montevideo, con su rectángulo (migración 0031, backend-supabase#42): es la ciudad del mapa propio de la
