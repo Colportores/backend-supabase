@@ -340,6 +340,24 @@ select * from public.zonas_por_colportor(campania_id);
 - **Quién.** Igual que `acompaniamientos_por_colportor()`: el coordinador de la campaña o un ADMIN, `42501` antes de mirar nada, `CZ001` si la campaña no existe, y una campaña **por empezar o terminada se lee** (el historial se consulta también al cierre). Sin email ni clientes. `SECURITY DEFINER`, `VOLATILE`, `EXECUTE` solo para `authenticated`.
 - **Casas registradas.** La columna del canvas no está en esta lectura: la regla «las casas de una zona anterior siguen contando» se cumple porque la ubicación no guarda zona, pero qué se cuenta y desde cuándo es una decisión pendiente del PR.
 
+### Tablero de Inicio del panel (sin BFF)
+
+Desde la migración `0054` (backend-supabase#94, HU-CAM-008, vista 31 «Inicio», [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) el panel lee el día de la campaña con una sola llamada: las cifras de cada ciudad y, dentro, las de cada colportor.
+
+```sql
+select public.tablero_de_inicio(campania_id);              -- hoy (día de Montevideo)
+select public.tablero_de_inicio(campania_id, '2026-10-21'); -- un día anterior (uno futuro es 22023)
+-- jsonb: fecha, es_hoy, calculado_a, total, ciudades[ {ciudad_id, nombre, cantidad_colportores, en_jornada, horas,
+--        presentaciones, ventas, monto_total, colportores[ {colportor_id, nombre, apellido, estado, horas,
+--        presentaciones, ventas, monto_total, ultimo_push_at} ]} ], sin_zona[], pendientes[]
+```
+
+- **Cifras del día.** `estado` es `EN_JORNADA` (jornada abierta que empezó hoy), `FINALIZADA` o `SIN_INICIAR` y sale solo de la jornada; `horas` suma las jornadas que empezaron ese día (la abierta de hoy cuenta hasta ahora; la abierta de un día anterior no inventa un fin y suma 0); `presentaciones` son las visitas `VENTA` o `ENTREVISTA` (HU-VIS-005, C1; `RECHAZO` provisorio no, S62); `ventas` y `monto_total` (en **centavos**) son las del día. `ultimo_push_at` es el de `usuario` (0053), solo para mostrar «hace X».
+- **Ciudad.** La de la zona actual del colportor (mismo criterio que `horas_por_ciudad_y_colportor` y `ventas_por_ciudad_y_colportor`). `ciudades` trae todas las ciudades vivas de la campaña, también las que no tienen colportores; el departamento todavía no (se suma cuando llegue backend-supabase#92: por ahora el panel lo toma de `ciudades_de_campania()`).
+- **Sin zona.** Un colportor sin zona (o con la zona o la ciudad de la zona dadas de baja) no entra en ninguna cifra: va aparte en `sin_zona` (de ahí sale «Colportora sin zona asignada»). Uno con la inscripción dada de baja no figura.
+- **Pendientes.** `pendientes` es `[]` hasta que V2 conecte los tickets por validar y los pedidos por autorizar.
+- **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; `CZ001` si la campaña no existe; una campaña terminada se lee. Solo cifras: ni clientes, ni ubicaciones, ni talonarios, ni emails.
+
 ## Privacidad
 
 Los datos personales de clientes (`persona.nombre`, `persona.apellido`, `persona.telefono`, `nota.texto`) son **local-only**: viven solo en el dispositivo del colportor y nunca llegan al cloud, por la Ley 18.331 de Uruguay. Ver [`02-restricciones.md`](https://github.com/Colportores/docs-organizacion/blob/main/docs/02-restricciones.md).
