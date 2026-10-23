@@ -172,10 +172,8 @@ select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e5', '01920000-0000-7000-8000-0000000007b1') $$,
   'CI001', null, 'campaña borrada → CI001'
 );
-select throws_ok(
-  $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e3', '01920000-0000-7000-8000-0000000007b1') $$,
-  'CI002', null, 'campaña futura (no activa) → CI002'
-);
+-- Una campaña futura (e3) ya no es CI002: se inscribe desde que la campaña existe (0058, backend#103);
+-- lo cubre 0063_inscribir_y_asignar_zona_antes_del_inicio_test.
 select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e4', '01920000-0000-7000-8000-0000000007b1') $$,
   'CI002', null, 'campaña terminada → CI002'
