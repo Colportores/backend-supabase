@@ -13,7 +13,7 @@
 --   5. ubicacion_par_decidido: reapuntada, reordenada (a < b), el par consigo mismo de baja, y la
 --      más reciente cuando el mismo colportor ya decidió el par nuevo.
 --   6. Permisos: quién lee y escribe el registro, quién ejecuta qué, y la unión por permiso.
---   «Venta tarde» (0050, #105): el vínculo que llega de una persona que ya tiene uno en el espacio
+--   «Venta tarde» (0064, #105): el vínculo que llega de una persona que ya tiene uno en el espacio
 --   fundido se junta (`merged` en el push, espacio_persona_union), en la sección 2; la cadena de uniones
 --   está en 0056.
 begin;
@@ -334,7 +334,7 @@ select is(pg_temp.err(format('insert into public.espacio (id, ubicacion_id) valu
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.espacio where id = pg_temp.u('ea')), 0::bigint, 'y no quedó nada');
 
--- «Venta tarde» (0050, #105): otro vínculo de una persona que ya tiene uno (con otro id) en el espacio
+-- «Venta tarde» (0064, #105): otro vínculo de una persona que ya tiene uno (con otro id) en el espacio
 -- fundido de B —la 60 tiene el 71, dado de baja, en el 31— antes chocaba con el unique (espacio_id,
 -- persona_id): 23505, `invalid`. Ahora se junta con el de A (70): no se guarda otra fila, y las visitas
 -- y ventas que lo nombran quedan en el de A.
@@ -825,7 +825,7 @@ select is((select count(*)::int from sync.entidad where tabla in ('public.ubicac
           'ninguna de las dos está en sync.entidad (no van al pull ni al push)');
 select is((select count(*)::int from sync.entidad), 23, 'sync.entidad sigue con sus 23 entidades');
 
--- El registro de los vínculos que se juntaron (0050): solo ids, solo en la nube, lo lee el ADMIN y lo
+-- El registro de los vínculos que se juntaron (0064): solo ids, solo en la nube, lo lee el ADMIN y lo
 -- escribe únicamente el trigger; vinculo_juntado() solo cuenta a dónde fue a quien lo subió.
 select has_table('public', 'espacio_persona_union', 'espacio_persona_union existe');
 select is((select count(*)::int from sync.entidad where tabla = 'public.espacio_persona_union'::regclass), 0,

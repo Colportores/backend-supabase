@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0050 · Unión de duplicados: el segundo vínculo de la misma persona en el espacio fundido se JUNTA
+-- 0064 · Unión de duplicados: el segundo vínculo de la misma persona en el espacio fundido se JUNTA
 --        con el que ya está, no se rechaza (backend-supabase#105; HU-UBI-006; decisión de Cristian del
 --        21/10, «Venta tarde»: «Juntar los dos»)
 --
@@ -84,7 +84,7 @@ create index espacio_persona_union_destino_idx on public.espacio_persona_union (
 
 comment on table public.espacio_persona_union is
   'Vínculos (espacio_persona) que llegaron tarde y se juntaron con el que ya tenía la misma persona en el '
-  'espacio fundido (0050, backend-supabase#105): duplicada_id (el id que subió el teléfono; esa fila NO '
+  'espacio fundido (0064, backend-supabase#105): duplicada_id (el id que subió el teléfono; esa fila NO '
   'existe) → destino_id (el vínculo que quedó). Lo que llegue nombrando a duplicada_id se guarda en '
   'destino_id. Solo en la nube (no está en sync.entidad). Solo ids; lo lee el ADMIN.';
 comment on column public.espacio_persona_union.duplicada_id is
@@ -130,7 +130,7 @@ declare
   v_nuevo    uuid;
   v_vinculo  uuid;
 begin
-  -- 0050: el vínculo que se juntó con otro al llegar (no existe como fila) va al que quedó.
+  -- 0064: el vínculo que se juntó con otro al llegar (no existe como fila) va al que quedó.
   loop
     select pu.destino_id into v_destino
       from public.espacio_persona_union pu
@@ -173,7 +173,7 @@ $$;
 
 comment on function public.redirigir_vinculo(uuid) is
   'El vínculo (espacio_persona) donde hay que escribir una visita, venta o agenda que nombra a '
-  'p_vinculo_id: el que quedó si el suyo se juntó con otro al llegar (0050), o el de la misma persona en '
+  'p_vinculo_id: el que quedó si el suyo se juntó con otro al llegar (0064), o el de la misma persona en '
   'el espacio de A si el suyo se fundió (0035).';
 
 -- A dónde fue un vínculo que subió quien llama y se juntó con otro; null si ese id no se juntó (o lo
@@ -201,7 +201,7 @@ $$;
 
 comment on function public.vinculo_juntado(uuid) is
   'El vínculo que quedó cuando el que subió quien llama (p_vinculo_id) se juntó con otro al llegar '
-  '(espacio_persona_union, 0050); null si no se juntó. Para la respuesta `merged` del push.';
+  '(espacio_persona_union, 0064); null si no se juntó. Para la respuesta `merged` del push.';
 
 -- ----------------------------------------------------------------------------
 -- 3. El trigger de espacio_persona: el segundo vínculo de la misma persona se junta
@@ -238,7 +238,7 @@ begin
        and ep.id <> new.id;
     if found then
       if tg_op = 'INSERT' then
-        -- 0050: se JUNTA con el que ya está. No se guarda otra fila (chocaría con el unique si el
+        -- 0064: se JUNTA con el que ya está. No se guarda otra fila (chocaría con el unique si el
         -- espacio fundido ya tiene la suya); se recuerda que este id es el de ese vínculo, y lo que lo
         -- nombre (visitas, ventas, agendas) cae en él por redirigir_vinculo().
         if new.deleted_at is null
@@ -278,14 +278,14 @@ $$;
 comment on function public.tg_espacio_persona_union_redirige() is
   'BEFORE INSERT / UPDATE OF espacio_id, ubicacion_cobranza_alt_id de espacio_persona: lo que sube '
   'tarde al espacio fundido de B va al único de A; si la persona ya tiene vínculo en A, el que llega se '
-  'junta con él (espacio_persona_union, 0050) y no se inserta; la cobranza alternativa que nombra a B '
+  'junta con él (espacio_persona_union, 0064) y no se inserta; la cobranza alternativa que nombra a B '
   'pasa a A (0035).';
 
 -- ----------------------------------------------------------------------------
 -- 4. El push: la respuesta `merged`
 -- ----------------------------------------------------------------------------
 
--- Igual que en 0021; cambia solo el insert de espacio_persona que se juntó con otro (`merged`, 0050).
+-- Igual que en 0021; cambia solo el insert de espacio_persona que se juntó con otro (`merged`, 0064).
 create or replace function sync.aplicar_job_interno(p_op_id uuid, p_job jsonb)
 returns jsonb
 language plpgsql
@@ -367,7 +367,7 @@ begin
     ) using v_payload;
     get diagnostics v_filas = row_count;
 
-    -- 0050: el insert no insertó nada porque el vínculo se juntó con el que ya tenía la misma persona
+    -- 0064: el insert no insertó nada porque el vínculo se juntó con el que ya tenía la misma persona
     -- en el espacio fundido (el trigger de espacio_persona lo registró). No es un duplicado: el
     -- teléfono tiene que saber cuál es el vínculo que quedó. Reintentar da lo mismo.
     if v_filas = 0 and v_entidad = 'espacio_persona' then
@@ -469,7 +469,7 @@ begin
 end;
 $$;
 
--- Igual que en 0042; cambia solo que `merged` (0050) cuenta entre los aceptados del log.
+-- Igual que en 0042; cambia solo que `merged` (0064) cuenta entre los aceptados del log.
 create or replace function sync.push(p_jobs jsonb, p_device uuid default null)
 returns jsonb
 language plpgsql

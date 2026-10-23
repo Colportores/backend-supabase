@@ -1,4 +1,4 @@
--- pgTAP · migración 0050 (backend-supabase#105; decisión de Cristian del 21/10, «Venta tarde»):
+-- pgTAP · migración 0064 (backend-supabase#105; decisión de Cristian del 21/10, «Venta tarde»):
 -- el vínculo que llega de una persona que ya tiene uno en el espacio fundido se JUNTA con él. El caso
 -- base (la venta y la visita tardías terminan en A, la respuesta `merged`, los permisos del registro)
 -- está en 0044; acá, la cadena: A se une después a C y el vínculo juntado sigue al que quedó.
