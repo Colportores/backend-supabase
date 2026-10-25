@@ -9,7 +9,8 @@
 --   5. Los topes del reparto: 12 cuotas por venta (AG001), ninguna supera el saldo (AG002), el día de
 --      creación (AG003); qué cuenta y qué no.
 --   6. Por sync_push: lo mismo vuelve invalid con su código sin tumbar el lote; los teléfonos que todavía
---      no mandan espacio_id siguen andando.
+--      no mandan espacio_id siguen andando; el update con la fila entera no vuelve a medir lo que no cambió
+--      y el reenvío de un alta que ya existe es duplicate.
 --   7. entrega.fecha_prevista.
 --   8. Cuando dos casas se unen, las citas (con o sin persona) siguen al espacio de A.
 -- Va en una transacción.
@@ -457,6 +458,69 @@ select is((select count(*)::int from public.agenda where id in (pg_temp.ua(210),
 select is((select message is not null from jsonb_to_recordset(pg_temp.push(jsonb_build_array(
             pg_temp.job('c1', 'agenda', pg_temp.payload_cita(210, 'COBRANZA', 1, 'PROGRAMADA', '11', null, '53', 20001)))) -> 'results')
             as x(message text)), true, 'el mensaje del invalid viaja, para que la app lo muestre');
+
+-- 6b. Lo que sube el teléfono: la fila ENTERA en cada update, y el reenvío de altas (rev 148).
+-- La venta 56 (200,00) con dos cuotas de 100,00. Después entra un cobro de 150,00: la primera se cumple
+-- y la segunda queda en 100,00 con un saldo de 50,00 (las cuotas ya agendadas quedan).
+select pg_temp.actuar_como_servidor();
+insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)
+values (pg_temp.u('56'), pg_temp.u('21'), 'T-56', 20000, now(), pg_temp.u('b1'), pg_temp.u('b1'));
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create or replace function pg_temp.job_update(p_op text, p_id integer, p_payload jsonb) returns jsonb language sql as $$
+  select jsonb_build_object('client_op_id', pg_temp.u(p_op), 'entity', 'agenda', 'op', 'update',
+                            'sync_version', (select a.sync_version from public.agenda a where a.id = pg_temp.ua(p_id)),
+                            'payload', p_payload);
+$$;
+-- La fila entera de una cita, con los cambios de p_cambios encima (lo que escribe el encolador del móvil).
+create or replace function pg_temp.fila_entera(p_id integer, p_cambios jsonb default '{}') returns jsonb language sql as $$
+  select jsonb_build_object('id', a.id, 'tipo', a.tipo, 'fecha_programada', a.fecha_programada, 'estado', a.estado,
+                            'espacio_id', a.espacio_id, 'espacio_persona_id', a.espacio_persona_id,
+                            'venta_id', a.venta_id, 'entrega_id', a.entrega_id, 'monto_previsto', a.monto_previsto,
+                            'created_at', a.created_at, 'deleted_at', a.deleted_at) || p_cambios
+    from public.agenda a where a.id = pg_temp.ua(p_id);
+$$;
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job('e1', 'agenda', pg_temp.payload_cita(400, 'COBRANZA', 1, 'PROGRAMADA', '11', null, '56', 10000)),
+            pg_temp.job('e2', 'agenda', pg_temp.payload_cita(401, 'COBRANZA', 2, 'PROGRAMADA', '11', null, '56', 10000))
+          ))), array['accepted', 'accepted'], 'dos cuotas de 100,00 de una venta de 200,00 entran');
+select pg_temp.actuar_como_servidor();
+insert into public.cobranza (id, venta_id, monto, medio, fecha, created_by)
+values (pg_temp.u('75'), pg_temp.u('56'), 15000, 'EFECTIVO', now(), pg_temp.u('b1'));
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job_update('e3', 400, pg_temp.fila_entera(400, '{"estado": "CUMPLIDA"}'))))),
+          array['accepted'], 'la primera cuota se cumple (fila entera)');
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job_update('e4', 401, pg_temp.fila_entera(401, jsonb_build_object(
+              'fecha_programada', pg_temp.dia(9))))))),
+          array['accepted'], 'mover la fecha de la segunda (100,00 sobre un saldo de 50,00) con la fila entera NO se vuelve a medir');
+select is((select fecha_programada from public.agenda where id = pg_temp.ua(401)), pg_temp.dia(9), 'y la fecha cambió');
+select is(pg_temp.codigos(pg_temp.push(jsonb_build_array(
+            pg_temp.job_update('e5', 401, pg_temp.fila_entera(401, '{"monto_previsto": 10001}'))))),
+          array['AG002'], 'subir su monto con la fila entera sí se mide');
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job_update('e6', 401, pg_temp.fila_entera(401, '{"monto_previsto": 5000}'))))),
+          array['accepted'], 'y bajarlo hasta el saldo entra');
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job_update('e7', 401, pg_temp.fila_entera(401, jsonb_build_object(
+              'estado', 'CANCELADA', 'fecha_programada', pg_temp.dia(10))))))),
+          array['accepted'], 'cancelarla con la fila entera entra');
+select is(pg_temp.codigos(pg_temp.push(jsonb_build_array(
+            pg_temp.job_update('e8', 401, pg_temp.fila_entera(401, '{"estado": "PROGRAMADA", "monto_previsto": 5001}'))))),
+          array['AG002'], 'reprogramarla por más del saldo se mide');
+-- El reenvío de un alta que ya está es un duplicate aunque el saldo haya bajado (contrato §7).
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job('e9', 'agenda', pg_temp.payload_cita(400, 'COBRANZA', 1, 'PROGRAMADA', '11', null, '56', 10000))))),
+          array['duplicate'], 'reenviar el alta de la cuota 400 (otro client_op_id; hoy el saldo es 50,00) es duplicate');
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job('e9', 'agenda', pg_temp.payload_cita(400, 'COBRANZA', 1, 'PROGRAMADA', '11', null, '56', 10000))))),
+          array['duplicate'], 'y el mismo client_op_id otra vez también');
+select is(pg_temp.resultados(pg_temp.push(jsonb_build_array(
+            pg_temp.job('ea', 'agenda', pg_temp.payload_cita(402, 'COBRANZA', 1, 'PROGRAMADA', '11', null, '56', 10000))))),
+          array['invalid'], 'una cuota nueva por más del saldo sigue siendo invalid');
+select is((select count(*)::int from public.agenda where id = pg_temp.ua(400)), 1, 'y el reenvío no duplicó la fila');
+select is((select estado from public.agenda where id = pg_temp.ua(400)), 'CUMPLIDA', 'ni pisó lo que ya tenía (cumplida)');
+select is(pg_temp.ins(403, 'COBRANZA', 1, 'PROGRAMADA', '56', 10000), 'AG002', 'por SQL, una cuota nueva por más del saldo se rechaza');
 
 -- ---------------------------------------------------------------------------
 -- 7. entrega.fecha_prevista

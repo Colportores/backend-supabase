@@ -37,7 +37,9 @@
 -- ## Los topes del «Reparto» (los aplica el servidor al recibir cada cuota)
 --
 -- Una cuota es una cita COBRANZA con `venta_id` y `monto_previsto`. Al recibir una (o cambiar su monto,
--- su venta, su estado o volver a programarla), con la venta bloqueada para que dos no se pisen:
+-- su venta, su estado, su tipo o su baja: se compara old con new, así que mover la fecha no la vuelve a
+-- medir aunque el teléfono mande la fila entera), con la venta bloqueada para que dos no se pisen. El
+-- reenvío de un alta que ya existe sale antes de medir (`duplicate` en el push, contrato §7):
 --   · AG001: una venta admite hasta 12 cuotas (las citas PROGRAMADA o CUMPLIDA con monto; las
 --     canceladas, las no cumplidas y las dadas de baja no cuentan).
 --   · AG002: una cuota PROGRAMADA no supera el saldo de la venta (`monto_total` menos sus cobros vivos).
@@ -248,7 +250,16 @@ declare
   v_cobrado        bigint;
   v_saldo          bigint;
   v_cuotas         integer;
+  v_cambia         boolean;
 begin
+  -- Reenvío de un alta que ya está: el push la resuelve como `duplicate` (contrato §7, «replay
+  -- idempotente»: nunca INVALID). Los BEFORE triggers corren antes del `on conflict do nothing`, así que
+  -- si el saldo bajó desde que se creó, medirla de nuevo la volvería invalid y el colportor la vería en
+  -- la cola de error. Sale antes de medir nada: no se inserta.
+  if tg_op = 'INSERT' and exists (select 1 from public.agenda a where a.id = new.id) then
+    return new;
+  end if;
+
   -- La venta y la entrega son de quien agenda. La clave foránea no mira la RLS: sin esto alcanzaría
   -- con saber el id de una venta ajena para colgarle una cita (y probar su saldo con los topes).
   if new.venta_id is not null then
@@ -282,8 +293,20 @@ begin
     end if;
   end if;
 
+  -- El teléfono sube la FILA ENTERA en cada update y el push arma el SET con todas las claves del
+  -- payload: la lista del `UPDATE OF` del trigger se cumple siempre. Por eso se compara old con new: mover
+  -- la fecha de una cuota que ya estaba no la vuelve a medir (su monto pudo quedar por encima del saldo
+  -- porque entró un cobro después, y moverla no lo agrava). Solo cuenta lo que cambia lo que se mide.
+  v_cambia := true;
+  if tg_op = 'UPDATE' then
+    -- (`old` no existe en un INSERT: va en su propio `if`, no en un OR.)
+    v_cambia := (old.tipo, old.venta_id, old.monto_previsto, old.estado, old.deleted_at)
+                is distinct from (new.tipo, new.venta_id, new.monto_previsto, new.estado, new.deleted_at);
+  end if;
+
   -- Una cuota: cita de cobranza, con venta y con monto, viva.
-  if new.monto_previsto is not null
+  if v_cambia
+     and new.monto_previsto is not null
      and new.tipo = 'COBRANZA'
      and new.venta_id is not null
      and v_venta_total is not null
@@ -341,7 +364,8 @@ comment on function public.tg_agenda_origen() is
   'BEFORE INSERT / UPDATE OF tipo, venta_id, entrega_id, monto_previsto, estado, deleted_at de agenda: '
   'la venta y la entrega son de quien agenda (42501), la entrega es de la venta (23514) y los topes del '
   'reparto de cuotas: hasta 12 por venta (AG001), ninguna supera el saldo (AG002), no se crea una con '
-  'el día ya pasado (AG003) (0068).';
+  'el día ya pasado (AG003). Los topes solo se miden si cambia tipo, venta, monto, estado o baja (old vs '
+  'new) y no en el reenvío de un alta que ya existe (0068).';
 
 -- Después de agenda_0_union_redirige y antes de la auditoría (orden alfabético).
 create trigger agenda_1_origen
