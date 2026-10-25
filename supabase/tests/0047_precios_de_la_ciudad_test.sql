@@ -208,8 +208,8 @@ select is(pg_get_function_arguments('public.precios_de_la_ciudad(uuid,date)'::re
           'p_campania_ciudad_id uuid, p_fecha date DEFAULT NULL::date',
           'recibe la ciudad de la campaña y, si se quiere, la fecha');
 select is(pg_get_function_result('public.precios_de_la_ciudad(uuid,date)'::regprocedure),
-          'TABLE(tipo text, id uuid, nombre text, es_bonificable boolean, precio_general integer, precio_modificado integer, precio_vigente integer, origen text, valido_desde date, valido_hasta date, componentes_de_baja integer)',
-          'la forma de la respuesta (importes en centavos y, desde la 0057, los componentes de baja de un combo; nada de personas ni de clientes)');
+          'TABLE(tipo text, id uuid, nombre text, es_bonificable boolean, precio_general integer, precio_modificado integer, precio_vigente integer, origen text, valido_desde date, valido_hasta date, componentes_de_baja integer, libros_a_elegir integer)',
+          'la forma de la respuesta (importes en centavos y, desde la 0057, los componentes de baja de un combo y, desde la 0071, los libros a elegir; nada de personas ni de clientes)');
 select is((select p.prosecdef from pg_proc p where p.oid = 'public.precios_de_la_ciudad(uuid,date)'::regprocedure),
           true, 'es SECURITY DEFINER: el permiso lo decide la función y el rechazo trae su motivo');
 select is((select p.provolatile::text from pg_proc p where p.oid = 'public.precios_de_la_ciudad(uuid,date)'::regprocedure),
@@ -404,18 +404,18 @@ select is((select r.es_bonificable from public.precios_de_la_ciudad(pg_temp.u('f
 -- Productos antes que colecciones, por nombre; a igual nombre, por id.
 select is((select string_agg(r.nombre, '|' order by r.n)
              from public.precios_de_la_ciudad(pg_temp.u('f1')) with ordinality
-                  as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, n)
+                  as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, libros_a_elegir, n)
             where r.nombre like '%t47'),
           'Gemelo t47|Gemelo t47|Prod 01 t47|Prod 02 t47|Prod 03 t47|Prod 04 t47|Prod 05 t47|Prod 06 t47|Prod 07 t47|Prod 09 t47|Prod 10 t47|Prod 11 t47|Aaa Col 1 t47|Aaa Col 2 t47|Aaa Col 3 t47',
           'orden: los productos por nombre y después las colecciones por nombre (aunque su nombre sea anterior)');
 select is((select array_agg(r.id order by r.n)
              from public.precios_de_la_ciudad(pg_temp.u('f1')) with ordinality
-                  as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, n)
+                  as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, libros_a_elegir, n)
             where r.nombre = 'Gemelo t47'),
           array[pg_temp.u('1c'), pg_temp.u('1d')], 'a igual nombre, por id');
 select ok((select max(r.n) filter (where r.tipo = 'PRODUCTO') < min(r.n) filter (where r.tipo = 'COLECCION')
              from public.precios_de_la_ciudad(pg_temp.u('f1')) with ordinality
-                  as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, n)),
+                  as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, libros_a_elegir, n)),
           'todos los productos del catálogo van antes que todas las colecciones');
 
 -- ---------------------------------------------------------------------------
@@ -513,7 +513,7 @@ create or replace function pg_temp.todo(p_cc text, p_fecha date default null) re
                               coalesce((r.valido_hasta - pg_temp.h())::text, '~')),
                     E'\n' order by r.n)
     from public.precios_de_la_ciudad(pg_temp.u(p_cc), p_fecha) with ordinality
-         as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, n)
+         as r(tipo, id, nombre, es_bonificable, precio_general, precio_modificado, precio_vigente, origen, valido_desde, valido_hasta, componentes_de_baja, libros_a_elegir, n)
    where r.nombre like '%t47';
 $$;
 select pg_temp.actuar_como(pg_temp.u('ad'));

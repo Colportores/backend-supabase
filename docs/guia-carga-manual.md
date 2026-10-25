@@ -335,6 +335,11 @@ values (null, '<id del combo>', '<id de campania_ciudad>', 110000, public.hoy_mo
 - **Verificá** lo que ve una ciudad: `select * from public.precio_vigente('<id de campania_ciudad>', null, '<id del combo>');`
   (una fila con `GENERAL` o `MODIFICADO`) o, para todo el catálogo,
   `public.precios_de_la_ciudad(...)` (el combo sale con `tipo = 'COLECCION'`).
+- **Una «Colección de N libros»** (desde la `0071`) es **otra colección** con su precio, que además de lo
+  fijo deja elegir N libros al vender: se carga igual y se le dice cuántos con
+  `update public.coleccion set libros_a_elegir = 2 where id = '<id del combo>';` (`0` = combo fijo, el valor
+  por defecto). Cada tamaño (2, 3, 5…) es su propia colección con su propio precio (§ 8 y § 9). Los libros que
+  elige quien vende no se cargan acá: los copia el teléfono en el ítem de la venta (`venta_item.componentes`).
 - **Cambiar la cantidad de un componente** es un `update` de su fila
   (`update public.producto_coleccion set cantidad = 3 where id = '<id>';`).
   Las ventas hechas **no cambian**: guardan el ítem del combo y el precio con que

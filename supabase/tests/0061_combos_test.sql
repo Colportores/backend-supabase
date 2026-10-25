@@ -11,6 +11,8 @@
 --      rechazan; el reintento del push es idempotente.
 --   5. La composición cambia después de la venta: la venta conserva su ítem y su precio.
 --   6. Lo que no se toca: los ítems de producto de siempre y el sync siguen igual.
+-- Desde la 0071 (backend-supabase#138) un ítem de combo lleva además `componentes` (lo que traía el combo): las
+-- inserciones de combos de este archivo lo mandan; sus reglas están en 0071_combo_a_elegir_y_motivo_del_monto_test.sql.
 -- Va en una transacción.
 begin;
 select * from no_plan();
@@ -76,7 +78,11 @@ returns jsonb language sql as $$
   select jsonb_strip_nulls(jsonb_build_object(
     'id', pg_temp.u(p_id), 'venta_id', pg_temp.u(p_venta),
     'producto_id', pg_temp.u(p_prod), 'coleccion_id', pg_temp.u(p_col),
-    'cantidad', p_cant, 'precio_unitario', p_precio, 'subtotal', p_cant * p_precio));
+    'cantidad', p_cant, 'precio_unitario', p_precio, 'subtotal', p_cant * p_precio,
+    -- Desde la 0071 un ítem de combo trae lo que traía el combo (1 libro y 2 revistas).
+    'componentes', case when p_col is not null then jsonb_build_array(
+      jsonb_build_object('producto_id', pg_temp.u('11'), 'cantidad', 1),
+      jsonb_build_object('producto_id', pg_temp.u('12'), 'cantidad', 2)) end));
 $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
@@ -238,9 +244,9 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
 values (pg_temp.u('b0'), pg_temp.u('ca'), 'T-61', 220000, now(), pg_temp.u('b1'));
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select lives_ok(
-  $$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal)
+  $$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
      values ('01920000-0000-7000-8000-0000000061b1', '01920000-0000-7000-8000-0000000061b0',
-             '01920000-0000-7000-8000-0000000061d0', 2, 110000, 220000) $$,
+             '01920000-0000-7000-8000-0000000061d0', 2, 110000, 220000, '[{"producto_id": "01920000-0000-7000-8000-000000006111", "cantidad": 1}, {"producto_id": "01920000-0000-7000-8000-000000006112", "cantidad": 2}]'::jsonb) $$,
   'el colportor vende el combo como un ítem: coleccion_id y sin producto_id');
 select results_eq(
   $$ select producto_id is null, coleccion_id, cantidad, precio_unitario, subtotal
@@ -254,19 +260,19 @@ select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, produ
 select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, cantidad, precio_unitario, subtotal)
      values ('01920000-0000-7000-8000-0000000061b2', '01920000-0000-7000-8000-0000000061b0',
              1, 1000, 1000) $$), '23514', 'un ítem sin producto ni colección: rechazado');
-select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal)
+select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
      values ('01920000-0000-7000-8000-0000000061b2', '01920000-0000-7000-8000-0000000061b0',
-             '01920000-0000-7000-8000-0000000061ee', 1, 1000, 1000) $$), '23503', 'una colección que no existe: rechazada');
-select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal)
+             '01920000-0000-7000-8000-0000000061ee', 1, 1000, 1000, '[{"producto_id": "01920000-0000-7000-8000-000000006111", "cantidad": 1}, {"producto_id": "01920000-0000-7000-8000-000000006112", "cantidad": 2}]'::jsonb) $$), '23503', 'una colección que no existe: rechazada');
+select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
      values ('01920000-0000-7000-8000-0000000061b2', '01920000-0000-7000-8000-0000000061b0',
-             '01920000-0000-7000-8000-0000000061d0', 2, 110000, 999) $$), '23514', 'el subtotal del combo también es cantidad * precio_unitario');
-select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal)
+             '01920000-0000-7000-8000-0000000061d0', 2, 110000, 999, '[{"producto_id": "01920000-0000-7000-8000-000000006111", "cantidad": 1}, {"producto_id": "01920000-0000-7000-8000-000000006112", "cantidad": 2}]'::jsonb) $$), '23514', 'el subtotal del combo también es cantidad * precio_unitario');
+select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
      values ('01920000-0000-7000-8000-0000000061b2', '01920000-0000-7000-8000-0000000061b0',
-             '01920000-0000-7000-8000-0000000061d0', 0, 110000, 0) $$), '23514', 'ni 0 unidades de un combo');
+             '01920000-0000-7000-8000-0000000061d0', 0, 110000, 0, '[{"producto_id": "01920000-0000-7000-8000-000000006111", "cantidad": 1}, {"producto_id": "01920000-0000-7000-8000-000000006112", "cantidad": 2}]'::jsonb) $$), '23514', 'ni 0 unidades de un combo');
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal)
+select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
      values ('01920000-0000-7000-8000-0000000061b2', '01920000-0000-7000-8000-0000000061b0',
-             '01920000-0000-7000-8000-0000000061d0', 1, 110000, 110000) $$), '42501',
+             '01920000-0000-7000-8000-0000000061d0', 1, 110000, 110000, '[{"producto_id": "01920000-0000-7000-8000-000000006111", "cantidad": 1}, {"producto_id": "01920000-0000-7000-8000-000000006112", "cantidad": 2}]'::jsonb) $$), '42501',
           'otro colportor no agrega un combo a la venta de b1');
 select is((select count(*)::int from public.venta_item), 0, 'y b2 no ve el ítem de b1');
 select pg_temp.actuar_como_servidor();

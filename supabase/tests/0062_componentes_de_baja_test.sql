@@ -109,9 +109,9 @@ update public.coleccion set deleted_at = now() where id = pg_temp.u('d5');
 -- ---------------------------------------------------------------------------
 select is((select array_to_string(proargnames[3:], ',') from pg_proc
             where oid = 'public.precios_de_la_ciudad(uuid,date)'::regprocedure),
-          'tipo,id,nombre,es_bonificable,precio_general,precio_modificado,precio_vigente,origen,valido_desde,valido_hasta,componentes_de_baja',
-          'las columnas de la función: las de la 0037 y componentes_de_baja al final');
-select is((select (proallargtypes::oid[])[array_length(proallargtypes, 1)]::regtype::text from pg_proc
+          'tipo,id,nombre,es_bonificable,precio_general,precio_modificado,precio_vigente,origen,valido_desde,valido_hasta,componentes_de_baja,libros_a_elegir',
+          'las columnas de la función: las de la 0037, componentes_de_baja (0057) y libros_a_elegir (0071) al final');
+select is((select (proallargtypes::oid[])[array_length(proallargtypes, 1) - 1]::regtype::text from pg_proc
             where oid = 'public.precios_de_la_ciudad(uuid,date)'::regprocedure),
           'integer', 'componentes_de_baja es integer');
 select is((select count(*)::int from pg_proc p
