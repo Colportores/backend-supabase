@@ -283,6 +283,15 @@ values ('<nombre real>', '<descripción>', 'LIBRO', true, false, 12000, '<editor
   nunca decimal. `$120,00` son `12000`, no `120.00`.
 - `es_bonificable`/`es_misionero` son booleanos, default `false` si no los
   mandás.
+- `codigo_editor` (desde la migración `0070`) es el **código del editor**, opcional:
+  el colportor busca el libro por nombre o por código, y sin código lo encuentra por
+  nombre. Es texto (`'00123'` conserva los ceros), de 1 a 50 caracteres y sin espacios
+  ni saltos de línea al principio o al final (si no, `23514`). **No es único**: dos
+  ediciones del mismo título pueden compartirlo. Se carga en el `insert` o después:
+  ```sql
+  update public.producto set codigo_editor = '<código del editor>' where id = '<id de producto>';
+  -- sacarlo: = null (no una cadena vacía)
+  ```
 
 ### 6. `coleccion` (opcional — solo si el producto se vende agrupado)
 
@@ -510,6 +519,34 @@ values (null, '<id de coleccion>', '<id de campania_ciudad>', 45000, public.hoy_
   insert into public.precio_por_ciudad (producto_id, campania_ciudad_id, precio_venta, valido_desde)
   values ('<id de producto>', '<id de campania_ciudad>', 27000, public.hoy_montevideo());
   ```
+
+### 10. `parametro_global` (los días de antigüedad de los precios)
+
+Desde la migración `0070`. Son los parámetros de **toda la aplicación** que cambia
+Administración. Hoy hay uno: `dias_antiguedad_precios`, los **días desde que la colportora
+bajó los precios** a partir de los cuales el aviso se pone fuerte y le pide conectarse
+(sigue pudiendo vender). La migración ya crea la fila en **15**; baja al teléfono con el
+pull del catálogo.
+
+```sql
+-- Ver el valor actual:
+select clave, valor, updated_at from public.parametro_global where deleted_at is null;
+
+-- Cambiarlo (de 1 a 365; cualquier otro valor lo rechaza el check, 23514):
+update public.parametro_global set valor = 20
+ where clave = 'dias_antiguedad_precios' and deleted_at is null;
+```
+
+- **No se inserta otra fila ni se cambia la `clave`**: hay una sola fila viva por clave
+  (`23505`) y el check solo acepta `dias_antiguedad_precios`. Para cambiar el valor se
+  hace `update`, nunca `delete`.
+- **Cada cambio tiene que quedar registrado** (quién, cuándo, valor anterior y nuevo): la
+  decisión de Cristian del 23/10 lo pide. Hasta que exista la tabla `audit_log`
+  ([#136](https://github.com/Colportores/backend-supabase/issues/136)) **el SQL Editor
+  no deja registro**: anotá a mano en el issue o en el canal del equipo quién lo cambió,
+  cuándo y de qué valor a cuál. Por eso ningún cliente con sesión (ni el ADMIN) puede
+  escribir esta tabla todavía.
+- El teléfono lo toma en su próximo pull; no hace falta nada más.
 
 ## Qué NO se carga por esta vía
 

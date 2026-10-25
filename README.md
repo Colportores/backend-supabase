@@ -413,6 +413,15 @@ select public.tablero_de_inicio(campania_id, '2026-10-21'); -- un día anterior 
 - **Pendientes.** `pendientes` es `[]` hasta que V2 conecte los tickets por validar y los pedidos por autorizar.
 - **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; `CZ001` si la campaña no existe; una campaña terminada se lee. Solo cifras: ni clientes, ni ubicaciones, ni talonarios, ni emails.
 
+## Código del editor y días de antigüedad de los precios (0070)
+
+Desde la migración `0070` (backend-supabase#137, HU-CAT-006, decisiones de Cristian del 23/10 en front-colportores-mobile#157: «Código libro» y «Precio viejo») el catálogo trae dos datos más para la vista 26 «Precios»:
+
+- **`producto.codigo_editor`** (texto, opcional, no único): el código que le pone la casa editora. El colportor busca por nombre o por código; sin código, por nombre. De 1 a 50 caracteres, sin espacios ni saltos de línea al borde (`23514` si no). Baja por el pull con el producto y lo escribe el ADMIN, como el resto del producto. Se carga con la [guía de carga manual](docs/guia-carga-manual.md#5-producto).
+- **`parametro_global`** (tabla nueva): parámetros de toda la aplicación que cambia Administración. Una fila viva por `clave`, valor entero. Hoy solo `dias_antiguedad_precios` (15 por defecto, de 1 a 365): a los N días desde que la colportora bajó los precios el aviso se pone fuerte y le pide conectarse, pero la deja vender (el contador y el texto son del teléfono). Es una entidad del pull, solo bajada y sin filtro: todo usuario autenticado la lee (no lleva datos de personas ni de clientes). No va a Realtime.
+- **Quién la cambia.** Hoy solo el servidor y el SQL Editor ([guía § 10](docs/guia-carga-manual.md#10-parametro_global-los-días-de-antigüedad-de-los-precios)): ningún cliente con JWT escribe, ni siquiera el ADMIN. La decisión pide que cada cambio quede registrado (quién, cuándo, valor anterior y nuevo) en `audit_log`, que todavía no existe ([#136](https://github.com/Colportores/backend-supabase/issues/136)); cuando exista, el trigger que lo escribe y la escritura del ADMIN llegan juntos.
+- **Los datos.** Solo se suma: la columna nueva queda en `null` y la tabla nace con su fila de 15; no se toca ningún producto. Lo prueba `supabase/tests_migracion/0070_ok`.
+
 ## La visita: cobranza, sin persona y horas de la entrevista (0069)
 
 Desde la migración `0069` (backend-supabase#132, decisiones de Cristian del 23/10 en front-colportores-mobile#151: «Visita cobro», «Sin persona» y «Horas entrev») la visita:
