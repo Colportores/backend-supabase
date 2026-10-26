@@ -250,8 +250,8 @@ select pg_temp.u(x.v), x.m, 'EFECTIVO', x.f::timestamptz, x.baja, x.anul, case w
 -- Pedidos a la casa editora (un colportor, varios estados). Esperan autorización los PENDIENTE_AUTORIZACION
 -- vivos: b1 uno (hay otro dado de baja, uno AUTORIZADO, uno BORRADOR y uno RECHAZADO), b2, b3, b4, b5 (de
 -- baja), b8 y b6 (de Otra).
-insert into public.pedido_casa_editora (colportor_id, estado, monto_total, origen, deleted_at)
-select pg_temp.u(x.s), x.e, 1000, 'COLPORTOR', x.baja
+insert into public.pedido_casa_editora (colportor_id, estado, monto_total, origen, deleted_at, motivo_rechazo)
+select pg_temp.u(x.s), x.e, 1000, 'COLPORTOR', x.baja, case when x.e = 'RECHAZADO' then 'Motivo de prueba' end
   from (values
     ('b1', 'PENDIENTE_AUTORIZACION', null::timestamptz),
     ('b1', 'PENDIENTE_AUTORIZACION', now()),
