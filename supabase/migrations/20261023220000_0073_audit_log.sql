@@ -57,6 +57,12 @@
 -- descuido, no un detector; la regla de fondo es que el detalle lleve identificadores (uuid), días y
 -- cantidades, no texto de personas. Quién y sobre quién van en columnas (uuid), no en el detalle.
 --
+-- Regla para los eventos que vengan (decisión del orquestador, por el mapa de decisiones, P2 de
+-- backend-supabase#136): el detalle lleva SOLO ids, códigos, fechas, números y estados, y nunca copia
+-- texto libre (una nota, un motivo escrito por una persona): ese texto se nombra por `tabla` y
+-- `fila_id`, no se copia. No hay lista cerrada de claves por evento mientras ningún evento lleve
+-- texto libre.
+--
 -- ## Para otros repos
 --
 --   · docs-organizacion: HU-JOR-004 apunta a esta tabla; esquema-datos.md la suma (tabla de la
@@ -229,7 +235,8 @@ $$;
 
 comment on function auditoria.registrar(text, text, uuid, uuid, jsonb) is
   'La única puerta a audit_log (0073, backend-supabase#136): agrega un registro con el actor = '
-  'auth.uid(). La llaman las funciones y triggers SECURITY DEFINER de public dentro de la '
+  'auth.uid(). El detalle (p_metadata) lleva solo ids, códigos, fechas, números y estados: nunca copia '
+  'texto libre (una nota, un motivo); eso se nombra por tabla y fila_id. La llaman las funciones y triggers SECURITY DEFINER de public dentro de la '
   'transacción del cambio, y service_role. Rechaza (22023/23514) un evento mal formado o un detalle '
   'con correo o datos de clientes.';
 
