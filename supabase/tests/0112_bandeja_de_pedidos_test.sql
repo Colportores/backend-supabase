@@ -128,7 +128,7 @@ $$;
 --        ad admin; a0 colportor; a3 sin rol; a4 coordinador con el rol vencido.
 -- Colportores: b1 Ana Alfa (Abierta, zona Centro, ciudad uno)  b2 Beto Bravo (Abierta, sin zona)
 --        b3 Carla Cruz (Abierta, inscripción dada de baja)  b4 Diego Duarte (Otra)  b5 Elena Eguren (Cerrada
---        hace más de 15 días)  b6 Fede Fuentes (Reciente: terminó hace 10 días)  b7 Gabi Gómez (terminó hace
+--        hace más de 15 días)  b6 Fede Fuentes (Reciente: terminó hace 10 días; hoy en Nueva)  b7 Gabi Gómez (terminó hace
 --        15 días justos)  b8 Hugo Haedo (terminó hace 16 días)  b9 Ines Ibarra (solo en la campaña Borrada;
 --        su cuenta está dada de baja).
 -- Campañas: e1 Abierta (sin fin, a1)  e2 Otra (a2)  e3 Cerrada (2025, a1)  e4 Reciente  e7 Borde15
@@ -166,7 +166,8 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
   (pg_temp.u('e7'), 'Borde15',  'VERANO', public.hoy_montevideo() - 90, public.hoy_montevideo() - 15, pg_temp.u('a1'), null),
   (pg_temp.u('e8'), 'Borde16',  'VERANO', public.hoy_montevideo() - 90, public.hoy_montevideo() - 16, pg_temp.u('a1'), null),
   (pg_temp.u('e5'), 'Vacía',    'VERANO', '2026-08-03', null, pg_temp.u('a1'), null),
-  (pg_temp.u('e6'), 'Borrada',  'VERANO', '2026-08-03', null, pg_temp.u('a1'), now());
+  (pg_temp.u('e6'), 'Borrada',  'VERANO', '2026-08-03', null, pg_temp.u('a1'), now()),
+  (pg_temp.u('e9'), 'Nueva',    'VERANO', public.hoy_montevideo() - 5, null, pg_temp.u('a2'), null);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('71'), pg_temp.u('e1'), pg_temp.u('c1'));
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poligono_geojson) values
@@ -182,8 +183,12 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, created
   (pg_temp.u('e4'), pg_temp.u('b6'), null,            (public.hoy_montevideo() - 60)::timestamptz),
   (pg_temp.u('e7'), pg_temp.u('b7'), null,            (public.hoy_montevideo() - 90)::timestamptz),
   (pg_temp.u('e8'), pg_temp.u('b8'), null,            (public.hoy_montevideo() - 90)::timestamptz),
-  (pg_temp.u('e6'), pg_temp.u('b9'), null,            '2026-08-01 10:00-03');
-update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
+  (pg_temp.u('e6'), pg_temp.u('b9'), null,            '2026-08-01 10:00-03'),
+  (pg_temp.u('e9'), pg_temp.u('b6'), null,            (public.hoy_montevideo() - 5)::timestamptz);
+-- b4 estuvo fuera de Otra entre el 01/09 y el 20/09 (un hueco de la inscripción).
+update public.campania_colportor set tramos_afuera = array['[2026-09-01 00:00:00+00,2026-09-20 00:00:00+00)'::tstzrange]
+ where campania_id = pg_temp.u('e2') and usuario_id = pg_temp.u('b4');
+update public.campania_colportor set deleted_at = '2026-10-21 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b3');
 
 insert into public.producto (id, nombre, tipo, precio_base_compra) values
@@ -261,6 +266,23 @@ select pg_temp.u(x.id), pg_temp.u(x.col), x.est, x.tot, x.ori, x.exc,
     ('db', 'b9', 'PENDIENTE_AUTORIZACION',  1500, 'COLPORTOR',   false, 25, null,              null,         null,       null, null)
   ) x(id, col, est, tot, ori, exc, min, baja, mauth, dec, decen, mot);
 
+-- Los pedidos de las campañas con fechas propias se hicieron DENTRO de la inscripción: c9 en la Cerrada, ca en la
+-- Reciente, d7 y d8 en las de los bordes (decisión del 26/10: un pedido es de la campaña cuya ventana de
+-- inscripción lo contiene). b3 se dio de baja el 21/10 a las 12:00: sus pedidos c8 y d9 son anteriores.
+update public.pedido_casa_editora set fecha_pedido = case id
+    when pg_temp.u('c9') then '2025-01-15 10:00:00+00'::timestamptz
+    else (public.hoy_montevideo() - 30)::timestamptz + interval '12 hours' end
+ where id in (pg_temp.u('c9'), pg_temp.u('ca'), pg_temp.u('d7'), pg_temp.u('d8'));
+
+-- De qué campaña es un pedido (decisión del 26/10): b6 pasó de Reciente (a1, terminó hace 10 días) a Nueva
+-- (a2, abierta hace 5 días) y hoy pide dc. De b4, en Otra (alta 01/08 10:00, empieza el 03/08): dd entre el
+-- alta y el inicio (es de Otra), de antes del alta (de ninguna), df dentro del hueco (de ninguna).
+insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, origen, fecha_pedido) values
+  (pg_temp.u('dc'), pg_temp.u('b6'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', now()),
+  (pg_temp.u('dd'), pg_temp.u('b4'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', '2026-08-02 12:00:00-03'),
+  (pg_temp.u('de'), pg_temp.u('b4'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', '2026-07-30 12:00:00-03'),
+  (pg_temp.u('df'), pg_temp.u('b4'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', '2026-09-10 12:00:00-03');
+
 -- Líneas (pedido, producto, cantidad, costo, cantidad autorizada, dada de baja).
 insert into public.pedido_item (pedido_id, producto_id, cantidad, precio_unitario, cantidad_autorizada, deleted_at)
 select pg_temp.u(x.p), pg_temp.u(x.pr), x.c, x.pu, x.ca, x.baja
@@ -296,7 +318,11 @@ select pg_temp.u(x.p), pg_temp.u(x.pr), x.c, x.pu, x.ca, x.baja
     ('d7', '91', 1, 1500, null,          null),
     ('d8', '91', 1, 1500, null,          null),
     ('d9', '91', 1, 1500, null,          null),
-    ('db', '91', 1, 1500, null,          null)
+    ('db', '91', 1, 1500, null,          null),
+    ('dc', '91', 1, 1500, null,          null),
+    ('dd', '91', 1, 1500, null,          null),
+    ('de', '91', 1, 1500, null,          null),
+    ('df', '91', 1, 1500, null,          null)
   ) x(p, pr, c, pu, ca, baja);
 
 -- ============================================================================
@@ -335,10 +361,12 @@ select is(has_function_privilege(r, f, 'execute')::text, case when r = 'authenti
        unnest(array['anon', 'authenticated', 'service_role']) r;
 select is(has_function_privilege(r, f, 'execute')::text, 'false',
           format('%s no tiene EXECUTE en la pieza interna %s', r, f))
-  from unnest(array['public.pedido_para(uuid, boolean)', 'public.puede_decidir_pedido_de(uuid)',
+  from unnest(array['public.pedido_para(uuid, boolean)', 'public.puede_decidir_pedido_de(uuid, timestamptz)',
+                    'public.puede_ver_pedido_de(uuid, timestamptz)',
+                    'public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)',
                     'public.mover_deuda_casa_editora(uuid, bigint)', 'public.plazo_para_deshacer_pedido()']) f,
        unnest(array['anon', 'authenticated', 'service_role']) r;
--- PUBLIC (grantee 0) no tiene EXECUTE en ninguna de las diez.
+-- PUBLIC (grantee 0) no tiene EXECUTE en ninguna de las funciones nuevas.
 select is((select count(*)::int
              from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
             where a.grantee = 0 and a.privilege_type = 'EXECUTE'
@@ -347,7 +375,9 @@ select is((select count(*)::int
                             'public.rechazar_pedido(uuid, text)'::regprocedure,
                             'public.deshacer_decision_de_pedido(uuid)'::regprocedure,
                             'public.pedido_para(uuid, boolean)'::regprocedure,
-                            'public.puede_decidir_pedido_de(uuid)'::regprocedure,
+                            'public.puede_decidir_pedido_de(uuid, timestamptz)'::regprocedure,
+                            'public.puede_ver_pedido_de(uuid, timestamptz)'::regprocedure,
+                            'public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)'::regprocedure,
                             'public.mover_deuda_casa_editora(uuid, bigint)'::regprocedure,
                             'public.plazo_para_deshacer_pedido()'::regprocedure)), 0,
           'PUBLIC no tiene EXECUTE en ninguna de las funciones nuevas');
@@ -404,10 +434,20 @@ select is(pg_temp.err(pg_temp.u('a1'), format('select * from public.pedido_linea
 select is(pg_temp.ids(pg_temp.u('a1'), 'e1'), 'd9,d6,d5,d4,d3,d2,d0,cf,ce,cd,cc,c8,c4,c3,c2,c1',
           'la bandeja de Abierta: sus pedidos en los cinco estados, del más reciente al más viejo');
 select is(pg_temp.ids(pg_temp.u('ad'), 'e1'), pg_temp.ids(pg_temp.u('a1'), 'e1'), 'el administrador ve lo mismo');
-select is(pg_temp.ids(pg_temp.u('a2'), 'e2'), 'c7', 'cada campaña ve lo suyo: Otra solo el de b4');
+select is(pg_temp.ids(pg_temp.u('a2'), 'e2'), 'c7,dd',
+          'cada campaña ve lo suyo: Otra, los de b4 hechos dentro de su inscripción (dd entre el alta y el inicio; no de, df ni los de otra campaña)');
+select is(pg_temp.ids(pg_temp.u('ad'), 'e2'), 'c7,dd', 'el administrador, igual: la ventana vale para todos');
+select is(pg_temp.ids(pg_temp.u('a2'), 'e9'), 'dc', 'el pedido de hoy de b6 sale en Nueva (a2)...');
 select is(pg_temp.ids(pg_temp.u('a1'), 'e3'), 'c9', 'una campaña terminada se lee');
-select is(pg_temp.ids(pg_temp.u('a1'), 'e4'), 'ca', 'también la que terminó hace 10 días');
+select is(pg_temp.ids(pg_temp.u('a1'), 'e4'), 'ca', '...y NO en Reciente (a1, terminó hace 10 días): solo el que hizo entonces');
 select is(pg_temp.ids(pg_temp.u('a1'), 'e5'), '', 'la campaña sin colportores: bandeja vacía');
+
+select is(pg_temp.como(pg_temp.u('a1'), format('select coalesce(sum(pedidos), 0)::int as n from public.pedidos_por_autorizar_por_ciudad(%L)', pg_temp.u('e4'))) -> 0 ->> 'n',
+          '1', 'el aviso de Stock de Reciente cuenta solo ca, no el de hoy de b6 en Nueva (0111 con la ventana)');
+select is(pg_temp.como(pg_temp.u('a2'), format('select coalesce(sum(pedidos), 0)::int as n from public.pedidos_por_autorizar_por_ciudad(%L)', pg_temp.u('e9'))) -> 0 ->> 'n',
+          '1', 'y el de Nueva cuenta dc');
+select is(pg_temp.como(pg_temp.u('a2'), format('select coalesce(sum(pedidos), 0)::int as n from public.pedidos_por_autorizar_por_ciudad(%L)', pg_temp.u('e2'))) -> 0 ->> 'n',
+          '2', 'el de Otra, c7 y dd (no de ni df)');
 
 select is(pg_temp.lista(pg_temp.u('a1'), 'e1') -> 15 ->> 'pedido_id', pg_temp.u('c1')::text, 'la última fila es c1 (la más vieja)');
 create or replace function pg_temp.fila(p_ped text) returns jsonb language sql as $$
@@ -492,6 +532,23 @@ select is(pg_temp.aut(pg_temp.u('a1'), 'c7') ->> 'error', '42501', 'a1 no autori
 select is(pg_temp.aut(pg_temp.u('a1'), 'd9') ->> 'error', '42501', 'ni el de uno cuya inscripción está de baja');
 select is(pg_temp.aut(pg_temp.u('a1'), 'c9') ->> 'error', '42501', 'ni el de una campaña cerrada hace más de 15 días');
 select is(pg_temp.aut(pg_temp.u('a1'), 'd8') ->> 'error', '42501', 'ni el que terminó hace 16 días');
+-- El pedido de hoy de b6 es de Nueva (de a2): a1, que lo coordinó en Reciente, no lo ve ni lo decide.
+select is(pg_temp.aut(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'a1 no autoriza el pedido de hoy de b6 (es de la campaña de a2)');
+select is(pg_temp.rech(pg_temp.u('a1'), 'dc', 'Motivo') ->> 'error', '42501', 'ni lo rechaza');
+select is(pg_temp.lineas(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'ni lee sus líneas');
+select is(pg_temp.contexto(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'ni su contexto (la deuda de b6)');
+select is(pg_temp.des(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'ni lo deshace');
+select is(pg_temp.deuda('b6'), -1::bigint, 'b6 sigue sin deuda');
+select is(pg_temp.aut(pg_temp.u('a2'), 'de') ->> 'error', '42501', 'a2 no decide el que b4 hizo antes de inscribirse');
+select is(pg_temp.aut(pg_temp.u('a2'), 'df') ->> 'error', '42501', 'ni el que hizo en el hueco de su inscripción');
+select is(pg_temp.lineas(pg_temp.u('a2'), 'de') ->> 'error', '42501', 'ni lo lee');
+select is(pg_temp.lineas(pg_temp.u('ad'), 'de') -> 0 ->> 'cantidad', '1', 'el administrador sí lo lee');
+-- El borde: entre el alta y el inicio de la campaña, el pedido ya es de la campaña (pendiente P1 de la revisión).
+select is(pg_temp.aut(pg_temp.u('a2'), 'dd') -> 0 ->> 'estado', 'AUTORIZADO', 'a2 sí decide el de b4 hecho entre su alta y el inicio');
+select is(pg_temp.des(pg_temp.u('a2'), 'dd') -> 0 ->> 'estado', 'PENDIENTE_AUTORIZACION', 'y lo deshace');
+select is(pg_temp.aut(pg_temp.u('a2'), 'dc') -> 0 ->> 'estado', 'AUTORIZADO', 'a2 sí decide el de hoy de b6');
+select is(pg_temp.des(pg_temp.u('a2'), 'dc') -> 0 ->> 'estado', 'PENDIENTE_AUTORIZACION', 'y lo deshace');
+select is(pg_temp.deuda('b6'), 0::bigint, 'la deuda de b6 vuelve a cero');
 select is(pg_temp.aut(pg_temp.u('a1'), 'db') ->> 'error', '42501', 'ni el de una campaña dada de baja');
 select is(pg_temp.rech(pg_temp.u('a1'), 'db', 'Motivo') ->> 'error', '42501', 'ni rechazarlo');
 select is(pg_temp.contexto(pg_temp.u('ad'), 'db') -> 0 ->> 'deuda_actual', '0', 'la cuenta dada de baja no cuenta (deuda 0, no 777)');

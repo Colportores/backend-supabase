@@ -250,8 +250,10 @@ select pg_temp.u(x.v), x.m, 'EFECTIVO', x.f::timestamptz, x.baja, x.anul, case w
 -- Pedidos a la casa editora (un colportor, varios estados). Esperan autorización los PENDIENTE_AUTORIZACION
 -- vivos: b1 uno (hay otro dado de baja, uno AUTORIZADO, uno BORRADOR y uno RECHAZADO), b2, b3, b4, b5 (de
 -- baja), b8 y b6 (de Otra).
-insert into public.pedido_casa_editora (colportor_id, estado, monto_total, origen, deleted_at, motivo_rechazo)
-select pg_temp.u(x.s), x.e, 1000, 'COLPORTOR', x.baja, case when x.e = 'RECHAZADO' then 'Motivo de prueba' end
+-- Todos del 10/09: dentro de la inscripción (la de b5 se da de baja el 15/09) y antes del fin de Cierre (0112).
+insert into public.pedido_casa_editora (colportor_id, estado, monto_total, origen, deleted_at, motivo_rechazo, fecha_pedido)
+select pg_temp.u(x.s), x.e, 1000, 'COLPORTOR', x.baja, case when x.e = 'RECHAZADO' then 'Motivo de prueba' end,
+       '2026-09-10 12:00:00-03'
   from (values
     ('b1', 'PENDIENTE_AUTORIZACION', null::timestamptz),
     ('b1', 'PENDIENTE_AUTORIZACION', now()),

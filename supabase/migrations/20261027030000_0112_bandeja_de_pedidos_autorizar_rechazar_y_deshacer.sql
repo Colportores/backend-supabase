@@ -53,9 +53,15 @@
 --     `estado_cuenta.dinero_por_cobrar`: la misma cifra que Cuentas. `libros_por_entregar` son las unidades
 --     vendidas todavía no entregadas (como `por_entregar` de 0111). El último depósito es el más reciente
 --     vivo, con su fecha y su monto.
---   · Permiso de lectura: ADMIN, o COORDINADOR que coordina al colportor (`coordina_al_colportor()`, la
---     misma regla que la RLS de `pedido_casa_editora`). Los pedidos de la lista, por campaña, con el permiso
---     de campaña de las demás lecturas del panel (42501 / CZ001).
+--   · De qué campaña es un pedido (decisión del 26/10 de #101, `pedido_en_la_ventana()`): la campaña cuya
+--     ventana de inscripción contiene su `fecha_pedido` (desde el alta, antes de la baja, fuera de los
+--     `tramos_afuera`, hasta el día de fin de la campaña; sin recortar a `fecha_inicio`). Un colportor que
+--     pasó de la campaña A (de Marta) a la B (de Pedro) y pide hoy: el pedido es de B; Marta no lo ve ni
+--     lo decide. La misma regla corrige `pedidos_por_autorizar_por_ciudad` (0111), que contaba por
+--     colportor solamente.
+--   · Permiso de lectura: ADMIN, o COORDINADOR de la campaña a la que pertenece el pedido
+--     (`puede_ver_pedido_de()`, aun terminada o con el colportor dado de baja). La lista, por campaña, con
+--     el permiso de campaña de las demás lecturas del panel (42501 / CZ001).
 --
 -- ## Lo que decide (SECURITY DEFINER, VOLATILE, EXECUTE solo para `authenticated`)
 --
@@ -84,9 +90,10 @@
 --     actual con `ya_estaba = true`, sin tocar nada. Dos coordinadores a la vez: la fila se bloquea
 --     (FOR UPDATE) y el segundo recibe PE002.
 --   · Permiso de decisión (más estricto que el de lectura, ante la duda se bloquea): ADMIN, o COORDINADOR
---     de una campaña con el colportor inscripto sin baja y cuyo plazo de escritura siga abierto (hasta 15
---     días después de su fin, 0020). Quien solo coordinó al colportor en una campaña ya cerrada lo ve, pero
---     no le autoriza más pedidos.
+--     de la campaña a la que pertenece el pedido (`pedido_en_la_ventana()`) con el colportor inscripto sin
+--     baja y cuyo plazo de escritura siga abierto (hasta 15 días después de su fin, 0020). Quien solo
+--     coordinó al colportor en una campaña ya cerrada la ve, pero no le autoriza más pedidos; y la
+--     coordinadora de la campaña anterior no ve ni decide lo que el colportor pide en la de otro.
 --   · Auditoría obligatoria (HU-STK-003): `pedido_autorizado`, `pedido_rechazado` y
 --     `pedido_decision_deshecha`, en la misma transacción. El detalle lleva ids, montos y estados; el
 --     motivo del rechazo (texto libre) NO se copia: se nombra por tabla y fila_id.
@@ -224,9 +231,63 @@ comment on function public.mover_deuda_casa_editora(uuid, bigint) is
 revoke all on function public.mover_deuda_casa_editora(uuid, bigint)
   from public, anon, authenticated, service_role;
 
--- ¿El usuario autenticado puede AUTORIZAR o RECHAZAR el pedido de este colportor? ADMIN, o coordinador de
--- una campaña con el colportor inscripto (sin baja) cuyo plazo de escritura siga abierto (0020). Interna.
-create function public.puede_decidir_pedido_de(p_colportor_id uuid)
+-- ¿Este pedido es de la inscripción? La regla de la decisión del 26/10 (#101): un pedido es de la campaña cuya
+-- ventana de inscripción contiene su fecha_pedido: desde el alta (sin recortar a fecha_inicio: el que pide
+-- libros antes de que arranque es de la campaña en la que ya está inscripto), antes de la baja si la hubo, fuera
+-- de los huecos (tramos_afuera) y hasta el día en que termina la campaña (días de Montevideo, ambos incluidos).
+-- Interna.
+create function public.pedido_en_la_ventana(p_alta timestamptz, p_baja timestamptz, p_afuera tstzrange[],
+                                            p_fecha_fin date, p_fecha_pedido timestamptz)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select public.inscripcion_cubre_el_instante(p_alta, p_baja, p_afuera, p_fecha_pedido)
+     and public.hoy_montevideo(p_fecha_pedido) <= coalesce(p_fecha_fin, 'infinity'::date)
+$$;
+
+comment on function public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz) is
+  'true si un pedido hecho en p_fecha_pedido es de esta inscripción: dentro de la ventana de la inscripción '
+  '(alta, baja, tramos_afuera) y hasta el día de fin de la campaña (Montevideo). Sin recortar a fecha_inicio. '
+  'Interna (0112, decisión del 26/10 de #101).';
+
+revoke all on function public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)
+  from public, anon, authenticated, service_role;
+
+-- ¿El usuario autenticado puede VER el pedido que este colportor hizo en esa fecha? ADMIN, o coordinador de
+-- la campaña a cuya inscripción pertenece el pedido (aun terminada o con el colportor dado de baja). Interna.
+create function public.puede_ver_pedido_de(p_colportor_id uuid, p_fecha_pedido timestamptz)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select public.tiene_rol('ADMIN')
+      or (public.tiene_rol('COORDINADOR')
+          and exists (select 1
+                        from public.campania_colportor cc
+                        join public.campania c on c.id = cc.campania_id
+                       where cc.usuario_id = p_colportor_id
+                         and c.deleted_at is null
+                         and c.coordinador_id = auth.uid()
+                         and public.pedido_en_la_ventana(cc.created_at, cc.deleted_at, cc.tramos_afuera,
+                                                         c.fecha_fin, p_fecha_pedido)));
+$$;
+
+comment on function public.puede_ver_pedido_de(uuid, timestamptz) is
+  'true si el usuario autenticado es ADMIN, o COORDINADOR de la campaña a cuya inscripción de '
+  'p_colportor_id pertenece un pedido hecho en p_fecha_pedido (pedido_en_la_ventana). No ve lo que el '
+  'colportor pidió en la campaña de otro coordinador. Interna (0112).';
+
+revoke all on function public.puede_ver_pedido_de(uuid, timestamptz)
+  from public, anon, authenticated, service_role;
+
+-- ¿El usuario autenticado puede AUTORIZAR o RECHAZAR el pedido de este colportor hecho en esa fecha? ADMIN, o
+-- coordinador de la campaña a cuya inscripción (sin baja) pertenece el pedido, con el plazo de escritura
+-- abierto (0020). Interna.
+create function public.puede_decidir_pedido_de(p_colportor_id uuid, p_fecha_pedido timestamptz)
 returns boolean
 language sql
 stable
@@ -242,15 +303,18 @@ as $$
                          and cc.deleted_at is null
                          and c.deleted_at is null
                          and c.coordinador_id = auth.uid()
-                         and public.escritura_dentro_de_plazo(c.fecha_fin)));
+                         and public.escritura_dentro_de_plazo(c.fecha_fin)
+                         and public.pedido_en_la_ventana(cc.created_at, cc.deleted_at, cc.tramos_afuera,
+                                                         c.fecha_fin, p_fecha_pedido)));
 $$;
 
-comment on function public.puede_decidir_pedido_de(uuid) is
-  'true si el usuario autenticado es ADMIN, o COORDINADOR de una campaña donde p_colportor_id está '
-  'inscripto sin baja y cuyo plazo de escritura (fin + 15 días, 0020) sigue abierto. Más estricta que '
-  'coordina_al_colportor() a propósito: ver y decidir no es lo mismo. Interna (0112).';
+comment on function public.puede_decidir_pedido_de(uuid, timestamptz) is
+  'true si el usuario autenticado es ADMIN, o COORDINADOR de la campaña a cuya inscripción (sin baja) de '
+  'p_colportor_id pertenece un pedido hecho en p_fecha_pedido (pedido_en_la_ventana) y cuyo plazo de '
+  'escritura (fin + 15 días, 0020) sigue abierto. Más estricta que puede_ver_pedido_de() a propósito: '
+  'ver y decidir no es lo mismo. Interna (0112).';
 
-revoke all on function public.puede_decidir_pedido_de(uuid)
+revoke all on function public.puede_decidir_pedido_de(uuid, timestamptz)
   from public, anon, authenticated, service_role;
 
 -- El pedido, con el permiso ya comprobado. p_escribir = true lo bloquea (FOR UPDATE) y pide el permiso de
@@ -286,11 +350,11 @@ begin
   end if;
 
   if p_escribir then
-    if not public.puede_decidir_pedido_de(v_pedido.colportor_id) then
-      raise exception 'No podés decidir este pedido: el colportor no está inscripto en una campaña tuya que siga abierta. Si es un error, pedile a un administrador que lo decida.'
+    if not public.puede_decidir_pedido_de(v_pedido.colportor_id, v_pedido.fecha_pedido) then
+      raise exception 'No podés decidir este pedido: no es de una campaña tuya que siga abierta (el colportor tiene que estar inscripto en ella cuando lo pidió). Si es un error, pedile a un administrador que lo decida.'
         using errcode = 'insufficient_privilege';
     end if;
-  elsif not (public.tiene_rol('ADMIN') or public.coordina_al_colportor(v_pedido.colportor_id)) then
+  elsif not public.puede_ver_pedido_de(v_pedido.colportor_id, v_pedido.fecha_pedido) then
     raise exception 'Este pedido no es de un colportor de tus campañas. Elegí uno de la bandeja.'
       using errcode = 'insufficient_privilege';
   end if;
@@ -300,9 +364,9 @@ end;
 $$;
 
 comment on function public.pedido_para(uuid, boolean) is
-  'El pedido de p_pedido_id con el permiso comprobado (0112): lectura = ADMIN o quien coordina al '
-  'colportor; escritura = además campaña abierta, y bloquea la fila. 42501 sin permiso; PE001 si no '
-  'existe. Interna.';
+  'El pedido de p_pedido_id con el permiso comprobado (0112): lectura = ADMIN o el coordinador de la campaña '
+  'a la que pertenece el pedido; escritura = además campaña abierta, y bloquea la fila. 42501 sin permiso; '
+  'PE001 si no existe. Interna.';
 
 revoke all on function public.pedido_para(uuid, boolean)
   from public, anon, authenticated, service_role;
@@ -358,10 +422,12 @@ begin
            case when pe.estado in ('AUTORIZADO', 'RECHAZADO')
                 then pe.decidido_en + public.plazo_para_deshacer_pedido() end
       from public.campania_colportor i
+      join public.campania ca on ca.id = i.campania_id
       join public.pedido_casa_editora pe
         on pe.colportor_id = i.usuario_id
        and pe.deleted_at is null
        and pe.estado in ('PENDIENTE_AUTORIZACION', 'AUTORIZADO', 'DESPACHADO', 'RECIBIDO', 'RECHAZADO')
+       and public.pedido_en_la_ventana(i.created_at, i.deleted_at, i.tramos_afuera, ca.fecha_fin, pe.fecha_pedido)
       join public.usuario usr on usr.id = i.usuario_id
       left join public.zona z
              on z.id = i.zona_id and z.deleted_at is null and i.deleted_at is null
@@ -382,8 +448,9 @@ $$;
 
 comment on function public.pedidos_de_campania(uuid) is
   'Vista 35, HU-STK-003 (0112, backend-supabase#104): los pedidos a la casa editora de los colportores de '
-  'la campaña en los cinco estados de las pestañas (por autorizar, autorizado, despachado, recibido, '
-  'rechazado; sin borradores ni cancelados), el más reciente primero, con la ciudad de la zona actual del '
+  'la campaña (los que hizo mientras estaba inscripto en ella y hasta que terminó: no los que pidió en la '
+  'campaña de otro coordinador) en los cinco estados de las pestañas (por autorizar, autorizado, '
+  'despachado, recibido, rechazado; sin borradores ni cancelados), el más reciente primero, con la ciudad de la zona actual del '
   'colportor, lo pedido y lo autorizado, el motivo del rechazo y hasta cuándo se puede deshacer lo '
   'decidido. Errores: 42501 sin permiso; CZ001 campaña inexistente. Una campaña terminada se lee.';
 
@@ -781,3 +848,59 @@ comment on function public.deshacer_decision_de_pedido(uuid) is
 revoke all on function public.deshacer_decision_de_pedido(uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.deshacer_decision_de_pedido(uuid) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 8. pedidos_por_autorizar_por_ciudad (0111) con la ventana de la inscripción
+-- ----------------------------------------------------------------------------
+
+-- Mismo cuerpo que en 0111, más la ventana: el aviso de Stock cuenta los pedidos de ESTA campaña, no los que el
+-- colportor hizo en la de otro coordinador. Los privilegios no cambian (create or replace los conserva).
+create or replace function public.pedidos_por_autorizar_por_ciudad(p_campania_id uuid)
+returns table (ciudad_id uuid, ciudad_nombre text, departamento text, pedidos integer)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_motivo  text;
+begin
+  v_motivo := public.motivo_mapa_de_campania(p_campania_id);
+  if v_motivo = 'SIN_PERMISO' then
+    raise exception 'Solo el coordinador de la campaña o un administrador puede ver sus pedidos. Entrá con la cuenta del coordinador de esta campaña.'
+      using errcode = 'insufficient_privilege';
+  end if;
+  if v_motivo is distinct from 'CAMPANIA_TERMINADA' then
+    perform public.lanzar_motivo_mapa(v_motivo);
+  end if;
+
+  return query
+    select ciu.id,
+           ciu.nombre,
+           ciu.departamento,
+           (count(*))::integer
+      from public.campania_colportor i
+      left join public.zona z
+             on z.id = i.zona_id and z.deleted_at is null and i.deleted_at is null
+      left join public.campania_ciudad cc
+             on cc.id = z.campania_ciudad_id and cc.deleted_at is null
+      left join public.ciudad ciu on ciu.id = cc.ciudad_id
+      join public.campania ca on ca.id = i.campania_id
+      join public.pedido_casa_editora pe
+        on pe.colportor_id = i.usuario_id
+       and pe.estado = 'PENDIENTE_AUTORIZACION'
+       and pe.deleted_at is null
+       and public.pedido_en_la_ventana(i.created_at, i.deleted_at, i.tramos_afuera, ca.fecha_fin, pe.fecha_pedido)
+     where i.campania_id = p_campania_id
+     group by ciu.id, ciu.nombre, ciu.departamento
+     order by ciu.nombre nulls last, ciu.id;
+end;
+$$;
+
+comment on function public.pedidos_por_autorizar_por_ciudad(uuid) is
+  'Vista 34, HU-STK-010 (0111, backend-supabase#101, decisión «Pedidos stock» del 25/10): cuántos pedidos a '
+  'la casa editora esperan autorización (estado PENDIENTE_AUTORIZACION, vivos) por ciudad de la zona actual '
+  'del colportor de la campaña (ciudad null = sin ciudad). Solo las ciudades con al menos uno; solo el '
+  'número. Solo los pedidos de esta campaña (0112, decisión del 26/10: los hechos dentro de la ventana de la '
+  'inscripción, no los que el colportor pidió en la campaña de otro coordinador). Errores: 42501 sin permiso; '
+  'CZ001 campaña inexistente. Una campaña terminada se lee.';
