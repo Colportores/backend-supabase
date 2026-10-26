@@ -86,6 +86,9 @@ values ('Uruguay', 'UY');
 
 - `iso_code` es **`char(2)` y único**: un segundo `'UY'` lo rechaza. Revisá
   primero con `select * from public.pais;` si ya está cargado.
+- **Recién cargado el país, cargá el catálogo de ciudades de Uruguay** (desde la migración `0109`, backend-supabase#139):
+  `select public.cargar_catalogo_ciudades();` ([§ 2](#el-catálogo-de-ciudades-de-uruguay-desde-openstreetmap)). La
+  migración ya lo hizo si el país existía cuando se aplicó; en una base que recibió el país después, hay que correrlo.
 
 ### 2. `ciudad`
 
@@ -101,8 +104,9 @@ values ('<nombre real>', '<departamento>', '<id de pais>', <lat>, <lon>, 13,
   es obligatorio en toda ciudad (HU-ADM-005) y la base lo exige: una ciudad nueva sin departamento se rechaza con `CD001` («Cargá el departamento de la ciudad») y a una que ya lo tiene no se le puede borrar. El panel agrupa
   y filtra por él (departamento → ciudad) y el buscador de «+ Agregar ciudad» muestra cada ciudad
   con su departamento y también busca por él; con dos «San José» es lo que las distingue.
-  - Escribilo siempre igual (misma ortografía, con tilde: «Paysandú», no «Paysandu»): el panel
-    agrupa por el texto exacto, y «Salto» y «salto» serían dos grupos. El esquema rechaza uno en
+  - **No lo escribas: elegilo de la lista** (los 19 de OpenStreetMap, `select * from public.departamentos_de_uruguay();`).
+    Ortografía y tilde son las de la lista («Paysandú», no «Paysandu»): el panel agrupa por el texto exacto, y «Salto» y «salto»
+    serían dos grupos. Las ciudades del catálogo de abajo y el alta a mano ya lo usan tal cual. El esquema rechaza uno en
     blanco, con espacios al principio o al final, o de más de 60 caracteres
     (`ciudad_departamento_check`).
   - Para cargarlo o corregirlo después (los teléfonos lo bajan por el sync):
@@ -153,6 +157,44 @@ values ('<nombre real>', '<departamento>', '<id de pais>', <lat>, <lon>, 13,
        set bbox_oeste = <oeste>, bbox_sur = <sur>, bbox_este = <este>, bbox_norte = <norte>
      where id = '<id de ciudad>';
     ```
+
+#### El catálogo de ciudades de Uruguay desde OpenStreetMap
+
+Desde la migración `0109` (backend-supabase#139, decisiones de Cristian del 23/10, «Área depto» y «Fuera de OSM») la tabla
+`ciudad` ya trae **las ciudades, pueblos y villas de Uruguay de OpenStreetMap**, cada una con su departamento (uno de los 19),
+su centro y su rectángulo cuando OSM trae el límite; así los nombres de la ciudad y del departamento coinciden con los del
+mapa que baja el colportor y no hay errores de tipeo. La lista y su fuente están en
+[`tiles/datos/uruguay-osm.json`](../tiles/datos/uruguay-osm.json) (© OpenStreetMap contributors, ODbL 1.0; explicación en
+[`mapas-tiles.md`](mapas-tiles.md#el-catálogo-de-uruguay-departamentos-y-ciudades-de-openstreetmap)).
+
+- **`ciudad.origen`**: `'OSM'` si la ciudad está en esa lista, `'MANUAL'` si la cargó Administración a mano. Una ciudad
+  `MANUAL` no trae rectángulo, así que **no tiene mapa propio** hasta tener su área (el publicador solo publica las que tienen
+  uno). Lo mismo una `OSM` cuyo límite OSM no trae: queda en la lista, sin rectángulo y sin mapa de ciudad.
+- **Cargar o recargar el catálogo** (idempotente; no borra ni duplica):
+  ```sql
+  select public.cargar_catalogo_ciudades();
+  ```
+  Devuelve `{pais, emparejadas, actualizadas, insertadas, sin_pareja}`. Empareja por **nombre y departamento** (sin tildes ni
+  mayúsculas, también con las dadas de baja: una ciudad que se dio de baja a propósito no se vuelve a crear). A las que casan
+  les pone `origen = 'OSM'`, el departamento escrito como en la lista y, si no tenían rectángulo y el de OSM contiene a su
+  centro, ese; **no les cambia el nombre, el centro ni un rectángulo que ya tenían**. Agrega las que faltan.
+- **Las que no casan se avisan, no se borran**: las ciudades que ya estaban y no figuran en la lista con ese nombre y departamento
+  (`sin_pareja`, y un aviso al correrlo). Quedan como estaban, `MANUAL`. Dos casos típicos: una ciudad con otro nombre que el de
+  OSM (se corrige el nombre con un `update` y se vuelve a correr) y una **ciudad vieja sin departamento** (no casa por
+  definición: completá el departamento como arriba y volvé a correr; si no, queda una repetida y se da de baja la sobrante).
+- **Una ciudad que no está en OSM: alta a mano**, con el nombre y el departamento **de la lista**:
+  ```sql
+  select * from public.agregar_ciudad_a_mano('<nombre real>', '<departamento de la lista>');
+  ```
+  No lleva rectángulo ni centro: queda `MANUAL`, sin mapa propio, con el centro del departamento (se corrige con un `update`
+  de `lat_centro` y `lon_centro`). **El aviso de parecido no frena**: la ciudad se crea igual y la respuesta trae en
+  `parecidas` las que ya estaban y se le parecen, cada una con su `motivo` (`IGUAL`, `MISMO_NOMBRE_OTRO_DEPARTAMENTO`,
+  `PARECIDO`). **Leelo siempre**: si es `IGUAL` o `PARECIDO` de una que ya existe, probablemente es una repetida; dala de baja
+  (`update public.ciudad set deleted_at = now() where id = '<id>';`) o, si en cambio era la correcta, dá de baja la otra.
+  Errores: `CD002` (nombre en blanco o de más de 100 caracteres), `CD003` (el departamento no es uno de los 19) y `CD004`
+  (falta el país Uruguay).
+- Para dar el rectángulo a una ciudad `MANUAL` cuando se tenga su área, el `update` de cuatro valores juntos de abajo. El
+  `origen` queda `MANUAL`: el mapa propio lo decide el rectángulo, no el origen.
 
 #### Montevideo, lista para pegar (la primera ciudad con mapa)
 
