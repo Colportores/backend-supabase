@@ -19,7 +19,7 @@ select is((select count(*)::int from public.campania_colportor
             where tipo_beca is not null or meta_monto_ces is not null or limite_pedido is not null), 0,
           'ninguna inscripción trae beca, meta de monto ni límite: sin beca y sin límite');
 select is((select count(*)::int from public.campania_colportor c join public.prueba_0067_campania_colportor s using (id)
-            where to_jsonb(c) - 'tipo_beca' - 'meta_monto_ces' - 'limite_pedido' is distinct from to_jsonb(s)), 0,
+            where to_jsonb(c) - 'tipo_beca' - 'meta_monto_ces' - 'limite_pedido' - 'tramos_afuera' is distinct from to_jsonb(s)), 0,
           'las 3 inscripciones quedaron idénticas (meta_libros, baja, versión de sync y xmin_w incluidos) salvo las columnas nuevas');
 select is((select meta_libros from public.campania_colportor where id = '01920000-0000-7000-8000-0000000067c1'), 120,
           'la meta de libros de antes sigue');

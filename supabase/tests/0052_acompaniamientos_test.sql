@@ -231,20 +231,21 @@ select is((select array(select k from jsonb_object_keys(
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.historial_de_acompaniamientos(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['acompaniante_apellido','acompaniante_id','acompaniante_nombre','apellido','colportor_id',
-                'dia','en_curso','horas','jornada_id','nombre'],
-          'el historial trae el día, las horas y quién acompañó: ni la hora de inicio, ni clientes, ni email');
+          array['acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
+                'acompaniante_nombre','apellido','colportor_id','dia','en_curso','horas','jornada_id','nombre'],
+          'el historial trae el día, las horas, quién acompañó, de dónde salió el dato y la nota: ni la hora de inicio, ni clientes, ni email');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.jornadas_cerradas_de_colportor(pg_temp.u('e1'), pg_temp.u('b1')) r limit 1)) k
                  order by k collate "C")),
-          array['acompaniante_apellido','acompaniante_id','acompaniante_nombre','dia','horas','jornada_id'],
-          'las jornadas traen el día, las horas y quién acompañó: ni la hora de inicio ni clientes');
+          array['acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
+                'acompaniante_nombre','dia','horas','jornada_id'],
+          'las jornadas traen el día, las horas, quién acompañó, el origen y la nota: ni la hora de inicio ni clientes');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.agregar_acompaniamiento(pg_temp.u('e1'), pg_temp.u('f7')) r limit 1)) k
                  order by k collate "C")),
-          array['acompaniante_apellido','acompaniante_id','acompaniante_nombre','colportor_id','dia',
-                'jornada_id','ya_estaba'],
-          'agregar devuelve la jornada, el día y quién acompañó');
+          array['acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
+                'acompaniante_nombre','colportor_id','dia','jornada_id','ya_estaba'],
+          'agregar devuelve la jornada, el día, quién acompañó, el origen y la nota');
 select pg_temp.actuar_como_servidor();
 -- El anterior agregó a7 a f7: lo deshago para que los casos de abajo partan de las fixtures.
 update public.jornada set acompaniante_id = null where id = pg_temp.u('f7');
@@ -253,16 +254,16 @@ select is((select array_agg(p order by p collate "C") from (
             select format('%s:%s:%s', f, has_function_privilege(r, f, 'execute'), r) p
               from unnest(array['public.acompaniamientos_por_colportor(uuid)',
                                 'public.historial_de_acompaniamientos(uuid,uuid)',
-                                'public.agregar_acompaniamiento(uuid,uuid)',
+                                'public.agregar_acompaniamiento(uuid,uuid,uuid,text)',
                                 'public.jornadas_cerradas_de_colportor(uuid,uuid)']) f
              cross join unnest(array['anon','authenticated','service_role']) r) q),
           array[
             'public.acompaniamientos_por_colportor(uuid):f:anon',
             'public.acompaniamientos_por_colportor(uuid):f:service_role',
             'public.acompaniamientos_por_colportor(uuid):t:authenticated',
-            'public.agregar_acompaniamiento(uuid,uuid):f:anon',
-            'public.agregar_acompaniamiento(uuid,uuid):f:service_role',
-            'public.agregar_acompaniamiento(uuid,uuid):t:authenticated',
+            'public.agregar_acompaniamiento(uuid,uuid,uuid,text):f:anon',
+            'public.agregar_acompaniamiento(uuid,uuid,uuid,text):f:service_role',
+            'public.agregar_acompaniamiento(uuid,uuid,uuid,text):t:authenticated',
             'public.historial_de_acompaniamientos(uuid,uuid):f:anon',
             'public.historial_de_acompaniamientos(uuid,uuid):f:service_role',
             'public.historial_de_acompaniamientos(uuid,uuid):t:authenticated',
@@ -275,7 +276,7 @@ select is((select array_agg(format('%s:%s', r, has_function_privilege(r, 'public
           array['anon:f','authenticated:f','service_role:f'],
           'la interna no la ejecuta nadie desde afuera');
 select is((select prosecdef and proconfig = array['search_path=""'] from pg_proc
-            where oid = 'public.agregar_acompaniamiento(uuid,uuid)'::regprocedure),
+            where oid = 'public.agregar_acompaniamiento(uuid,uuid,uuid,text)'::regprocedure),
           true, 'agregar es SECURITY DEFINER con search_path vacío');
 
 -- ---------------------------------------------------------------------------
@@ -438,8 +439,10 @@ select is(pg_temp.jornadas('e7', 'b7'), '-5|1.00|null',
           'Reasignada: solo la jornada posterior a la inscripción (93), no 91 ni 92');
 select is(pg_temp.historial('e7', 'b7'), '(vacío)',
           'Reasignada: el acompañamiento de la otra campaña (91) no aparece en el historial');
-select is(pg_temp.fila('e7', 'b7'), format('0|null|60|%s|(sin ciudad)', pg_temp.hoy() - 60),
-          'Reasignada: el acompañamiento de la otra campaña no cuenta ni mueve los días sin acompañar');
+-- 0100 («Días acomp.», decisión del 23/10): quien nunca fue acompañado se cuenta desde que se sumó (hace 10
+-- días), no desde el inicio de la campaña (hace 60).
+select is(pg_temp.fila('e7', 'b7'), format('0|null|10|%s|(sin ciudad)', pg_temp.hoy() - 10),
+          'Reasignada: el acompañamiento de la otra campaña no cuenta, y los días se cuentan desde que se sumó');
 select is((select count(*) from public.historial_de_acompaniamientos(pg_temp.u('e7'))), 0::bigint,
           'Reasignada: tampoco en el historial de todos');
 

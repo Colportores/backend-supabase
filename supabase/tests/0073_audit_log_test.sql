@@ -318,12 +318,12 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.n('acompaniamiento_agregado'), 1::bigint, 'dejó un registro');
 select results_eq(
   $$select actor_user_id, target_user_id, tabla, fila_id, metadata from auditoria.audit_log where event_type = 'acompaniamiento_agregado'$$,
-  format($$values (%L::uuid, %L::uuid, 'jornada'::text, %L::uuid, jsonb_build_object('campania_id', %L::uuid, 'dia', %L::date))$$,
-         pg_temp.u('a1'), pg_temp.u('b1'), pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.hoy() - 3),
-  'actor = el coordinador, target = el colportor, la jornada, y el detalle con la campaña y el día');
+  format($$values (%L::uuid, %L::uuid, 'jornada'::text, %L::uuid, jsonb_build_object('campania_id', %L::uuid, 'dia', %L::date, 'acompaniante_id', %L::uuid, 'con_nota', false))$$,
+         pg_temp.u('a1'), pg_temp.u('b1'), pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.hoy() - 3, pg_temp.u('a1')),
+  'actor = el coordinador, target = el colportor, la jornada, y el detalle con la campaña, el día, quién acompañó y si hubo nota');
 select is((select array_agg(k order by k) from auditoria.audit_log a, jsonb_object_keys(a.metadata) k
             where a.event_type = 'acompaniamiento_agregado'),
-          array['campania_id','dia'], 'el detalle tiene solo esas dos claves');
+          array['acompaniante_id','campania_id','con_nota','dia'], 'el detalle tiene solo esas cuatro claves (ni nombres ni el texto de la nota)');
 select is((select count(*) from auditoria.audit_log
             where event_type = 'acompaniamiento_agregado'
               and (metadata::text like '%@%' or metadata::text ~* 'mail|nombre|apellido|Ana|Alfa|Mariela|Pereyra')),
@@ -385,17 +385,20 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.n('acompaniamiento_agregado'), 2::bigint, 'al deshacerse el cambio, el registro se deshace con él');
 select is((select acompaniante_id from public.jornada where id = pg_temp.u('f8')), null::uuid, 'y la jornada queda como estaba');
 
--- Los retornos de agregar_acompaniamiento no cambiaron.
+-- Los retornos de agregar_acompaniamiento (0100: dos parámetros opcionales y dos columnas al final).
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select count(*) from public.agregar_acompaniamiento(pg_temp.u('e1'), pg_temp.u('f8'))), 1::bigint,
           'agregar_acompaniamiento() sigue devolviendo una fila');
 select pg_temp.actuar_como_servidor();
-select is((select proargnames::text[] from pg_proc where oid = 'public.agregar_acompaniamiento(uuid,uuid)'::regprocedure),
-          array['p_campania_id','p_jornada_id','jornada_id','colportor_id','dia','acompaniante_id',
-                'acompaniante_nombre','acompaniante_apellido','ya_estaba'], 'con la misma firma');
-select is(has_function_privilege('authenticated', 'public.agregar_acompaniamiento(uuid,uuid)', 'execute'), true,
+select is((select proargnames::text[] from pg_proc where oid = 'public.agregar_acompaniamiento(uuid,uuid,uuid,text)'::regprocedure),
+          array['p_campania_id','p_jornada_id','p_acompaniante_id','p_nota','jornada_id','colportor_id','dia',
+                'acompaniante_id','acompaniante_nombre','acompaniante_apellido','ya_estaba',
+                'acompaniamiento_origen','acompaniamiento_nota'], 'con los dos parámetros opcionales de la 0100 y las dos columnas nuevas');
+select is((select count(*) from pg_proc where proname = 'agregar_acompaniamiento' and pronamespace = 'public'::regnamespace),
+          1::bigint, 'y es una sola función: la de dos argumentos ya no existe');
+select is(has_function_privilege('authenticated', 'public.agregar_acompaniamiento(uuid,uuid,uuid,text)', 'execute'), true,
           'el coordinador sigue pudiendo llamarla');
-select is(has_function_privilege('anon', 'public.agregar_acompaniamiento(uuid,uuid)', 'execute'), false, 'anon no');
+select is(has_function_privilege('anon', 'public.agregar_acompaniamiento(uuid,uuid,uuid,text)', 'execute'), false, 'anon no');
 
 select * from finish();
 rollback;
