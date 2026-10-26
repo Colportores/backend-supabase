@@ -65,8 +65,9 @@ select results_eq(
        from sync.entidad where nombre = 'precio_por_ciudad' $$,
   $$ values ('precio_por_ciudad'::text, 'precio_por_ciudad'::text, 'id'::text, false, true) $$,
   'la entidad de sync: precio_por_ciudad, de solo bajada y siguiendo las campañas del usuario');
--- Sin ubicacion_par_decidido ni devolucion, que suman 0032 y 0108 (después del renombre).
-select is((select count(*)::int from sync.entidad where nombre not in ('ubicacion_par_decidido', 'devolucion')), 22,
+-- Sin ubicacion_par_decidido (0032), parametro_global (0070) ni devolucion (0108), que suman después del renombre.
+select is((select count(*)::int from sync.entidad
+            where nombre not in ('ubicacion_par_decidido', 'parametro_global', 'devolucion')), 22,
           'el renombre no sumó ni sacó entidades (siguen 22)');
 
 -- --- realtime ---------------------------------------------------------------------------------
