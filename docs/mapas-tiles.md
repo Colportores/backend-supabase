@@ -531,7 +531,7 @@ La lista es [`tiles/datos/uruguay-osm.json`](../tiles/datos/uruguay-osm.json):
 | `pais` | Uruguay y su rectángulo `[oeste, sur, este, norte]` (la relación `relation/287072`) |
 | `departamentos` | Los 19, con su nombre de OSM («Paysandú», «Río Negro», «Treinta y Tres»…), su código ISO 3166-2 y su rectángulo |
 | `ciudades` | Las ciudades, pueblos y villas (`place` = `city`, `town` o `village`) con nombre: su departamento, su centro y su rectángulo **cuando OSM trae el límite** (el límite administrativo de nivel 8 con el mismo nombre que contiene al centro; si un lugar está mapeado como área, el suyo). Sin límite en OSM, `bbox` es `null`: **no se inventa un rectángulo** y la ciudad no tiene mapa propio hasta tener uno |
-| `descartados` | Lo que se dejó afuera al armarla, con el motivo: un lugar de la frontera que cae en dos departamentos queda en el primero; dos del mismo nombre en un departamento son uno (queda el de mayor categoría y población) |
+| `descartados` | Lo que se dejó afuera al armarla, con el motivo: un pueblo repartido entre departamentos (OSM lo mapea con un solo nodo: Agraciada, Merinos, Tambores, Cerro Chato) queda en uno solo, el que fija `DEPARTAMENTO_DE_LOS_PUEBLOS_REPARTIDOS` en `tiles/src/uruguay.mjs`, y uno nuevo que no figure ahí cae en el primero A-Z y se anota para decidirlo; dos del mismo nombre en un departamento son uno (queda el de mayor categoría y población) |
 
 Se arma con `node src/cli.mjs catalogo-uruguay` (Overpass, de a una consulta y con espera creciente si el servidor está
 saturado; `--overpass URL` o `OVERPASS_URL` para usar otro servidor). El comando valida la lista antes de escribirla y,

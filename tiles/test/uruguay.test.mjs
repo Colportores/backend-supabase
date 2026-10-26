@@ -117,12 +117,36 @@ test('el mismo nombre en dos departamentos son dos ciudades (hay dos «San José
   assert.deepEqual(c.ciudades.filter((x) => x.nombre === 'Santa Ana').map((x) => x.departamento), ['Colonia', 'San José']);
 });
 
-test('un lugar de la frontera que cae en dos departamentos queda en el primero', () => {
+test('un lugar de la frontera que no está decidido queda en el primero A-Z y lo dice', () => {
   const frontera = nodo(7, 'Paso', 'village', -33, -56.5);
   const c = armarCatalogo(descargadoDePrueba({ Flores: [frontera], Durazno: [frontera] }), { generadoEn: GENERADO });
   assert.equal(c.ciudades.length, 1);
   assert.equal(c.ciudades[0].departamento, 'Durazno', 'en el orden en que se bajaron (A-Z)');
-  assert.match(c.descartados[0].motivo, /ya estaba en otro departamento/);
+  assert.match(c.descartados[0].motivo, /está en varios departamentos; queda en Durazno, no en Flores \(sin decidir/);
+});
+
+test('un pueblo repartido entre departamentos queda en el suyo, no en el primero A-Z', () => {
+  const agraciada = nodo(1969333020, 'Agraciada', 'village', -33.8, -58.26);
+  const merinos = nodo(2412142715, 'Merinos', 'village', -32.38, -56.9);
+  const tambores = nodo(8295489019, 'Tambores', 'town', -31.87, -56.24);
+  const cerroChato = nodo(8310185667, 'Cerro Chato', 'village', -33.1, -55.13);
+  const c = armarCatalogo(
+    descargadoDePrueba({
+      Colonia: [agraciada], Soriano: [agraciada],
+      Paysandú: [merinos, tambores], 'Río Negro': [merinos], Tacuarembó: [tambores],
+      Durazno: [cerroChato], Florida: [cerroChato], 'Treinta y Tres': [cerroChato],
+    }),
+    { generadoEn: GENERADO },
+  );
+  const dondeEsta = (nombre) => c.ciudades.filter((x) => x.nombre === nombre).map((x) => x.departamento);
+  assert.deepEqual(dondeEsta('Agraciada'), ['Soriano']);
+  assert.deepEqual(dondeEsta('Merinos'), ['Río Negro']);
+  assert.deepEqual(dondeEsta('Tambores'), ['Tacuarembó']);
+  assert.deepEqual(dondeEsta('Cerro Chato'), ['Treinta y Tres']);
+  assert.equal(c.ciudades.length, 4, 'una sola ciudad por pueblo');
+  assert.equal(c.descartados.length, 5, 'las otras apariciones quedan anotadas');
+  assert.ok(c.descartados.every((d) => !/sin decidir/.test(d.motivo)), 'todas decididas');
+  assert.deepEqual(validarCatalogo(c), []);
 });
 
 test('el catálogo es determinista: la misma entrada da el mismo texto', () => {

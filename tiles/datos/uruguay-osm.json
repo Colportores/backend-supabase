@@ -141,7 +141,6 @@
     {"nombre":"Río Branco","departamento":"Cerro Largo","tipo":"city","osm":"node/1377855698","lat":-32.588689,"lon":-53.378083,"bbox":[-53.404447,-32.613405,-53.360678,-32.571113]},
     {"nombre":"Toledo","departamento":"Cerro Largo","tipo":"village","osm":"node/1377815704","lat":-32.52959,"lon":-54.529423,"bbox":[-54.536432,-32.533035,-54.52278,-32.527748]},
     {"nombre":"Tupambaé","departamento":"Cerro Largo","tipo":"town","osm":"node/617894020","lat":-32.836365,"lon":-54.763265,"bbox":[-54.773488,-32.841957,-54.752761,-32.826845]},
-    {"nombre":"Agraciada","departamento":"Colonia","tipo":"village","osm":"node/1969333020","lat":-33.808454,"lon":-58.26543,"bbox":[-58.271208,-33.814081,-58.26207,-33.807497]},
     {"nombre":"Britópolis","departamento":"Colonia","tipo":"village","osm":"node/1382175284","lat":-34.431865,"lon":-57.271174,"bbox":[-57.274868,-34.435735,-57.261681,-34.427688]},
     {"nombre":"Campana","departamento":"Colonia","tipo":"village","osm":"node/1382098113","lat":-34.032615,"lon":-57.90291,"bbox":[-57.905857,-34.035435,-57.894256,-34.029844]},
     {"nombre":"Carmelo","departamento":"Colonia","tipo":"city","osm":"node/332605466","lat":-33.996783,"lon":-58.283648,"bbox":[-58.306604,-34.020626,-58.25909,-33.972581]},
@@ -171,7 +170,6 @@
     {"nombre":"Carlos Reyles","departamento":"Durazno","tipo":"town","osm":"node/1335836184","lat":-33.05713,"lon":-56.476676,"bbox":[-56.493908,-33.066393,-56.464789,-33.047124]},
     {"nombre":"Carmen","departamento":"Durazno","tipo":"town","osm":"node/1195770129","lat":-33.241037,"lon":-56.013145,"bbox":[-56.01971,-33.250029,-55.989812,-33.223424]},
     {"nombre":"Centenario","departamento":"Durazno","tipo":"town","osm":"node/1335836152","lat":-32.828319,"lon":-56.498647,"bbox":[-56.507622,-32.8392,-56.490312,-32.820664]},
-    {"nombre":"Cerro Chato","departamento":"Durazno","tipo":"village","osm":"node/8310185667","lat":-33.104469,"lon":-55.134686,"bbox":[-55.141515,-33.111304,-55.131748,-33.10169]},
     {"nombre":"Durazno","departamento":"Durazno","tipo":"city","osm":"node/416492912","lat":-33.380125,"lon":-56.522499,"bbox":[-56.556067,-33.422993,-56.491953,-33.333975]},
     {"nombre":"La Paloma","departamento":"Durazno","tipo":"town","osm":"node/1335909499","lat":-32.727674,"lon":-55.579665,"bbox":[-55.593038,-32.736756,-55.570981,-32.717351]},
     {"nombre":"San Jorge","departamento":"Durazno","tipo":"village","osm":"node/1335963058","lat":-32.844651,"lon":-55.89638,"bbox":[-55.899498,-32.847893,-55.891357,-32.837188]},
@@ -250,7 +248,6 @@
     {"nombre":"Gallinal","departamento":"Paysandú","tipo":"village","osm":"node/1376859184","lat":-31.883681,"lon":-57.478253,"bbox":[-57.484727,-31.88858,-57.469478,-31.880899]},
     {"nombre":"Guichón","departamento":"Paysandú","tipo":"town","osm":"node/1370545820","lat":-32.360382,"lon":-57.200298,"bbox":[-57.211405,-32.369242,-57.185713,-32.348144]},
     {"nombre":"Lorenzo Geyres","departamento":"Paysandú","tipo":"village","osm":"node/1376859300","lat":-32.079071,"lon":-57.919112,"bbox":[-57.923651,-32.08496,-57.913195,-32.074314]},
-    {"nombre":"Merinos","departamento":"Paysandú","tipo":"village","osm":"node/2412142715","lat":-32.387549,"lon":-56.907344,"bbox":[-56.913115,-32.389421,-56.901762,-32.386883]},
     {"nombre":"Morató","departamento":"Paysandú","tipo":"village","osm":"node/1376339286","lat":-32.378608,"lon":-56.703047,"bbox":[-56.70674,-32.381823,-56.694838,-32.374741]},
     {"nombre":"Nuevo Paysandú","departamento":"Paysandú","tipo":"town","osm":"node/1376334001","lat":-32.270209,"lon":-58.083776,"bbox":[-58.098854,-32.294828,-58.034644,-32.23225]},
     {"nombre":"Orgoroso","departamento":"Paysandú","tipo":"village","osm":"node/1370545830","lat":-32.380286,"lon":-57.517759,"bbox":[-57.520273,-32.386045,-57.514057,-32.377671]},
@@ -259,7 +256,6 @@
     {"nombre":"Porvenir","departamento":"Paysandú","tipo":"town","osm":"node/1376316066","lat":-32.393204,"lon":-57.967888,"bbox":[-57.975466,-32.398211,-57.96417,-32.389323]},
     {"nombre":"Quebracho","departamento":"Paysandú","tipo":"town","osm":"node/1376859169","lat":-31.935564,"lon":-57.90054,"bbox":[-57.908525,-31.943399,-57.884066,-31.928331]},
     {"nombre":"San Félix","departamento":"Paysandú","tipo":"town","osm":"node/1376293967","lat":-32.351118,"lon":-58.101682,"bbox":[-58.111481,-32.355289,-58.089249,-32.335651]},
-    {"nombre":"Tambores","departamento":"Paysandú","tipo":"town","osm":"node/8295489019","lat":-31.872889,"lon":-56.245137,"bbox":[-56.252057,-31.889268,-56.238432,-31.869498]},
     {"nombre":"Algorta","departamento":"Río Negro","tipo":"village","osm":"node/1361732096","lat":-32.423098,"lon":-57.392484,"bbox":[-57.401488,-32.425673,-57.38752,-32.420114]},
     {"nombre":"Barrio Anglo","departamento":"Río Negro","tipo":"village","osm":"node/1370564872","lat":-33.119277,"lon":-58.327015,"bbox":[-58.336545,-33.12793,-58.319653,-33.116]},
     {"nombre":"Bellaco","departamento":"Río Negro","tipo":"village","osm":"node/1370494498","lat":-32.763295,"lon":-57.881223,"bbox":[-57.882011,-32.767204,-57.87927,-32.7629]},
@@ -268,6 +264,7 @@
     {"nombre":"Las Cañas","departamento":"Río Negro","tipo":"village","osm":"node/1370506418","lat":-33.164637,"lon":-58.355935,"bbox":[-58.360487,-33.18063,-58.351906,-33.158396]},
     {"nombre":"Los Arrayanes","departamento":"Río Negro","tipo":"village","osm":"node/1370506421","lat":-33.236175,"lon":-58.038236,"bbox":[-58.042556,-33.240224,-58.020432,-33.221616]},
     {"nombre":"Los Mellizos","departamento":"Río Negro","tipo":"village","osm":"node/1370559708","lat":-32.52001,"lon":-57.161461,"bbox":[-57.166246,-32.524867,-57.156288,-32.517927]},
+    {"nombre":"Merinos","departamento":"Río Negro","tipo":"village","osm":"node/2412142715","lat":-32.387549,"lon":-56.907344,"bbox":[-56.913115,-32.389421,-56.901762,-32.386883]},
     {"nombre":"Nuevo Berlín","departamento":"Río Negro","tipo":"town","osm":"node/332595126","lat":-32.980345,"lon":-58.056946,"bbox":[-58.066016,-32.994214,-58.024696,-32.966864]},
     {"nombre":"San Javier","departamento":"Río Negro","tipo":"town","osm":"node/1338520866","lat":-32.666427,"lon":-58.133043,"bbox":[-58.140288,-32.674639,-58.123795,-32.657166]},
     {"nombre":"Villa General Borges","departamento":"Río Negro","tipo":"village","osm":"node/1370549899","lat":-32.55823,"lon":-57.388302,"bbox":[-57.393812,-32.56244,-57.382919,-32.555437]},
@@ -343,6 +340,7 @@
     {"nombre":"San Luis","departamento":"San José","tipo":"village","osm":"node/11675734135","lat":-34.729326,"lon":-56.460333,"bbox":null},
     {"nombre":"Santa Maria","departamento":"San José","tipo":"village","osm":"node/11675734134","lat":-34.741391,"lon":-56.43729,"bbox":null},
     {"nombre":"Villa María","departamento":"San José","tipo":"village","osm":"node/470781779","lat":-34.51422,"lon":-56.760592,"bbox":[-56.769032,-34.518977,-56.758724,-34.511143]},
+    {"nombre":"Agraciada","departamento":"Soriano","tipo":"village","osm":"node/1969333020","lat":-33.808454,"lon":-58.26543,"bbox":[-58.271208,-33.814081,-58.26207,-33.807497]},
     {"nombre":"Cañada Nieto","departamento":"Soriano","tipo":"village","osm":"node/698623074","lat":-33.698565,"lon":-58.109437,"bbox":[-58.116441,-33.702042,-58.102619,-33.695843]},
     {"nombre":"Cardona","departamento":"Soriano","tipo":"town","osm":"node/1156306843","lat":-33.870754,"lon":-57.367137,"bbox":[-57.38172,-33.878679,-57.354796,-33.859871]},
     {"nombre":"Chacras de Dolores","departamento":"Soriano","tipo":"town","osm":"node/1328856205","lat":-33.550905,"lon":-58.215285,"bbox":[-58.240264,-33.593893,-58.175625,-33.514338]},
@@ -368,6 +366,8 @@
     {"nombre":"Paso del Cerro","departamento":"Tacuarembó","tipo":"village","osm":"node/1369151062","lat":-31.479052,"lon":-55.832233,"bbox":[-55.838327,-31.482922,-55.827598,-31.473351]},
     {"nombre":"San Gregorio de Polanco","departamento":"Tacuarembó","tipo":"town","osm":"node/1335909480","lat":-32.618052,"lon":-55.834555,"bbox":[-55.852101,-32.624299,-55.809088,-32.586673]},
     {"nombre":"Tacuarembó","departamento":"Tacuarembó","tipo":"city","osm":"node/302666274","lat":-31.711018,"lon":-55.978876,"bbox":[-56.042473,-31.751054,-55.932332,-31.682281]},
+    {"nombre":"Tambores","departamento":"Tacuarembó","tipo":"town","osm":"node/8295489019","lat":-31.872889,"lon":-56.245137,"bbox":[-56.252057,-31.889268,-56.238432,-31.869498]},
+    {"nombre":"Cerro Chato","departamento":"Treinta y Tres","tipo":"village","osm":"node/8310185667","lat":-33.104469,"lon":-55.134686,"bbox":[-55.141515,-33.111304,-55.131748,-33.10169]},
     {"nombre":"La Charqueada","departamento":"Treinta y Tres","tipo":"town","osm":"node/1374865146","lat":-33.205385,"lon":-53.805936,"bbox":[-53.814329,-33.210551,-53.797647,-33.19646]},
     {"nombre":"Rincón","departamento":"Treinta y Tres","tipo":"village","osm":"node/1354019486","lat":-32.833524,"lon":-53.83249,"bbox":[-53.835705,-32.838284,-53.819015,-32.825188]},
     {"nombre":"Santa Clara de Olimar","departamento":"Treinta y Tres","tipo":"town","osm":"node/1354055747","lat":-32.923541,"lon":-54.944498,"bbox":[-54.964642,-32.930683,-54.916481,-32.914238]},
@@ -376,10 +376,10 @@
     {"nombre":"Villa Sara","departamento":"Treinta y Tres","tipo":"town","osm":"node/1374975038","lat":-33.253978,"lon":-54.414073,"bbox":[-54.427581,-33.26479,-54.400154,-33.238156]}
   ],
   "descartados": [
-    {"osm":"node/1969333020","nombre":"Agraciada","motivo":"ya estaba en otro departamento (queda en el primero)"},
-    {"osm":"node/2412142715","nombre":"Merinos","motivo":"ya estaba en otro departamento (queda en el primero)"},
-    {"osm":"node/8295489019","nombre":"Tambores","motivo":"ya estaba en otro departamento (queda en el primero)"},
-    {"osm":"node/8310185667","nombre":"Cerro Chato","motivo":"ya estaba en otro departamento (queda en el primero)"},
-    {"osm":"node/8310185667","nombre":"Cerro Chato","motivo":"ya estaba en otro departamento (queda en el primero)"}
+    {"osm":"node/1969333020","nombre":"Agraciada","motivo":"está en varios departamentos; queda en Soriano, no en Colonia"},
+    {"osm":"node/2412142715","nombre":"Merinos","motivo":"está en varios departamentos; queda en Río Negro, no en Paysandú"},
+    {"osm":"node/8295489019","nombre":"Tambores","motivo":"está en varios departamentos; queda en Tacuarembó, no en Paysandú"},
+    {"osm":"node/8310185667","nombre":"Cerro Chato","motivo":"está en varios departamentos; queda en Treinta y Tres, no en Durazno"},
+    {"osm":"node/8310185667","nombre":"Cerro Chato","motivo":"está en varios departamentos; queda en Treinta y Tres, no en Florida"}
   ]
 }

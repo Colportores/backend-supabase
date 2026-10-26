@@ -134,6 +134,20 @@ export async function descargar({ fetchImpl = fetch, url = URL_OVERPASS, esperar
 // Armar el catálogo
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * Pueblos que OSM mapea con UN solo nodo pero cuya población está repartida entre departamentos (la nota del nodo lo
+ * dice: «Una sola poblacion en dos departamentos»). La consulta por departamento los trae en todos los que toca; la
+ * ciudad tiene que quedar en el departamento al que pertenece la localidad, no en el primero de la lista A-Z (si
+ * Administración corrigiera a mano el departamento, recargar la lista la duplicaría). Revisión del PR #176, ronda 1.
+ * Un pueblo repartido que no figure acá cae en el primero A-Z y se anota en `descartados` para decidirlo.
+ */
+export const DEPARTAMENTO_DE_LOS_PUEBLOS_REPARTIDOS = new Map([
+  ['node/1969333020', 'Soriano'], // Agraciada (también Colonia)
+  ['node/2412142715', 'Río Negro'], // Merinos (también Paysandú)
+  ['node/8295489019', 'Tacuarembó'], // Tambores (también Paysandú)
+  ['node/8310185667', 'Treinta y Tres'], // Cerro Chato (también Durazno y Florida)
+]);
+
 const ordenDeTipo = (tipo) => TIPOS_DE_LUGAR.length - TIPOS_DE_LUGAR.indexOf(tipo);
 const poblacion = (e) => Number.parseInt(String(e.tags?.population ?? '').replace(/\D/g, ''), 10) || 0;
 const areaDe = (bbox) => (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
@@ -149,7 +163,8 @@ const limpiar = (texto) => String(texto ?? '').replace(/\s+/g, ' ').trim();
  *   · el rectángulo es el del límite administrativo de nivel 8 con el mismo nombre normalizado que contiene al
  *     centro (si hay varios, el más chico); un lugar mapeado como área trae el suyo. Sin límite, no hay
  *     rectángulo: no se inventa uno;
- *   · un lugar que cae en dos departamentos (la frontera) queda en el primero; dos del mismo nombre normalizado en
+ *   · un lugar que cae en dos departamentos (la frontera) queda en el que dice
+ *     `DEPARTAMENTO_DE_LOS_PUEBLOS_REPARTIDOS` o, si no figura, en el primero A-Z; dos del mismo nombre normalizado en
  *     un mismo departamento son uno (queda el de mayor categoría y población). El resto se anota en `descartados`.
  */
 export function armarCatalogo(descargado, { generadoEn }) {
@@ -166,7 +181,21 @@ export function armarCatalogo(descargado, { generadoEn }) {
     limitesPorNombre.get(nombre).push(bbox);
   }
 
-  const vistos = new Set();
+  // En qué departamentos aparece cada lugar (la frontera: más de uno) y en cuál se queda.
+  const apareceEn = new Map();
+  for (const { departamento, elementos } of lugaresPorDepartamento) {
+    for (const e of elementos) {
+      const osm = idOsm(e);
+      if (!apareceEn.has(osm)) apareceEn.set(osm, []);
+      apareceEn.get(osm).push(departamento);
+    }
+  }
+  const departamentoDondeSeQueda = (osm) => {
+    const candidatos = apareceEn.get(osm);
+    const elegido = DEPARTAMENTO_DE_LOS_PUEBLOS_REPARTIDOS.get(osm);
+    const principal = elegido && candidatos.find((id) => normalizar(nombreDeDepartamento.get(id)) === normalizar(elegido));
+    return principal ?? candidatos[0];
+  };
   const porClave = new Map();
   const descartados = [];
   for (const { departamento, elementos } of lugaresPorDepartamento) {
@@ -176,11 +205,12 @@ export function armarCatalogo(descargado, { generadoEn }) {
       const tipo = e.tags?.place;
       if (nombre === '' || !TIPOS_DE_LUGAR.includes(tipo)) continue;
       const osm = idOsm(e);
-      if (vistos.has(osm)) {
-        descartados.push({ osm, nombre, motivo: `ya estaba en otro departamento (queda en el primero)` });
+      const destino = departamentoDondeSeQueda(osm);
+      if (destino !== departamento) {
+        const sinDecidir = DEPARTAMENTO_DE_LOS_PUEBLOS_REPARTIDOS.has(osm) ? '' : ' (sin decidir: el primero A-Z)';
+        descartados.push({ osm, nombre, motivo: `está en varios departamentos; queda en ${nombreDeDepartamento.get(destino)}, no en ${nombreDepartamento}${sinDecidir}` });
         continue;
       }
-      vistos.add(osm);
       const lat = e.type === 'node' ? e.lat : e.center?.lat;
       const lon = e.type === 'node' ? e.lon : e.center?.lon;
       if (typeof lat !== 'number' || typeof lon !== 'number') continue;
