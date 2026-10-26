@@ -21,6 +21,8 @@ drop schema if exists sync cascade;
 -- Lo mismo con las calles de OSM del ruteo (0036): su propio schema, y la extensión pgrouting (en
 -- `extensions`) se queda, que la migración la crea con `if not exists`.
 drop schema if exists ruteo cascade;
+-- Y la auditoria de la nube (0073): su propio schema, con una FK contra public.usuario.
+drop schema if exists auditoria cascade;
 -- auth es de la imagen y no se dropea, pero sus filas sobreviven al reset y
 -- chocan con los fixtures de los tests, que insertan usuarios con id fijo.
 -- El trigger on_auth_user_created se va con `public`, así que esto no recrea perfiles.
