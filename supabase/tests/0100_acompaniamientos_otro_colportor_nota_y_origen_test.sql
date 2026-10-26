@@ -253,8 +253,8 @@ select is(pg_temp.upd('acompaniamiento_nota = '' con espacio'''), '23514', 'una 
 select is(pg_temp.upd('acompaniamiento_nota = ''con espacio '''), '23514', 'y al final, también');
 select is(pg_temp.upd('acompaniamiento_nota = E''salto\n'''), '23514', 'y con un salto de línea al final');
 select is(pg_temp.upd('acompaniamiento_nota = ''''') , '23514', 'una nota vacía no existe (es null)');
-select is(pg_temp.upd(format('acompaniamiento_nota = %L', repeat('á', 280))), 'ok', '280 caracteres (acentuados: son caracteres, no bytes) entran');
-select is(pg_temp.upd(format('acompaniamiento_nota = %L', repeat('á', 281))), '23514', '281, no');
+select is(pg_temp.upd(format('acompaniamiento_nota = %L', repeat('á', 500))), 'ok', '500 caracteres (acentuados: son caracteres, no bytes) entran');
+select is(pg_temp.upd(format('acompaniamiento_nota = %L', repeat('á', 501))), '23514', '501, no');
 select is(pg_temp.upd(format('acompaniamiento_nota = %L', 'uno' || chr(10) || 'dos')), 'ok', 'una nota de dos renglones entra');
 -- Sin acompañante no hay origen ni nota: el servidor los limpia (y el CHECK lo respalda).
 select is(pg_temp.upd('acompaniante_id = null'), 'ok', 'quitar al acompañante desde el servidor no falla');
@@ -299,7 +299,7 @@ select is(pg_temp.cod('e1', 'f3', 'b2'), 'JO003', 'una jornada que ya acompañó
 select is(pg_temp.cod('e1', 'f3', 'b5'), 'JO003', 'y si el elegido tampoco es de la campaña, gana JO003 (nada se puede hacer)');
 select is(pg_temp.cod('e1', 'f1', 'b2'), 'JO003', 'f1 ya figura con a1: otro colportor no la pisa');
 select alike(pg_temp.agregar('e1', 'f1', 'b2'), '%Mariela Pereyra%', 'y el aviso dice quién');
-select is(pg_temp.cod('e1', 'fc', null, repeat('x', 281)), '22023', 'una nota de 281 caracteres: 22023, antes de tocar nada');
+select is(pg_temp.cod('e1', 'fc', null, repeat('x', 501)), '22023', 'una nota de 501 caracteres: 22023, antes de tocar nada');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.jornada j join antes a using (id)
             where j.sync_version is distinct from a.sync_version
@@ -335,9 +335,9 @@ select is(pg_temp.agregar('e1', 'f2', 'a1', 'otra'), 'true|Mariela Pereyra|COORD
 select pg_temp.actuar_como_servidor();
 update public.jornada set acompaniante_id = null where id in (pg_temp.u('fd'), pg_temp.u('fe'), pg_temp.u('f2'), pg_temp.u('f1'), pg_temp.u('fc'));
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.agregar('e1', 'fd', null, repeat('á', 280)), 'false|Mariela Pereyra|COORDINADOR|' || repeat('á', 280), 'una nota de 280 caracteres acentuados entra');
-select is(pg_temp.cod('e1', 'fe', null, repeat('á', 281)), '22023', 'una de 281, no');
-select alike(pg_temp.agregar('e1', 'fe', null, repeat('á', 281)), '%hasta 280 caracteres y esta tiene 281%', 'y el aviso dice cuántos tiene');
+select is(pg_temp.agregar('e1', 'fd', null, repeat('á', 500)), 'false|Mariela Pereyra|COORDINADOR|' || repeat('á', 500), 'una nota de 500 caracteres acentuados entra');
+select is(pg_temp.cod('e1', 'fe', null, repeat('á', 501)), '22023', 'una de 501, no');
+select alike(pg_temp.agregar('e1', 'fe', null, repeat('á', 501)), '%hasta 500 caracteres y esta tiene 501%', 'y el aviso dice cuántos tiene');
 select is(pg_temp.guardado('fe'), 'null|null|null', 'sin tocar la jornada');
 select pg_temp.actuar_como_servidor();
 update public.jornada set acompaniante_id = null where id = pg_temp.u('fd');
