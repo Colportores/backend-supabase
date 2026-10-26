@@ -338,7 +338,7 @@ create or replace function pg_temp.lote(p_numero text) returns jsonb language sq
     pg_temp.job('96', 'house_status', 'insert', jsonb_build_object('ubicacion_id', pg_temp.id('d9'),
       'lat', (pg_temp.a(30, 0)).lat, 'lon', (pg_temp.a(30, 0)).lon, 'tipo_ubicacion', 'CASA', 'color', 'VENTA_COMPLETA',
       'prioridad', 4)),
-    pg_temp.job('97', 'espacio', 'update', jsonb_build_object('id', pg_temp.id('d8'), 'descripcion', 'fondo'), 0),
+    pg_temp.job('97', 'espacio', 'update', jsonb_build_object('id', pg_temp.id('d8'), 'piso', '2'), 0),
     pg_temp.job('98', 'espacio', 'insert', jsonb_build_object('id', pg_temp.id('d4'), 'ubicacion_id', pg_temp.id('d3'))),
     pg_temp.job('99', 'ubicacion', 'insert', jsonb_build_object('id', pg_temp.id('d2'), 'tipo', 'CASA',
       'calle', 'Colonia', 'numero', '1', 'lat', -34.95, 'lon', -56.25, 'ciudad_id', '01920000-0000-7000-8000-0000000020c1')));

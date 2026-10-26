@@ -70,14 +70,9 @@ psql_db() { "${C[@]}" exec -T db psql -U supabase_admin -d postgres -At -v ON_ER
   -c "alter role authenticator with login password 'postgres'"
 
 paso "imágenes"
-# Un registro que contesta mal una vez (un TLS handshake timeout, por ejemplo) no tiene que tirar la prueba: 3 intentos.
-for imagen in "$STORAGE_IMAGEN" "$REST_IMAGEN" node:22-bookworm-slim; do
-  for intento in 1 2 3; do
-    docker pull -q "$imagen" >/dev/null && break
-    if [ "$intento" = 3 ]; then echo "FALLO: no pude bajar $imagen"; exit 1; fi
-    sleep 5
-  done
-done
+# Un registro que contesta mal una vez (un TLS handshake timeout o un `toomanyrequests` de ghcr.io) no tiene
+# que tirar la prueba: 3 intentos con espera creciente (20 s, 60 s). Solo el pull se reintenta, nunca las pruebas.
+bash "$RAIZ/scripts/ci-pull.sh" "$STORAGE_IMAGEN" "$REST_IMAGEN" node:22-bookworm-slim
 
 read -r ANON SERVICIO < <(docker run --rm -v "$PRUEBA:/p:ro" node:22-bookworm-slim node /p/jwt.mjs "$SECRETO")
 
