@@ -434,6 +434,16 @@ Desde la migración `0072` (backend-supabase#133, decisiones de Cristian del 23/
 - **El coordinador anula con `anular_cobro(cobranza_id, motivo)`** (ADMIN, o el coordinador de una campaña con el colportor de la venta inscripto; a los demás, y si el cobro no existe o está de baja, `CB004`). Motivo de la lista (`22023`), mismas 72 h (`CB001`), idempotente (`ya_estaba`). Con el ticket validado él sí puede. El UPDATE sube `sync_version`: un push viejo de ese cobro vuelve `conflict` (`cobranza` no baja al teléfono).
 - **Los datos.** Solo se suma; ningún cobro cambia. Lo prueba `supabase/tests_migracion/0072_ok`.
 
+## La devolución: lo devuelto y el reembolso en el momento (0108)
+
+Desde la migración `0108` (backend-supabase#134; ADR-002 y la decisión de Cristian del 23/10 en front-colportores-mobile#161, «Reembolso»: «Dentro de la devolución») existe `devolucion`, una entidad del push (contrato §2, sin `alsoPull`). La venta original no se toca: la devolución se anota aparte y el teléfono recalcula el saldo con ella.
+
+- **Qué guarda.** `venta_id`; `productos_devueltos` (jsonb `[{"producto_id", "cantidad"}]`: al menos un producto, sin repetir, cantidad entera mayor que 0, esas dos claves y nada más, sin precios; en V1 no hay stock ni beca, pero se guardan los productos para que V2 recalcule sin perder nada); `dinero_retenido` (centavos, 0 si no retiene: «Lo retengo»); `monto_reembolsado` (centavos, **opcional**: lo que se le devolvió al cliente en el momento, «Se lo devuelvo ahora»; la mayoría de las devoluciones no devuelven plata y va vacío; «En mano» lo resta); `fecha_devolucion` (la del teléfono, sin default); `colportor_id` (lo fija el servidor desde el JWT y se descarta del payload) y las columnas de siempre. «Se lo devuelvo después» no guarda nada: el saldo negativo es «Debo al cliente». Una devolución mal cargada se da de baja con `deleted_at`.
+- **Quién.** Solo la colportora dueña (`colportor_id = auth.uid()`) y solo sobre una venta suya: el `WITH CHECK` mira `venta.colportor_id`. El coordinador y el ADMIN no la leen por la tabla; sin DELETE.
+- **Qué rechaza el push** (`invalid`, sin tumbar el lote): `23514` si `productos_devueltos` no tiene esa forma (función `productos_devueltos_validos()`) o un monto es negativo; `23503` si un `producto_id` no existe en el catálogo (un trigger hace de FK, el JSON no la tiene); `23502` sin fecha; `42501` si la venta no existe o no es suya (como en `cobranza`).
+- **Lo que no hace.** No guarda `motivo` (el ADR-002 lo prevé como texto libre; un texto libre no sube al servidor, pendiente de Cristian), no aplica la ventana de 72 h (la aplica la app; la devolución del coordinador pasadas las 72 h es del panel), no cruza los productos con los `venta_item` ni el reembolso con lo cobrado (llegan en otro lote del push) y no recalcula `house_status` (lo hace el teléfono, ADR-003).
+- **Los datos.** Solo se suma; ninguna fila existente cambia. Lo prueba `supabase/tests_migracion/0108_ok`.
+
 ## La visita: cobranza, sin persona y horas de la entrevista (0069)
 
 Desde la migración `0069` (backend-supabase#132, decisiones de Cristian del 23/10 en front-colportores-mobile#151: «Visita cobro», «Sin persona» y «Horas entrev») la visita:
