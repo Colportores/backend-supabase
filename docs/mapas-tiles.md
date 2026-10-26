@@ -12,7 +12,10 @@ Esta guía cubre las dos etapas de backend-supabase#42:
   lo tienen, sin ninguna lista en el repo) y **los paquetes de las zonas** se publican **fuera del catálogo público**,
   cada uno con su enlace en `public.zona.paquete_mapa` ([§ Mapas de las zonas](#mapas-de-las-zonas)).
 
-Departamento y Uruguay quedan fuera: backend-supabase#68, con el plan Pro.
+Departamento y Uruguay (backend-supabase#68, con el plan Pro): **la lista fija de departamentos, de Uruguay y de sus
+ciudades sale de OpenStreetMap** y vive en el repo ([§ El catálogo de Uruguay](#el-catálogo-de-uruguay-departamentos-y-ciudades-de-openstreetmap),
+backend-supabase#139); el publicador ya corta los dos niveles con esos rectángulos, a pedido (`--solo departamentos|uruguay`).
+Falta el tope de tamaño de Pro y el bucket (backend-supabase#68, [§ Qué falta](#qué-falta)).
 
 ## Qué hay en el bucket
 
@@ -255,9 +258,10 @@ se corta por su polígono (`public.zona.poligono_geojson`).
 
 ```
 node src/cli.mjs estilo     [--url-base URL] [--salida DIR]      # solo escribe el estilo en un archivo
-node src/cli.mjs publicar   [--solo estilo|ciudades|zonas] [--ciudad SLUG] [--zona ID] [--regenerar]
-                            [--quitar ID] [--build AAAAMMDD] [--dry-run]
+node src/cli.mjs publicar   [--solo estilo|ciudades|zonas|departamentos|uruguay] [--ciudad SLUG] [--zona ID]
+                            [--regenerar] [--quitar ID] [--build AAAAMMDD] [--dry-run]
 node src/cli.mjs verificar  [--url URL]
+node src/cli.mjs catalogo-uruguay [--salida ARCHIVO] [--funcion-sql ARCHIVO] [--overpass URL]
 ```
 
 `publicar` (sin `--solo`: todo), en este orden, para que el catálogo **nunca apunte a algo que todavía no está**:
@@ -511,10 +515,88 @@ Storage (hoy la 0036): sin red, sin recorte y sin cargar Montevideo. Es lo que c
   falla en la 0036; sin la variable, se saltea. Con `-e`: una variable puesta delante de `docker compose` no entra al
   contenedor y la 0036 daría `PASS` con el `skip`.
 
+## El catálogo de Uruguay: departamentos y ciudades de OpenStreetMap
+
+Decisión de Cristian del 23/10, «Área depto» (backend-supabase#68, implementada en #139): **«Lista fija con el publicador»**,
+con su nota: «Lista fija, pero todos los departamentos y ciudades de Uruguay que ya se carguen de OSM, así los nombres
+coinciden, no hay malos typos». Los nombres de departamentos y ciudades salen de **una sola lista**, la de OpenStreetMap, y
+ya no se escriben a mano: el departamento se elige, nunca se tipea. Así Lucía, en Rivera, baja el mapa de todo su
+departamento y el nombre de su ciudad y el del departamento coinciden con los del paquete.
+
+La lista es [`tiles/datos/uruguay-osm.json`](../tiles/datos/uruguay-osm.json):
+
+| Clave | Qué trae |
+|---|---|
+| `fuente` | De dónde salió: © OpenStreetMap contributors, ODbL 1.0, la vía (Overpass), **de qué día son los datos de OSM** (`datos_osm_de`) y cuándo se armó la lista (`generado_en`) |
+| `pais` | Uruguay y su rectángulo `[oeste, sur, este, norte]` (la relación `relation/287072`) |
+| `departamentos` | Los 19, con su nombre de OSM («Paysandú», «Río Negro», «Treinta y Tres»…), su código ISO 3166-2 y su rectángulo |
+| `ciudades` | Las ciudades, pueblos y villas (`place` = `city`, `town` o `village`) con nombre: su departamento, su centro y su rectángulo **cuando OSM trae el límite** (el límite administrativo de nivel 8 con el mismo nombre que contiene al centro; si un lugar está mapeado como área, el suyo). Sin límite en OSM, `bbox` es `null`: **no se inventa un rectángulo** y la ciudad no tiene mapa propio hasta tener uno |
+| `descartados` | Lo que se dejó afuera al armarla, con el motivo: un lugar de la frontera que cae en dos departamentos queda en el primero; dos del mismo nombre en un departamento son uno (queda el de mayor categoría y población) |
+
+Se arma con `node src/cli.mjs catalogo-uruguay` (Overpass, de a una consulta y con espera creciente si el servidor está
+saturado; `--overpass URL` o `OVERPASS_URL` para usar otro servidor). El comando valida la lista antes de escribirla y,
+con `--funcion-sql <archivo>`, escribe también la función de la base. **No se actualiza sola**: cambiarla es un commit
+(se ve en el diff qué ciudad apareció o cambió) y una migración nueva.
+
+De esa lista salen tres cosas:
+
+1. **La base** ([migración 0109](../supabase/migrations/20261027000000_0109_catalogo_de_ciudades_de_uruguay_osm_origen_y_alta_a_mano.sql)):
+   `public.catalogo_osm_uruguay()` es la misma lista dentro de la base (un test del publicador,
+   `tiles/test/catalogo-en-la-base.test.mjs`, falla si difieren) y `public.cargar_catalogo_ciudades()` la carga en
+   `public.ciudad` **sin borrar ni duplicar**: empareja por nombre y departamento normalizados (sin tildes ni mayúsculas;
+   también con las dadas de baja, que no se vuelven a crear), marca `origen = 'OSM'` a las que casan, agrega las que faltan
+   y **avisa** de las que ya estaban y no casan (quedan como estaban, `origen = 'MANUAL'`). Es idempotente. La migración
+   la corre una vez; en una base sin el país Uruguay no carga nada y lo dice (se corre después, con
+   [`guia-carga-manual.md` § 1 y § 2](guia-carga-manual.md#2-ciudad)). `public.departamentos_de_uruguay()` devuelve los 19
+   A-Z: es lo que leen los selectores del panel (front-coordinadores-web#80).
+2. **El publicador**: corta el paquete de cada **departamento** y el de **todo Uruguay** con esos rectángulos, no con
+   los de `public.ciudad` (`publicar --solo departamentos` y `publicar --solo uruguay`; no entran en `publicar` sin
+   `--solo`, porque son archivos de cientos de MB). En el catálogo del bucket (`catalogo.json`):
+
+   | Paquete | `id` | `ambito_id` | Archivo |
+   |---|---|---|---|
+   | Departamento | `departamento-<slug>` (`departamento-san-jose`) | el **nombre normalizado** del departamento (`san jose`, `rio negro`): sin tildes, en minúsculas, espacios colapsados; es el mismo texto con el que el panel agrupa y con el que la app lo compara con el departamento de la ciudad del colportor | `paquetes/departamento/<slug>.<sha12>.pmtiles` |
+   | Todo Uruguay | `uruguay-uruguay` | **ninguno** (cubre cualquier lugar; hay uno solo) | `paquetes/uruguay/uruguay.<sha12>.pmtiles` |
+
+   Las mismas garantías que las ciudades: se mira todo antes de subir, el catálogo va último, repetir no sube nada y lo que
+   dejó de estar en el catálogo se borra a los 7 días. **Hoy el tope es el de 50 MB del plan Free para todos los niveles**:
+   un departamento de verdad no entra y el publicador se detiene con un error que lo dice y no sube nada. El tope de 2 GB
+   de Pro, la migración del bucket y la medición de cuánto pesan son de backend-supabase#68
+   ([«Tope Pro»](#qué-falta)).
+3. **El alta a mano** (abajo): el departamento de una ciudad nueva se valida contra esta lista.
+
+### Una ciudad que no está en OSM: el alta a mano
+
+Decisión de Cristian del 23/10, «Fuera de OSM»: **«A mano, con el departamento de la lista»**. Si un pueblo o barrio no
+está en la lista de OSM, Administración lo agrega escribiendo **solo su nombre**; el departamento se elige de la lista,
+nunca se escribe. Mientras no haya panel de Administración, es una llamada desde el SQL Editor
+([`guia-carga-manual.md` § 2](guia-carga-manual.md#2-ciudad)):
+
+```sql
+select * from public.agregar_ciudad_a_mano('Pueblo Nuevo', 'Rivera');
+```
+
+- Queda con `origen = 'MANUAL'`, **sin rectángulo** (sin mapa propio hasta tener su área) y con el centro del departamento
+  elegido (la columna es obligatoria y no hay otro dato del que partir; se corrige con un `UPDATE`).
+- **El aviso de parecido no frena.** La ciudad se crea igual y la función devuelve en `parecidas` las que ya estaban y se
+  le parecen (hasta 10), cada una con su `motivo`: `IGUAL` (mismo nombre en el mismo departamento: casi seguro una
+  repetida; si lo es, se da de baja la sobrante), `MISMO_NOMBRE_OTRO_DEPARTAMENTO` (hay dos «San José»: es válido) o
+  `PARECIDO` (una letra de diferencia, dos si el nombre pasa de 8, o uno contiene al otro).
+- Errores: `CD002` nombre en blanco o de más de 100 caracteres; `CD003` el departamento no es uno de los 19 (se compara sin
+  tildes ni mayúsculas y se guarda como está en la lista); `CD004` la base no tiene el país Uruguay. Solo `service_role`
+  (y quien corre desde el SQL Editor) la ejecuta.
+
 ## Qué falta
 
-- **Las demás ciudades**: cargarlas en `public.ciudad` con su rectángulo (guía de carga manual § 2) y medir cuánto
-  pesa cada una; la política de tamaño se ocupa del resto.
+- **Departamento y todo Uruguay (backend-supabase#68, con el paso a Pro del S11)**. Hecho en #139: la lista fija de
+  OpenStreetMap, la carga de las ciudades y el corte de los dos niveles con esos rectángulos. Sin hacer (#68): el **tope
+  por nivel** («Tope Pro», decisión de Cristian del 23/10: un archivo por mapa, hasta 2 GB para departamento y Uruguay; zona
+  y ciudad siguen en 50 MB) en `politica.mjs` y `validar`, la migración del bucket, `config.toml` y `bucket.mjs` con 2 GB, y
+  **no se mergea hasta que Cristian avise que subió el límite global en Pro**; la medición de cuánto pesan
+  (`pmtiles extract --dry-run`) y cuántas descargas entran en la transferencia de Pro.
+- **Las ciudades**: las de OpenStreetMap ya están cargadas por la 0109, pero **solo tienen mapa propio las que traen
+  rectángulo**; las que no (11 de 350 el 26/10) no se publican. Medir cuánto pesa cada una de las que sí; la política de
+  tamaño se ocupa del resto.
 - **El contrato del sync**: `zona.paquete_mapa` (y `ciudad.bbox_*`) ya viajan en el pull, porque el pull serializa todas
   las columnas, pero **no están en `docs-organizacion/contrato`**. Entran en un PR de docs aparte, que revisa Bruno
   (decisión de Cristian): hasta entonces la app puede leerlas pero el contrato no las promete.
@@ -530,9 +612,19 @@ Storage (hoy la 0036): sin red, sin recorte y sin cargar Montevideo. Es lo que c
   el enlace a su paquete y le llega al colportor con su zona por el sync, con un nombre de archivo que no se puede adivinar.
 - **Contrato**: `zona.paquete_mapa` entra al contrato en un PR de docs aparte, que revisa Bruno.
 
+## Decisiones tomadas el 23/10
+
+- **Área depto** (`backend-68-area-depto`): «Lista fija con el publicador». La lista de departamentos y ciudades de Uruguay es
+  la de OpenStreetMap, guardada en el repo con su fuente, su fecha y su atribución; el departamento se elige, nunca se escribe.
+- **Fuera de OSM** (`backend-68-fuera-de-osm`): «A mano, con el departamento de la lista»: solo el nombre, aviso de parecido que
+  no frena, marcada `MANUAL` y sin mapa propio hasta tener su área.
+- **Tope Pro**: «Un archivo, hasta 2 GB» para departamento y Uruguay (en #68, pendiente del paso a Pro).
+
 ## Licencias y atribución
 
 - Datos: © OpenStreetMap contributors, **ODbL 1.0**, vía los builds de [Protomaps](https://protomaps.com/).
   La atribución va en el estilo y en el catálogo; la app y el panel tienen que mostrarla.
+- La lista de departamentos y ciudades (`tiles/datos/uruguay-osm.json`) también es de OpenStreetMap: © OpenStreetMap
+  contributors, **ODbL 1.0**, consultada por Overpass API; lleva su atribución y la fecha de los datos en `fuente`.
 - Capas del estilo: `@protomaps/basemaps` (BSD-3-Clause). Tipografía Noto Sans (OFL) y sprites (MIT): ver
   [`tiles/assets/NOTICE.md`](../tiles/assets/NOTICE.md).
