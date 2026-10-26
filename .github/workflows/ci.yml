@@ -34,6 +34,46 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # Un solo pull por run (y casi nunca): deja en la caché de Actions las imágenes que bajan `migraciones` y
+  # `storage` (scripts/ci-imagenes.txt) y los dos jobs las restauran de ahí con `docker load`, sin tocar
+  # ghcr.io. Con la caché ya hecha (la clave lleva el hash de la tabla y el mes) este job solo la comprueba, sin
+  # descargarla. Sin caché, baja por digest de ghcr.io y, si ghcr.io contesta `toomanyrequests` (que el 26/10 duró
+  # horas), de ECR Public y de Docker Hub. Si aun así ningún registro contesta, el run falla acá, una vez,
+  # en vez de en dos jobs a la vez.
+  imagenes:
+    name: imágenes · caché y registros de respaldo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sin Docker: que la tabla de imágenes coincida con compose.dev.yml y correr.sh.
+      - name: Tabla de imágenes al día
+        run: bash scripts/check-ci-imagenes.sh
+
+      - name: Imágenes de la base
+        uses: ./.github/actions/imagenes
+        with:
+          grupo: base
+          solo-comprobar: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-actor: ${{ github.actor }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Imágenes de Storage
+        uses: ./.github/actions/imagenes
+        with:
+          grupo: storage
+          solo-comprobar: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-actor: ${{ github.actor }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
   # El bucket `mapas` contra un Storage de verdad (backend-supabase#75). La base del job `migraciones` no
   # trae el servicio Storage (el schema `storage` está vacío): ahí la migración 0029 y pgTAP 0036 se
   # saltean. Este job levanta el storage-api oficial (imagen de ghcr.io, sin credenciales), aplica las
@@ -44,6 +84,11 @@ jobs:
   # no pase en verde. Pasos y variables: docs/mapas-tiles.md § «Probar contra un Storage real».
   storage:
     name: bucket mapas · Storage real (0029 y pgTAP 0036)
+    needs: imagenes
+    # Corre aunque `imagenes` falle (la acción de abajo ya trae el pull de respaldo). Sin esto, un `imagenes` en
+    # rojo dejaría este job en skipped, y GitHub cuenta skipped como verde en los checks requeridos: se podría
+    # mergear sin migraciones ni pgTAP. El run igual queda rojo, porque `imagenes` falló.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -52,15 +97,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Las imágenes salen de ghcr.io (la base, storage-api y PostgREST): con el login el pull va
-      # autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
-      - name: Login a ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      # La base, storage-api, PostgREST y node salen de la caché que dejó el job `imagenes`; si falta, se
+      # bajan por digest de ghcr.io y, si ghcr.io no contesta, de sus espejos (scripts/ci-imagenes.txt).
+      # correr.sh pide las mismas imágenes y las encuentra ya en Docker.
+      - name: Imágenes de la base (caché)
+        uses: ./.github/actions/imagenes
+        with:
+          grupo: base
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-actor: ${{ github.actor }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ghcr.io contesta `toomanyrequests` (límite global por IP, aun con login) en ráfagas: el pull de
-      # la imagen de la base se reintenta acá (3 intentos con espera); las pruebas nunca se reintentan.
-      - name: Bajar la imagen de la base (con reintento)
-        run: bash scripts/ci-pull.sh ghcr.io/supabase/postgres:17.6.1.141
+      - name: Imágenes de Storage (caché)
+        uses: ./.github/actions/imagenes
+        with:
+          grupo: storage
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-actor: ${{ github.actor }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # correr.sh no construye imágenes: usa la `backend-supabase-dev:latest` de compose.dev.yml.
       - name: Construir tooling
@@ -78,6 +134,11 @@ jobs:
 
   migraciones:
     name: migraciones desde cero · pgTAP
+    needs: imagenes
+    # Corre aunque `imagenes` falle (la acción de abajo ya trae el pull de respaldo). Sin esto, un `imagenes` en
+    # rojo dejaría este job en skipped, y GitHub cuenta skipped como verde en los checks requeridos: se podría
+    # mergear sin migraciones ni pgTAP. El run igual queda rojo, porque `imagenes` falló.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -96,15 +157,17 @@ jobs:
       - name: Contraseña mínima del servidor
         run: bash scripts/check-config.sh
 
-      # La imagen de la DB sale de ghcr.io (mismo tag y digest que en ECR Public). Con el login
-      # el pull va autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
-      - name: Login a ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      # ghcr.io contesta `toomanyrequests` (límite global por IP, aun con login) en ráfagas: el pull de
-      # la imagen de la base se reintenta acá (3 intentos con espera); las pruebas nunca se reintentan.
-      - name: Bajar la imagen de la base (con reintento)
-        run: bash scripts/ci-pull.sh ghcr.io/supabase/postgres:17.6.1.141
+      # La imagen de la DB sale de la caché que dejó el job `imagenes`; si falta, se baja por digest de
+      # ghcr.io y, si ghcr.io no contesta (`toomanyrequests`: límite global por IP, aun con login, en
+      # ráfagas), de ECR Public y de Docker Hub, que tienen el mismo digest (scripts/ci-imagenes.txt).
+      - name: Imágenes de la base (caché)
+        uses: ./.github/actions/imagenes
+        with:
+          grupo: base
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-actor: ${{ github.actor }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Mismo entorno que el desarrollo local (compose.dev.yml): Postgres de Supabase + CLI + pg_prove.
       - name: Construir tooling
