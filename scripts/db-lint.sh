@@ -4,9 +4,10 @@
 # `sync` va además de `public`: desde la 0002 el grueso del PL/pgSQL del repo vive
 # ahí, y lintear solo public dejaba el RPC de ingesta fuera del control de CI.
 # `ruteo` (0036, las calles de OSM y el ruteo) también tiene PL/pgSQL propio.
+# `auditoria` (0073, el audit_log) tiene el suyo.
 set -euo pipefail
 
 : "${DB_URL:?Definir DB_URL (postgresql://user:pass@host:port/db)}"
 
 cd "$(dirname "$0")/.."
-supabase db lint --db-url "$DB_URL" --schema public,sync,ruteo --level warning
+supabase db lint --db-url "$DB_URL" --schema public,sync,ruteo,auditoria --level warning
