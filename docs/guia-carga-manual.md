@@ -587,12 +587,21 @@ update public.parametro_global set valor = 20
 - **No se inserta otra fila ni se cambia la `clave`**: hay una sola fila viva por clave
   (`23505`) y el check solo acepta `dias_antiguedad_precios`. Para cambiar el valor se
   hace `update`, nunca `delete`.
-- **Cada cambio tiene que quedar registrado** (quién, cuándo, valor anterior y nuevo): la
-  decisión de Cristian del 23/10 lo pide. Hasta que exista la tabla `audit_log`
-  ([#136](https://github.com/Colportores/backend-supabase/issues/136)) **el SQL Editor
-  no deja registro**: anotá a mano en el issue o en el canal del equipo quién lo cambió,
-  cuándo y de qué valor a cuál. Por eso ningún cliente con sesión (ni el ADMIN) puede
-  escribir esta tabla todavía.
+- **Cada cambio queda registrado solo** (quién, cuándo, valor anterior y nuevo), también el
+  que hacés desde el SQL Editor: un trigger lo escribe en `auditoria.audit_log` en la misma
+  transacción (migración `0110`). **No hace falta anotarlo a mano.** Desde el SQL Editor
+  no hay usuario, así que `actor_user_id` queda vacío y el detalle dice el rol (`postgres`).
+  Para ver la historia:
+  ```sql
+  select created_at, event_type, metadata
+    from auditoria.audit_log
+   where tabla = 'parametro_global'
+   order by created_at;
+  -- metadata: {"clave": "dias_antiguedad_precios", "valor_anterior": 15, "valor_nuevo": 20, "rol": "postgres"}
+  ```
+  Un `update` que deja el mismo valor no escribe nada. Ningún cliente con sesión (ni el ADMIN)
+  puede escribir esta tabla todavía: hasta que haya una pantalla de Administración, el
+  cambio se hace acá.
 - El teléfono lo toma en su próximo pull; no hace falta nada más.
 
 ## Qué NO se carga por esta vía

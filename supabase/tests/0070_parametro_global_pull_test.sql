@@ -72,6 +72,10 @@ select is((select sync.pull(array['producto', 'parametro_global'], d -> 'waterma
           'sin cambios, el pull siguiente no trae nada');
 
 select pg_temp.como_servidor();
+-- Esta prueba no corre en una transacción y audit_log solo se agrega (0073): sus cambios de 15 a 20 y de vuelta
+-- dejarían registros para siempre y romperían los conteos de los tests siguientes (0073, 0110). El registro de
+-- los cambios lo prueba 0110; acá se apaga el trigger mientras dura y se enciende en la limpieza.
+alter table public.parametro_global disable trigger parametro_global_auditar_cambio;
 update public.parametro_global set valor = 20 where clave = 'dias_antiguedad_precios';
 update public.producto set codigo_editor = 'EDI-002' where id = '01920000-0000-7000-8000-0000000070d2';
 
@@ -100,6 +104,7 @@ select is((select valor from public.parametro_global where clave = 'dias_antigue
 select pg_temp.como_servidor();
 drop table pull_b1, pull_b1_cambios, push_b1;
 update public.parametro_global set valor = 15 where clave = 'dias_antiguedad_precios';
+alter table public.parametro_global enable trigger parametro_global_auditar_cambio;
 delete from public.producto where id in ('01920000-0000-7000-8000-0000000070d1', '01920000-0000-7000-8000-0000000070d2',
                                          '01920000-0000-7000-8000-0000000070d3');
 delete from auth.users where id = '01920000-0000-7000-8000-0000000070b1';
