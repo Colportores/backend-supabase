@@ -210,7 +210,8 @@ values (pg_temp.u('b9'), 777, 888, 99, now());
 insert into public.deposito (colportor_id, monto, fecha, destino, concepto, deleted_at) values
   (pg_temp.u('b1'), 9000,  '2026-10-10 12:00:00+00', 'BANCO', 'CASA_EDITORA', null),
   (pg_temp.u('b1'), 12000, '2026-10-17 12:00:00+00', 'BANCO', 'CASA_EDITORA', null),
-  (pg_temp.u('b1'), 1,     '2026-10-20 12:00:00+00', 'BANCO', 'CASA_EDITORA', now());
+  (pg_temp.u('b1'), 1,     '2026-10-20 12:00:00+00', 'BANCO', 'CASA_EDITORA', now()),
+  (pg_temp.u('b1'), 777,   '2026-10-24 12:00:00+00', 'BANCO', 'ALQUILER',     null);
 
 -- Lo por entregar de b1: 3 + 1 vivas y pendientes; una entregada, una entrega dada de baja y una venta dada
 -- de baja no cuentan. Lo de b2 no se mezcla.
@@ -364,7 +365,8 @@ select is(has_function_privilege(r, f, 'execute')::text, 'false',
   from unnest(array['public.pedido_para(uuid, boolean)', 'public.puede_decidir_pedido_de(uuid, timestamptz)',
                     'public.puede_ver_pedido_de(uuid, timestamptz)',
                     'public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)',
-                    'public.mover_deuda_casa_editora(uuid, bigint)', 'public.plazo_para_deshacer_pedido()']) f,
+                    'public.mover_deuda_casa_editora(uuid, bigint)', 'public.plazo_para_deshacer_pedido()',
+                    'public.gracia_para_deshacer_pedido()']) f,
        unnest(array['anon', 'authenticated', 'service_role']) r;
 -- PUBLIC (grantee 0) no tiene EXECUTE en ninguna de las funciones nuevas.
 select is((select count(*)::int
@@ -379,7 +381,8 @@ select is((select count(*)::int
                             'public.puede_ver_pedido_de(uuid, timestamptz)'::regprocedure,
                             'public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)'::regprocedure,
                             'public.mover_deuda_casa_editora(uuid, bigint)'::regprocedure,
-                            'public.plazo_para_deshacer_pedido()'::regprocedure)), 0,
+                            'public.plazo_para_deshacer_pedido()'::regprocedure,
+                            'public.gracia_para_deshacer_pedido()'::regprocedure)), 0,
           'PUBLIC no tiene EXECUTE en ninguna de las funciones nuevas');
 select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public'
@@ -793,16 +796,20 @@ select is((select metadata ->> 'decision_deshecha' from auditoria.audit_log wher
           'RECHAZADO', 'la auditoría dice que era un rechazo');
 select is(pg_temp.aut(pg_temp.u('a1'), 'cf') -> 0 ->> 'estado', 'AUTORIZADO', 'y se puede autorizar');
 
--- El plazo de 8 segundos.
+-- El plazo de 8 segundos (más 2 de gracia en el servidor).
 select pg_temp.decidido_hace('d6', 7);
 select is(pg_temp.des(pg_temp.u('a1'), 'd6') -> 0 ->> 'estado', 'PENDIENTE_AUTORIZACION', 'a los 7 segundos todavía se deshace');
 select is(pg_temp.aut(pg_temp.u('a1'), 'd6') -> 0 ->> 'estado', 'AUTORIZADO', 'd6 se vuelve a autorizar');
-select pg_temp.decidido_hace('d6', 9);
-select is(pg_temp.des(pg_temp.u('a1'), 'd6') ->> 'error', 'PE005', 'a los 9 segundos ya no');
+-- La gracia de 2 s del servidor (el toque a los 7,9 s llega a los 8,5): hasta 10 s se deshace.
+select pg_temp.decidido_hace('d6', 9.5);
+select is(pg_temp.des(pg_temp.u('a1'), 'd6') -> 0 ->> 'estado', 'PENDIENTE_AUTORIZACION', 'a los 9,5 segundos todavía se deshace (gracia de la red)');
+select is(pg_temp.aut(pg_temp.u('a1'), 'd6') -> 0 ->> 'estado', 'AUTORIZADO', 'd6 se vuelve a autorizar');
+select pg_temp.decidido_hace('d6', 10.5);
+select is(pg_temp.des(pg_temp.u('a1'), 'd6') ->> 'error', 'PE005', 'a los 10,5 segundos ya no');
 select alike(pg_temp.des(pg_temp.u('a1'), 'd6') ->> 'mensaje', '%Pasaron más de 8 segundos%', 'el aviso dice por qué');
 select is(pg_temp.pedido('d6') ->> 'estado', 'AUTORIZADO', 'el pedido sigue autorizado');
 select is(pg_temp.deuda('b1'), 34500::bigint + 7000 + 1500 + 2500 + 4000 + 1500, 'y la deuda, con él (el de cf se autorizó de nuevo)');
-select pg_temp.decidido_hace('d4', 9);
+select pg_temp.decidido_hace('d4', 11);
 select is(pg_temp.des(pg_temp.u('a1'), 'd4') ->> 'error', 'PE005', 'un rechazo viejo tampoco se deshace');
 select is(pg_temp.pedido('d4') ->> 'estado', 'RECHAZADO', 'sigue rechazado');
 -- Solo quien decidió.

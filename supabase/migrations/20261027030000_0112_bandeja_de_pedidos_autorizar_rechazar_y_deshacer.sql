@@ -81,7 +81,8 @@
 --     solo avisa: no bloquea (R-ST06). El stock no cambia: entra al pasar a RECIBIDO.
 --   · Rechazar: PENDIENTE_AUTORIZACION -> RECHAZADO con motivo obligatorio (no en blanco, hasta 500
 --     caracteres; se guarda recortado). No toca la deuda.
---   · Deshacer: dentro de los 8 segundos de lo decidido y solo por quien lo decidió, vuelve a
+--   · Deshacer: dentro de los 8 segundos de lo decidido (el servidor acepta hasta 10: 2 de gracia por la
+--     latencia; `deshacer_hasta` sigue siendo a los 8) y solo por quien lo decidió, vuelve a
 --     PENDIENTE_AUTORIZACION: si estaba AUTORIZADO resta de la deuda lo mismo que sumó y borra
 --     `cantidad_autorizada` y `monto_autorizado`; si estaba RECHAZADO borra el motivo. Pasado el plazo, o
 --     con el pedido ya despachado, PE005.
@@ -207,6 +208,24 @@ comment on function public.plazo_para_deshacer_pedido() is
   '(0112, decisión de Cristian del 25/10). Interna.';
 
 revoke all on function public.plazo_para_deshacer_pedido()
+  from public, anon, authenticated, service_role;
+
+-- La gracia que el servidor suma a ese plazo (decisión del 26/10, P3): la pantalla oculta «Deshacer» a los 8 s
+-- (`deshacer_hasta`), pero el toque a los 7,9 s llega al servidor un poco después; hasta 10 s se acepta.
+create function public.gracia_para_deshacer_pedido()
+returns interval
+language sql
+immutable
+set search_path = ''
+as $$
+  select interval '2 seconds';
+$$;
+
+comment on function public.gracia_para_deshacer_pedido() is
+  'Cuánto más allá de plazo_para_deshacer_pedido() acepta el servidor un Deshacer (2 segundos, por la '
+  'latencia de la red: decisión del 26/10, P3 de #104). Interna (0112).';
+
+revoke all on function public.gracia_para_deshacer_pedido()
   from public, anon, authenticated, service_role;
 
 -- La deuda del colportor con la casa editora se mueve acá y solo acá (la crea si no existe). Interna.
@@ -547,6 +566,7 @@ begin
         select d.fecha, d.monto
           from public.deposito d
          where d.colportor_id = usr.id and d.deleted_at is null
+           and d.concepto = 'CASA_EDITORA'
          order by d.fecha desc, d.id
          limit 1
       ) dep on true
@@ -807,7 +827,8 @@ begin
     raise exception 'Solo quien decidió el pedido puede deshacerlo. Recargá la bandeja para ver cómo quedó.'
       using errcode = 'PE005';
   end if;
-  if clock_timestamp() > v_pedido.decidido_en + public.plazo_para_deshacer_pedido() then
+  if clock_timestamp() > v_pedido.decidido_en + public.plazo_para_deshacer_pedido()
+                          + public.gracia_para_deshacer_pedido() then
     raise exception 'Pasaron más de 8 segundos: la decisión ya no se puede deshacer. Si hace falta, pedile al colportor que lo vuelva a pedir.'
       using errcode = 'PE005';
   end if;
