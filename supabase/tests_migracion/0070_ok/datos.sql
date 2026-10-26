@@ -1,4 +1,4 @@
--- Datos con el esquema de 0069 (producto sin codigo_editor; sin parametro_global) para probar que 0070 solo
+-- Datos con el esquema de 0109 (la última antes de 0070; producto sin codigo_editor; sin parametro_global) para probar que 0070 solo
 -- suma la columna, en null, y la tabla con su única fila, sin tocar ningún producto ni su sincronización.
 -- Ver scripts/db-test-migracion.sh.
 --

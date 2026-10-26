@@ -1,4 +1,4 @@
--- Datos con el esquema de 0109 (parametro_global ya existe, sin trigger de auditoría) para probar que 0110 solo
+-- Datos con el esquema de 0070 (parametro_global ya existe, sin trigger de auditoría) para probar que 0110 solo
 -- suma el trigger: no toca la fila de parametro_global ni inventa registros hacia atrás. Ver
 -- scripts/db-test-migracion.sh.
 --
