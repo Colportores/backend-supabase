@@ -30,6 +30,10 @@
 --          contra `fecha` + 72 h, inclusive). Sin excepciones para nadie con sesión.
 --        · CB002 · la colportora quiere anular un cobro cuyo ticket ya validó el coordinador (el
 --          `ticket_id` del cobro apunta a un ticket VALIDADO). El mensaje le dice que se lo pida a él.
+--        · CB005 / CB006 · lo que sostiene a CB001 y CB002 no se mueve: la `fecha` del cobro (CB006) y un
+--          `ticket_id` cuyo ticket está VALIDADO, que no se cambia ni se suelta (CB005). Un ticket pendiente
+--          o rechazado sí se puede cambiar por otro. Valen para cualquier UPDATE con sesión, anule o no
+--          (si no, un UPDATE anterior esquivaría la ventana o el ticket).
 --        · CB003 · un cobro anulado no se reabre ni cambia su fecha ni su motivo. Mandar de nuevo el mismo
 --          valor es idempotente (un reintento del push no falla).
 --      Sin sesión (service_role, migraciones, `postgres`) el trigger no controla nada: es la salida del
@@ -46,7 +50,7 @@
 --      los cobros vivos Y no anulados (`tg_agenda_origen`, el único lugar del servidor que suma
 --      `cobranza.monto`). Las lecturas del panel de hoy (tablero, ventas por ciudad, horas) no suman
 --      cobros (el «por cobrar» es null hasta V2, 0061): cuando entren, filtran `anulado_at is null`.
---   6. El push: CB001, CB002 y CB003 vuelven `invalid` con su código, sin tumbar el lote
+--   6. El push: CB001, CB002, CB003, CB005 y CB006 vuelven `invalid` con su código, sin tumbar el lote
 --      (`sync.aplicar_job`, igual que 0068 más estos tres).
 --
 -- ## Los datos
@@ -60,7 +64,7 @@
 --     transferencia), #422 y #424 (la anulación: 30B-06 «pasaron las 72 h», 30B-07 «pedíselo a tu
 --     coordinador»): la app sube `tarjeta_tipo`, `tarjeta_marca`, `numero_aprobacion`,
 --     `referencia_transferencia`, `banco_origen`, `anulado_at` y `motivo_anulacion` en el mismo upsert
---     del cobro y traduce CB001/CB002/CB003 del `invalid` a un aviso. «Otro» sube como 'Otro'.
+--     del cobro y traduce CB001/CB002/CB003/CB005/CB006 del `invalid` a un aviso. «Otro» sube como 'Otro'.
 --   · front-coordinadores-web (junto a #69): «Anular cobro» llama a `anular_cobro(cobranza_id, motivo)`.
 --   · docs-organizacion: `esquema-datos.md` (columnas de `cobranza`), `contrato-sync-engine.md` (la fila
 --     de `cobranza` y los tres códigos nuevos del push), HU-COB-002, HU-COB-003 y HU-COB-006.
@@ -140,6 +144,25 @@ declare
   v_inicio         timestamptz;
   v_ticket_viejo   uuid;
 begin
+  -- Las dos cosas de las que cuelgan CB001 y CB002 no se mueven con sesión: la fecha del cobro (desde ella
+  -- corre la ventana) y el ticket validado (suelto, el cobro dejaría de estar protegido). Sin esto, un UPDATE
+  -- anterior que no anula nada las cambiaría y el siguiente anularía (CB005, CB006). Va antes de todo lo
+  -- demás: vale para cualquier UPDATE con sesión, anule o no.
+  if tg_op = 'UPDATE' and auth.uid() is not null then
+    if new.fecha is distinct from old.fecha then
+      raise exception using
+        errcode = 'CB006',
+        message = 'La fecha de un cobro no se puede cambiar. Si te equivocaste, anulalo y cargalo de nuevo.';
+    end if;
+    if new.ticket_id is distinct from old.ticket_id
+       and exists (select 1 from public.ticket t
+                    where t.id = old.ticket_id and t.estado = 'VALIDADO' and t.deleted_at is null) then
+      raise exception using
+        errcode = 'CB005',
+        message = 'El coordinador ya validó el ticket de este cobro: no se puede cambiar ni soltar.';
+    end if;
+  end if;
+
   -- Nada que controlar: el cobro no está (ni estaba) anulado.
   if new.anulado_at is null and (tg_op = 'INSERT' or old.anulado_at is null) then
     return new;
@@ -209,7 +232,7 @@ $$;
 comment on function public.tg_cobranza_anulacion() is
   'BEFORE INSERT / UPDATE de cobranza (0072): al anular, ventana de 72 h desde la fecha del cobro con el reloj del '
   'servidor (CB001), la colportora no anula con el ticket validado (CB002), un cobro anulado no se reabre ni cambia '
-  '(CB003). Sin sesión (service_role, migraciones) no controla nada. Un alta que ya existe se deja pasar (replay idempotente).';
+  '(CB003), la fecha del cobro y un ticket validado no se mueven (CB006, CB005). Sin sesión (service_role, migraciones) no controla nada. Un alta que ya existe se deja pasar (replay idempotente).';
 
 -- Antes de la auditoría (orden alfabético: cobranza_anulacion < cobranza_auditoria_*).
 create trigger cobranza_anulacion
@@ -431,10 +454,10 @@ comment on function public.tg_agenda_origen() is
   'tipo, venta, monto, estado o baja (old vs new) y no en el reenvío de un alta que ya existe (0068).';
 
 -- ----------------------------------------------------------------------------
--- 5. El push: CB001, CB002 y CB003 vuelven invalid, sin tumbar el lote
+-- 5. El push: CB001 a CB003, CB005 y CB006 vuelven invalid, sin tumbar el lote
 -- ----------------------------------------------------------------------------
 
--- Igual que en 0068, más CB001 a CB003. Sus privilegios siguen (create or replace los conserva).
+-- Igual que en 0068, más CB001 a CB003, CB005 y CB006. Sus privilegios siguen (create or replace los conserva).
 create or replace function sync.aplicar_job(p_job jsonb)
 returns jsonb
 language plpgsql
@@ -480,10 +503,10 @@ exception
   -- La baja de una casa con ventas o con visitas de otro colportor (0018), la corrección ajena en la
   -- gracia (CG001, 0021), reactivar una casa que se unió a otra (UB005, 0051) y los topes de las cuotas
   -- (AG001 a AG003, 0068) y anular un cobro fuera de plazo, con el ticket validado o ya anulado (CB001 a
-  -- CB003, 0072): códigos propios, que la app traduce a un aviso. INVALID como el resto, sin tumbar el lote.
+  -- CB003, CB005 y CB006, 0072): códigos propios, que la app traduce a un aviso. INVALID como el resto, sin tumbar el lote.
   when sqlstate 'UB001' or sqlstate 'UB002' or sqlstate 'CG001' or sqlstate 'UB005'
     or sqlstate 'AG001' or sqlstate 'AG002' or sqlstate 'AG003'
-    or sqlstate 'CB001' or sqlstate 'CB002' or sqlstate 'CB003' then
+    or sqlstate 'CB001' or sqlstate 'CB002' or sqlstate 'CB003' or sqlstate 'CB005' or sqlstate 'CB006' then
     return jsonb_build_object(
       'client_op_id', v_id,
       'outcome', 'invalid',
