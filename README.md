@@ -482,6 +482,8 @@ Los datos personales de clientes (`persona.nombre`, `persona.apellido`, `persona
 
 **Este backend no tiene tablas `persona` ni `nota`.** No es una omisión temporal: es la restricción de diseño. Cualquier PR que las agregue debe rechazarse — y `supabase/tests/0001_esquema_inicial_test.sql` lo hace fallar automáticamente. `espacio_persona.persona_id` es un UUID opaco sin FK a propósito.
 
+**Ningún texto libre de un depto sube** (`0104`, backend-supabase#79; decisión de Cristian del 06/10, «Notas depto»: «Nota por depto en el teléfono»). La nota de un depto vive solo en el teléfono, como las notas del cliente, y `espacio` no tiene `descripcion`: puede nombrar a una persona y la bajarían los demás colportores de la ciudad. La migración se detiene, sin cambiar nada, si alguna fila trae un texto (lista cada espacio por su id, sin copiar el texto): no se borra lo que alguien cargó. Se mergea después de que el contrato de sync saque la columna (docs-organizacion).
+
 ## Licencia
 
 Uso propio — todos los derechos reservados. Ver [LICENSE](./LICENSE).
