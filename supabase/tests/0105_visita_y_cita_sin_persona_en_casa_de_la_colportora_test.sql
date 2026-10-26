@@ -7,7 +7,8 @@
 --      dada de baja (entra), colportora sin ninguna inscripción (solo su casa).
 --   3. El espacio FINAL decide: con persona sale del vínculo (lo que mande el teléfono da igual) y, si la
 --      casa se unió a otra, el de A.
---   4. Corregir una visita: no se puede mover a una casa ajena; el resto de la corrección pasa.
+--   4. Corregir una visita: no se puede mover a una casa ajena; el resto de la corrección pasa. Y mudar el
+--      vínculo propio a la casa de otra, que se llevaría la visita por el trigger DEFINER de 0069 (42501).
 --   5. La cita sin persona, igual que la visita.
 --   6. Un espacio que no existe o null no lo tapa la RLS: 23503 y 23502 como siempre.
 --   7. Por sync_push: lo rechazado vuelve invalid con 42501 sin tumbar el lote, y el reenvío también.
@@ -246,6 +247,38 @@ select is(pg_temp.error_de(format('update public.visita set espacio_id = %L wher
 select is(pg_temp.error_de(format('update public.visita set espacio_persona_id = %L where id = %L', pg_temp.u('22'), pg_temp.uv(1))),
           '42501', 'ni colgarla de un vínculo de la casa ajena');
 select is((select espacio_id from public.visita where id = pg_temp.uv(1)), pg_temp.u('13'), 'queda en la casa 03');
+
+-- ---------------------------------------------------------------------------
+-- 4b. El vínculo propio que se muda se lleva sus visitas
+-- ---------------------------------------------------------------------------
+-- espacio_persona_mueve_visitas (0069, DEFINER) lleva las visitas de un vínculo a su espacio nuevo sin pasar
+-- por las políticas: sin un chequeo propio, mudar el vínculo a la casa de otra era el camino de vuelta al
+-- hueco (y la dueña recibía UB002 al dar de baja su casa). El vínculo 23 es de b1, en su casa 03 (espacio
+-- 13), y tiene la visita 4.
+select is(pg_temp.error_de(format('update public.espacio_persona set espacio_id = %L where id = %L', pg_temp.u('12'), pg_temp.u('23'))),
+          '42501', 'b1 no muda su vínculo al espacio de la casa de b3 (ciudad en la que nunca estuvo): 42501');
+select is((select espacio_id from public.espacio_persona where id = pg_temp.u('23')), pg_temp.u('13'), 'el vínculo queda donde estaba');
+select is((select espacio_id from public.visita where id = pg_temp.uv(4)), pg_temp.u('13'), 'y su visita también: no se la llevó a la casa ajena');
+select is(pg_temp.error_de(format('update public.espacio_persona set espacio_id = %L where id = %L', pg_temp.u('14'), pg_temp.u('23'))),
+          '42501', 'ni a un espacio que se fundió en uno ajeno (se mira el espacio final: el 14 es de la 04, unida a la 05 de b3)');
+select is(pg_temp.error_de(format('update public.espacio_persona set persona_id = %L where id = %L', pg_temp.u('a3'), pg_temp.u('23'))),
+          'ok', 'corregir otra cosa del vínculo no se toca');
+select is(pg_temp.error_de(format('update public.espacio_persona set espacio_id = %L where id = %L', pg_temp.u('13'), pg_temp.u('23'))),
+          'ok', 'ni dejarlo en su mismo espacio');
+select is(pg_temp.error_de(format('update public.espacio_persona set espacio_id = %L where id = %L', pg_temp.u('11'), pg_temp.u('23'))),
+          'ok', 'a una casa de la ciudad de su campaña vieja sí lo muda');
+select is((select espacio_id from public.visita where id = pg_temp.uv(4)), pg_temp.u('11'), 'y la visita lo sigue');
+select is((select tgname::text from pg_trigger where tgrelid = 'public.espacio_persona'::regclass and not tgisinternal
+              and tgname = 'espacio_persona_1_no_se_muda_a_casa_ajena'),
+          'espacio_persona_1_no_se_muda_a_casa_ajena', 'el trigger existe y corre después de la unión (por el nombre)');
+select ok(not has_function_privilege('authenticated', 'public.tg_espacio_persona_no_se_muda_a_casa_ajena()', 'execute')
+          and not has_function_privilege('anon', 'public.tg_espacio_persona_no_se_muda_a_casa_ajena()', 'execute'),
+          'su función no la ejecuta nadie desde afuera');
+-- El servidor y la unión DEFINER siguen mudando vínculos: el 22 (b3) a un espacio de b1, como postgres.
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.error_de(format('update public.espacio_persona set espacio_id = %L where id = %L', pg_temp.u('13'), pg_temp.u('22'))),
+          'ok', 'el servidor muda un vínculo a donde sea');
+select pg_temp.actuar_como(pg_temp.u('b1'));
 
 -- ---------------------------------------------------------------------------
 -- 5. La cita sin persona

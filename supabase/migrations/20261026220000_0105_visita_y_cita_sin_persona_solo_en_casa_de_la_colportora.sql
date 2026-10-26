@@ -30,6 +30,12 @@
 -- El rechazo sale por el push como `invalid` con SQLSTATE 42501 (aplicar_job atrapa la clase 42501): esa
 -- operación no se reintenta y la cola sigue con la que viene.
 --
+--   · El otro camino: la colportora muda SU vínculo (espacio_persona) a la casa de otra y el trigger
+--     espacio_persona_mueve_visitas (0069, DEFINER) lleva sus visitas ahí sin pasar por las políticas.
+--     Un trigger BEFORE UPDATE OF espacio_id de espacio_persona, en el camino cliente, rechaza con 42501
+--     que el vínculo cambie a un espacio donde no puede dejar visitas (el espacio final, después de la
+--     unión). Solo cuando el espacio CAMBIA: corregir el resto del vínculo no se toca. La unión de
+--     duplicados (DEFINER) y el servidor siguen mudando vínculos y visitas de los demás.
 --   · Un espacio que todavía no existe (o un espacio_id null) pasa: lo dice la clave foránea (23503, que en
 --     el push deja en espera lo que cuelga de un alta en conflicto, 0017) o el NOT NULL (23502). Ese caso no
 --     deja nada en la casa de nadie.
@@ -38,7 +44,7 @@
 --   · Una fila que ya estaba (de antes de esta migración) y que la colportora corrige sin tocar su espacio
 --     cumple la regla si era legítima; la regla no mira fechas.
 --
--- Datos: ninguno; solo una función y cuatro políticas.
+-- Datos: ninguno; solo funciones, cuatro políticas y un trigger.
 -- Forward-only: esta migración no se edita una vez aplicada.
 -- ============================================================================
 
@@ -106,3 +112,42 @@ create policy agenda_sin_persona_solo_en_casa_de_la_colportora_update on public.
   for update to authenticated
   using (true)
   with check (espacio_persona_id is not null or public.puedo_dejar_en_espacio(espacio_id));
+
+-- ----------------------------------------------------------------------------
+-- espacio_persona: el vínculo propio no se muda a una casa donde no puede dejar visitas
+-- ----------------------------------------------------------------------------
+
+-- SECURITY INVOKER a propósito: current_user es authenticated o anon en el camino cliente (el push, o un
+-- UPDATE por la API) y otro adentro de una función SECURITY DEFINER (marcar_como_duplicado(), la unión de
+-- espacios) o en el servidor, que mudan vínculos sin pasar por acá (como 0053 y 0100: no auth.uid(), que
+-- adentro del RPC sigue puesto). Corre después de espacio_persona_0_union_redirige (por el nombre): se mira
+-- el espacio final. Sin cambio de espacio no hace nada.
+create function public.tg_espacio_persona_no_se_muda_a_casa_ajena()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if current_user in ('authenticated', 'anon')
+     and not public.puedo_dejar_en_espacio(new.espacio_id) then
+    raise exception using
+      errcode = '42501',
+      message = 'No se puede mudar este vínculo a un espacio de la casa de otra colportora. El vínculo queda como estaba.',
+      hint    = 'Solo se trabaja en las casas que registraste o en las de una ciudad de tus campañas.';
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_espacio_persona_no_se_muda_a_casa_ajena() is
+  'BEFORE UPDATE OF espacio_id de espacio_persona (0105, #157): un cliente no muda su vínculo a un espacio '
+  'donde no puede dejar visitas (puedo_dejar_en_espacio), porque espacio_persona_mueve_visitas (0069, '
+  'DEFINER) llevaría ahí sus visitas. La unión de duplicados y el servidor no pasan por acá.';
+
+revoke all on function public.tg_espacio_persona_no_se_muda_a_casa_ajena() from public, anon, authenticated;
+
+create trigger espacio_persona_1_no_se_muda_a_casa_ajena
+  before update of espacio_id on public.espacio_persona
+  for each row
+  when (old.espacio_id is distinct from new.espacio_id)
+  execute function public.tg_espacio_persona_no_se_muda_a_casa_ajena();
