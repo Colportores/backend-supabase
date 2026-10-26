@@ -57,6 +57,11 @@ jobs:
       - name: Login a ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # ghcr.io contesta `toomanyrequests` (límite global por IP, aun con login) en ráfagas: el pull de
+      # la imagen de la base se reintenta acá (3 intentos con espera); las pruebas nunca se reintentan.
+      - name: Bajar la imagen de la base (con reintento)
+        run: bash scripts/ci-pull.sh ghcr.io/supabase/postgres:17.6.1.141
+
       # correr.sh no construye imágenes: usa la `backend-supabase-dev:latest` de compose.dev.yml.
       - name: Construir tooling
         run: docker compose -f compose.dev.yml build cli
@@ -95,6 +100,11 @@ jobs:
       # el pull va autenticado con GITHUB_TOKEN y no cuenta contra el límite de pulls anónimos.
       - name: Login a ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # ghcr.io contesta `toomanyrequests` (límite global por IP, aun con login) en ráfagas: el pull de
+      # la imagen de la base se reintenta acá (3 intentos con espera); las pruebas nunca se reintentan.
+      - name: Bajar la imagen de la base (con reintento)
+        run: bash scripts/ci-pull.sh ghcr.io/supabase/postgres:17.6.1.141
 
       # Mismo entorno que el desarrollo local (compose.dev.yml): Postgres de Supabase + CLI + pg_prove.
       - name: Construir tooling
