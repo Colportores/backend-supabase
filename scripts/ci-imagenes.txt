@@ -15,3 +15,4 @@ base     ghcr.io/supabase/postgres:17.6.1.141   sha256:ba10e934f0a59990379f78ab9
 storage  ghcr.io/supabase/storage-api:v1.61.10  sha256:6452317c5cca3e6f1fad9a1627755742e2281e1ae6938dc688b75f3d2426da38  public.ecr.aws/supabase/storage-api docker.io/supabase/storage-api
 storage  ghcr.io/supabase/postgrest:v14.5       sha256:b574528fe109c8343c1247155734d03df8c34b462f342dca0ccc20244fc36ef9  public.ecr.aws/supabase/postgrest docker.io/postgrest/postgrest
 storage  node:22-bookworm-slim                  -                                                                       public.ecr.aws/docker/library/node
+zz  ghcr.io/supabase/no-usada:v1  -  docker.io/supabase/no-usada
