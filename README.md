@@ -422,6 +422,16 @@ select public.tablero_de_inicio(campania_id, '2026-10-21'); -- un día anterior 
 - **Pendientes.** `pendientes` es `[]` hasta que V2 conecte los tickets por validar y los pedidos por autorizar.
 - **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; `CZ001` si la campaña no existe; una campaña terminada se lee. Solo cifras: ni clientes, ni ubicaciones, ni talonarios, ni emails.
 
+## El cobro: tarjeta, transferencia y anulación (0072)
+
+Desde la migración `0072` (backend-supabase#133, decisiones de Cristian del 23/10 en front-colportores-mobile#164 y #168: «Datos cobro», «Anulación» y «Anular 72 h») `cobranza`:
+
+- **Guarda los datos de la tarjeta y de la transferencia**, todos opcionales: `tarjeta_tipo` (`CREDITO` | `DEBITO`), `tarjeta_marca`, `numero_aprobacion`, `referencia_transferencia` y `banco_origen` (texto: sumar un banco no cambia el modelo). Suben con el cobro y el ticket de V2 los toma de ahí. Un CHECK los ata al medio: los de tarjeta solo con `TARJETA`, la referencia y el banco solo con `TRANSFERENCIA` (`23514`). `ticket_id` (FK opcional, ya en el esquema) lo conecta V2; hoy nadie lo escribe.
+- **Se anula con fecha y motivo.** `anulado_at` y `motivo_anulacion` van juntos y el motivo es de la lista del canvas (`Monto equivocado`, `Cliente equivocado`, `Lo registré dos veces`, `Otro`); lo que la colportora escribe con «Otro» no sube. Un cobro anulado no cuenta: el tope de las cuotas (`AG002`) mide el saldo sin él, y las lecturas del panel que sumen cobros (hoy ninguna: el «por cobrar» es `null` hasta V2) tienen que filtrar `anulado_at is null`.
+- **El servidor aplica la ventana de 72 h** desde la `fecha` del cobro (inclusive, con el reloj del servidor) a la colportora y al coordinador: pasada, `CB001`. Con el ticket del cobro validado, la colportora no anula sola: `CB002` («pedile que lo anule él»). Un cobro anulado no se reabre ni cambia su motivo: `CB003` (repetir el mismo valor es un reintento y pasa). Los tres vuelven `invalid` en el push, sin tumbar el lote. Sin sesión (`service_role`, el editor SQL) no se controla nada: es la salida para corregir a mano.
+- **El coordinador anula con `anular_cobro(cobranza_id, motivo)`** (ADMIN, o el coordinador de una campaña con el colportor de la venta inscripto; a los demás, y si el cobro no existe o está de baja, `CB004`). Motivo de la lista (`22023`), mismas 72 h (`CB001`), idempotente (`ya_estaba`). Con el ticket validado él sí puede. El UPDATE sube `sync_version`: un push viejo de ese cobro vuelve `conflict` (`cobranza` no baja al teléfono).
+- **Los datos.** Solo se suma; ningún cobro cambia. Lo prueba `supabase/tests_migracion/0072_ok`.
+
 ## La visita: cobranza, sin persona y horas de la entrevista (0069)
 
 Desde la migración `0069` (backend-supabase#132, decisiones de Cristian del 23/10 en front-colportores-mobile#151: «Visita cobro», «Sin persona» y «Horas entrev») la visita:
