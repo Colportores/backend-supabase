@@ -7,7 +7,7 @@
 #      después sus espejos): con digest, por `repo@sha256:…`, así que el registro que la entregue tiene que dar
 #      los mismos bits; sin digest (tag que se mueve), por tag. Hasta 3 rondas de toda la cadena, con espera de
 #      20 y 60 s entre rondas (CI_PULL_ESPERAS="20 60" las cambia; las pruebas del script usan "0 0");
-#   4. con `--cache DIR`, guarda el tar de lo que bajó para la próxima corrida.
+#   4. con `--cache DIR`, guarda el tar de lo que bajó para la próxima corrida (si no puede, falla).
 # Solo el pull se reintenta: nunca las pruebas. Una imagen que no está en la tabla se baja igual, solo del
 # nombre que se pidió (como antes del espejo), con el mismo reintento.
 #
@@ -119,6 +119,14 @@ for imagen in "${IMAGENES[@]}"; do
 
   if [ -n "$tar" ] && [ ! -f "$tar" ]; then
     mkdir -p "$CACHE"
-    if docker save -o "$tar.tmp" "$imagen"; then mv "$tar.tmp" "$tar"; else rm -f "$tar.tmp"; echo "aviso: no pude guardar $imagen en la caché" >&2; fi
+    # Si no se puede guardar, el script falla: la acción no sube una caché incompleta (con la clave del mes,
+    # nadie la repararía hasta el mes siguiente).
+    if docker save -o "$tar.tmp" "$imagen"; then
+      mv "$tar.tmp" "$tar"
+    else
+      rm -f "$tar.tmp"
+      echo "FALLO: no pude guardar $imagen en la caché" >&2
+      exit 1
+    fi
   fi
 done

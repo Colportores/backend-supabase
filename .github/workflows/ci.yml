@@ -85,6 +85,10 @@ jobs:
   storage:
     name: bucket mapas · Storage real (0029 y pgTAP 0036)
     needs: imagenes
+    # Corre aunque `imagenes` falle (la acción de abajo ya trae el pull de respaldo). Sin esto, un `imagenes` en
+    # rojo dejaría este job en skipped, y GitHub cuenta skipped como verde en los checks requeridos: se podría
+    # mergear sin migraciones ni pgTAP. El run igual queda rojo, porque `imagenes` falló.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -131,6 +135,10 @@ jobs:
   migraciones:
     name: migraciones desde cero · pgTAP
     needs: imagenes
+    # Corre aunque `imagenes` falle (la acción de abajo ya trae el pull de respaldo). Sin esto, un `imagenes` en
+    # rojo dejaría este job en skipped, y GitHub cuenta skipped como verde en los checks requeridos: se podría
+    # mergear sin migraciones ni pgTAP. El run igual queda rojo, porque `imagenes` falló.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
