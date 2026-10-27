@@ -169,6 +169,13 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
   (pg_temp.u('fd'), pg_temp.u('b1'), 3000,  '2026-09-15 10:00+00', pg_temp.u('5d'), 'OFICINA',            'CASA_EDITORA', pg_temp.u('e2'), null),
   (pg_temp.u('fc'), pg_temp.u('b6'), 15000, '2026-09-04 10:00+00', pg_temp.u('59'), 'BANCO',              'ALQUILER',     pg_temp.u('e3'), null);
 
+-- Desde 0129 el depósito lleva su propia validación y es lo que cuenta como pagado: los que tienen el ticket
+-- VALIDADO quedan validados (como los deja el backfill de la migración).
+update public.deposito d
+   set validado_en = d.fecha
+  from public.ticket t
+ where t.id = d.ticket_id and t.estado = 'VALIDADO';
+
 -- Donde cuelga una venta (para probar que el alquiler no bloquea vender).
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
 values (pg_temp.u('f0'), 'CASA', 'Calle de prueba', '1', -34.915, -56.18, pg_temp.u('c1'));
