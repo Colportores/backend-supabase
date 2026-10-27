@@ -102,10 +102,10 @@ $$;
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'pedido23-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['b1','b2','b3','b4','c1','ad']) s;
+  from unnest(array['b1','b2','b3','b4','ab','c1','ad']) s;
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
-  from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR'),
+  from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR'), ('ab','COLPORTOR'),
                ('c1','COORDINADOR'), ('ad','ADMIN')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, limite_deuda) values
@@ -113,7 +113,10 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
   (pg_temp.u('e2'), 'e2 pedido23', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('c1'), null);
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
   (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '10 days'),
-  (pg_temp.u('e2'), pg_temp.u('b2'), now() - interval '10 days');
+  (pg_temp.u('e2'), pg_temp.u('b2'), now() - interval '10 days'),
+  (pg_temp.u('e1'), pg_temp.u('ab'), now() - interval '10 days');
+-- ab: inscripta en e1 pero con la cuenta suspendida.
+update public.usuario set suspendido_en = now() - interval '1 day' where id = pg_temp.u('ab');
 insert into public.campania_colportor (campania_id, usuario_id, created_at, deleted_at) values
   (pg_temp.u('e1'), pg_temp.u('b4'), now() - interval '10 days', now() - interval '1 day');
 
@@ -236,16 +239,19 @@ select is((select has_function_privilege('anon', 'public.situacion_para_pedido(j
           'anon no');
 select is((select has_function_privilege('authenticated', 'public.recalcular_pedido_del_colportor(uuid)', 'execute')
               and has_function_privilege('authenticated', 'public.pedido_no_acepta_lineas(uuid)', 'execute')
-              and has_function_privilege('authenticated', 'public.tengo_campania_para_pedir(timestamptz)', 'execute')), true,
-          'los tres ayudantes los llama el trigger del teléfono');
+              and has_function_privilege('authenticated', 'public.tengo_campania_para_pedir(timestamptz)', 'execute')
+              and has_function_privilege('authenticated', 'public.mi_cuenta_esta_suspendida()', 'execute')), true,
+          'los cuatro ayudantes los llama el trigger del teléfono');
 select is((select has_function_privilege('anon', 'public.recalcular_pedido_del_colportor(uuid)', 'execute')
               or has_function_privilege('anon', 'public.pedido_no_acepta_lineas(uuid)', 'execute')
-              or has_function_privilege('anon', 'public.tengo_campania_para_pedir(timestamptz)', 'execute')), false,
+              or has_function_privilege('anon', 'public.tengo_campania_para_pedir(timestamptz)', 'execute')
+              or has_function_privilege('anon', 'public.mi_cuenta_esta_suspendida()', 'execute')), false,
           'y anon ninguno');
 select is((select bool_and(prosecdef) from pg_proc
             where oid in ('public.recalcular_pedido_del_colportor(uuid)'::regprocedure,
                           'public.pedido_no_acepta_lineas(uuid)'::regprocedure,
                           'public.tengo_campania_para_pedir(timestamptz)'::regprocedure,
+                          'public.mi_cuenta_esta_suspendida()'::regprocedure,
                           'public.situacion_para_pedido(jsonb)'::regprocedure)),
           true, 'los ayudantes y la lectura son SECURITY DEFINER');
 
@@ -311,6 +317,24 @@ select pg_temp.actuar_como(pg_temp.u('b4'));
 select is(pg_temp.error_de($$ insert into public.pedido_casa_editora (id, estado)
                               values ('01920000-0000-7000-8000-0000000023b4', 'PENDIENTE_AUTORIZACION') $$),
           '42501 ', 'b4, dada de baja ayer, tampoco');
+-- Suspendida pero inscripta en una campaña en curso: tampoco (decisión del 27/10).
+select pg_temp.actuar_como(pg_temp.u('ab'));
+select is(pg_temp.error_de($$ insert into public.pedido_casa_editora (id, estado)
+                              values ('01920000-0000-7000-8000-0000000023b7', 'PENDIENTE_AUTORIZACION') $$),
+          '42501 ', 'ab, con la cuenta suspendida, no pide aunque siga inscripta');
+select is(pg_temp.mensaje_de($$ insert into public.pedido_casa_editora (id, estado)
+                               values ('01920000-0000-7000-8000-0000000023b7', 'PENDIENTE_AUTORIZACION') $$),
+          'Tu cuenta está suspendida, así que no podés pedir libros. Hablá con el administrador.',
+          'y el aviso le dice a quién hablarle');
+select pg_temp.actuar_como_servidor();
+update public.usuario set suspendido_en = null where id = pg_temp.u('ab');
+select pg_temp.actuar_como(pg_temp.u('ab'));
+select is(pg_temp.error_de($$ insert into public.pedido_casa_editora (id, estado)
+                              values ('01920000-0000-7000-8000-0000000023b7', 'PENDIENTE_AUTORIZACION') $$),
+          'ok', 'levantada la suspensión, ab pide');
+select pg_temp.actuar_como_servidor();
+delete from public.pedido_casa_editora where id = pg_temp.u('b7');
+update public.usuario set suspendido_en = now() - interval '1 day' where id = pg_temp.u('ab');
 select pg_temp.actuar_como(pg_temp.u('c1'));
 select is(pg_temp.error_de($$ insert into public.pedido_casa_editora (id, estado, colportor_id)
                               values ('01920000-0000-7000-8000-0000000023b5', 'PENDIENTE_AUTORIZACION', '01920000-0000-7000-8000-0000000023b1') $$),

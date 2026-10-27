@@ -151,6 +151,27 @@ comment on function public.tengo_campania_para_pedir(timestamptz) is
 revoke all on function public.tengo_campania_para_pedir(timestamptz) from public, anon, authenticated, service_role;
 grant execute on function public.tengo_campania_para_pedir(timestamptz) to authenticated;
 
+-- ¿Está suspendida la cuenta de quien llama? (usuario.suspendido_en, 0004). Decisión del 27/10 (mapa §2, igual que
+-- USUARIO_SUSPENDIDO de 0005/0006): una cuenta suspendida no pide libros aunque siga inscripta.
+create function public.mi_cuenta_esta_suspendida()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((select u.suspendido_en is not null
+                     from public.usuario u
+                    where u.id = (select auth.uid())), false);
+$$;
+
+comment on function public.mi_cuenta_esta_suspendida() is
+  'true si la cuenta de quien llama (auth.uid()) está suspendida (usuario.suspendido_en no es null): no pide libros '
+  'a la casa editora (0124). Interna: la llama el trigger de pedido_casa_editora.';
+
+revoke all on function public.mi_cuenta_esta_suspendida() from public, anon, authenticated, service_role;
+grant execute on function public.mi_cuenta_esta_suspendida() to authenticated;
+
 -- ¿Por qué no se le pueden sumar líneas a este pedido de QUIEN LLAMA? null si se puede; AJENO si es de otra o no
 -- existe (no se distingue); ESTADO si es suyo pero ya no está por autorizar. Toma un candado compartido sobre el
 -- pedido hasta el final de la transacción: un coordinador que lo autoriza a la vez espera a que la línea
@@ -255,6 +276,11 @@ begin
       using errcode = '23514', constraint = 'pedido_del_colportor_nace_por_autorizar';
   end if;
 
+  if public.mi_cuenta_esta_suspendida() then
+    raise exception 'Tu cuenta está suspendida, así que no podés pedir libros. Hablá con el administrador.'
+      using errcode = '42501';
+  end if;
+
   if not public.tengo_campania_para_pedir(new.fecha_pedido) then
     raise exception 'No estás en una campaña en curso, así que no podés pedir libros todavía. Hablá con tu coordinador para que te inscriba.'
       using errcode = '42501';
@@ -265,7 +291,7 @@ $$;
 
 comment on function public.tg_pedido_casa_editora_del_cliente() is
   'BEFORE INSERT de pedido_casa_editora, solo para authenticated (0124): nace PENDIENTE_AUTORIZACION (23514), la '
-  'colportora está en una campaña (42501) y el servidor fija origen COLPORTOR, sin coordinador, monto 0 y sin '
+  'colportora no está suspendida y está en una campaña (42501) y el servidor fija origen COLPORTOR, sin coordinador, monto 0 y sin '
   'aviso (los recalcula con cada línea). El servidor no pasa por acá.';
 
 revoke all on function public.tg_pedido_casa_editora_del_cliente() from public, anon, authenticated, service_role;
