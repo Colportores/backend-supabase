@@ -1,0 +1,81 @@
+name: Imágenes de CI desde la caché
+description: >-
+  Deja en Docker las imágenes de un grupo de scripts/ci-imagenes.txt: las restaura de la caché de Actions (un tar
+  de `docker save`) y, si no están, las baja con scripts/ci-pull.sh (ghcr.io, después sus espejos, por digest) y
+  las guarda en la caché. Hay que correr actions/checkout antes.
+
+inputs:
+  grupo:
+    description: Grupo de scripts/ci-imagenes.txt (base o storage).
+    required: true
+  solo-comprobar:
+    description: >-
+      "true": solo mira si la caché del grupo existe, sin descargarla; si falta, baja las imágenes y la guarda.
+      Lo usa el job `imagenes` para que cada run baje de un registro como mucho una vez; los demás jobs la restauran.
+    default: "false"
+  github-token:
+    description: Token para el login a ghcr.io.
+    required: true
+  github-actor:
+    description: Usuario del login a ghcr.io.
+    required: true
+  dockerhub-username:
+    description: Usuario de Docker Hub. Opcional (sin secret, o en un fork, se baja anónimo).
+    default: ""
+  dockerhub-token:
+    description: Token de Docker Hub. Opcional.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # La clave lleva el hash de la tabla (tags y digests) y el mes: las imágenes sin digest fijado (node) se
+    # refrescan una vez por mes, y la caché sobrevive a los 7 días sin uso de Actions mientras se use.
+    - name: Mes
+      id: mes
+      shell: bash
+      run: echo "mes=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+    - name: Restaurar la caché de imágenes (${{ inputs.grupo }})
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/ci-imagenes/${{ inputs.grupo }}
+        key: imagenes-${{ inputs.grupo }}-${{ hashFiles('scripts/ci-imagenes.txt') }}-${{ steps.mes.outputs.mes }}
+        lookup-only: ${{ inputs.solo-comprobar == 'true' }}
+
+    # Con la caché de otro job ya hecha, el job `imagenes` no tiene nada más que hacer.
+    # Los logins no tiran el job: si fallan (un fork sin token, un registro caído), el pull sigue anónimo y
+    # ci-pull.sh prueba los espejos.
+    - name: Login a ghcr.io
+      if: inputs.solo-comprobar != 'true' || steps.cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.github-token }}
+        ACTOR: ${{ inputs.github-actor }}
+      run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+    - name: Login a Docker Hub (opcional)
+      if: (inputs.solo-comprobar != 'true' || steps.cache.outputs.cache-hit != 'true') && inputs.dockerhub-username != '' && inputs.dockerhub-token != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.dockerhub-token }}
+        USUARIO: ${{ inputs.dockerhub-username }}
+      run: echo "$TOKEN" | docker login -u "$USUARIO" --password-stdin
+
+    - name: Cargar o bajar las imágenes (${{ inputs.grupo }})
+      if: inputs.solo-comprobar != 'true' || steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GRUPO: ${{ inputs.grupo }}
+      run: bash scripts/ci-pull.sh --cache "$HOME/.cache/ci-imagenes/$GRUPO" --grupo "$GRUPO"
+
+    # Si dos jobs la guardan a la vez, el segundo recibe un aviso («Unable to reserve cache»), no un error.
+    - name: Guardar la caché de imágenes (${{ inputs.grupo }})
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/ci-imagenes/${{ inputs.grupo }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}

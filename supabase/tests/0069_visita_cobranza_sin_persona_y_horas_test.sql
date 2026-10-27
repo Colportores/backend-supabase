@@ -173,9 +173,9 @@ select ok((select prosecdef from pg_proc where oid = 'public.tg_visita_union_red
 select has_index('public', 'visita', 'visita_espacio_idx', 'hay índice por espacio');
 select has_trigger('public', 'espacio_persona', 'espacio_persona_mueve_visitas', 'un vínculo que cambia de espacio se lleva sus visitas');
 select is((select array_agg(policyname::text order by policyname::text collate "C") from pg_policies
-            where schemaname = 'public' and tablename = 'visita'),
-          array['visita_propio'], 'la RLS de visita sigue siendo una sola: la de su dueña');
-select is((select qual from pg_policies where schemaname = 'public' and tablename = 'visita'),
+            where schemaname = 'public' and tablename = 'visita' and permissive = 'PERMISSIVE'),
+          array['visita_propio'], 'la RLS de visita sigue siendo una sola: la de su dueña (0105 suma solo restrictivas)');
+select is((select qual from pg_policies where schemaname = 'public' and tablename = 'visita' and policyname = 'visita_propio'),
           '(colportor_id = ( SELECT auth.uid() AS uid))', 'y lee lo que es suyo y nada más');
 select is((select permite_push from sync.entidad where nombre = 'visita'), true, 'la visita sigue en el push');
 select ok(sync.expresion_json('public.visita'::regclass) like '%''entrevista_entrada''%'
