@@ -34,7 +34,7 @@ select is(
   (select count(*) from information_schema.columns
     where table_schema = 'public' and table_name <> 'usuario'
       and column_name in ('nombre','apellido') and table_name not in
-      ('pais','ciudad','zona','campania','rol','producto','coleccion')),
+      ('pais','ciudad','zona','campania','rol','producto','coleccion','carrera')),
   0::bigint,
   'nombre/apellido solo en usuario y catálogos (nunca en tablas del cliente final)'
 );

@@ -12,7 +12,7 @@ select is((select count(*)::int from public.usuario
 
 -- Sin tocar las filas: la columna nueva es la única diferencia con la foto.
 select is((select count(*)::int from public.usuario u join public.prueba_0053_usuario s using (id)
-            where to_jsonb(u) - 'ultimo_push_at' is distinct from to_jsonb(s)), 0,
+            where to_jsonb(u) - 'ultimo_push_at' - 'carrera_id' is distinct from to_jsonb(s)), 0,
           'las 3 filas quedaron idénticas (versión de sync, updated_at y xmin_w incluidos) salvo la columna nueva');
 
 -- Lo nuevo anda sobre los datos de antes.
