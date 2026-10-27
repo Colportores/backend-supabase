@@ -121,7 +121,7 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, created
   (pg_temp.u('e1'), pg_temp.u('b3'), null,            '2026-08-01 10:00-03'),
   (pg_temp.u('e1'), pg_temp.u('b4'), null,            '2026-08-01 10:00-03'),
   (pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d1'), '2026-08-01 10:00-03'),
-  (pg_temp.u('e2'), pg_temp.u('b1'), null,            '2026-08-01 10:00-03'),
+  (pg_temp.u('e2'), pg_temp.u('b1'), null,            '2026-07-01 10:00-03'),
   (pg_temp.u('e3'), pg_temp.u('b6'), null,            '2026-08-01 10:00-03'),
   (pg_temp.u('e5'), pg_temp.u('b2'), null,            '2026-03-20 10:00-03');
 update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
@@ -161,6 +161,7 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
   (pg_temp.u('f9'), pg_temp.u('b1'), 40000, '2026-09-11 10:00+00', pg_temp.u('57'), 'BANCO',              'ALQUILER',     pg_temp.u('e1'), now()),
   (pg_temp.u('fa'), pg_temp.u('b1'), 25000, '2026-09-08 10:00+00', pg_temp.u('57'), 'BANCO',              'ALQUILER',     pg_temp.u('e1'), null),
   (pg_temp.u('fb'), pg_temp.u('b4'), 200000, '2026-09-03 10:00+00', pg_temp.u('58'), 'BANCO',             'ALQUILER',     pg_temp.u('e1'), null),
+  (pg_temp.u('fd'), pg_temp.u('b1'), 3000,  '2026-09-15 10:00+00', null,            'OFICINA',            'CASA_EDITORA', pg_temp.u('e2'), null),
   (pg_temp.u('fc'), pg_temp.u('b6'), 15000, '2026-09-04 10:00+00', pg_temp.u('59'), 'BANCO',              'ALQUILER',     pg_temp.u('e3'), null);
 
 -- Donde cuelga una venta (para probar que el alquiler no bloquea vender).
@@ -355,11 +356,40 @@ select is((select format('%s|%s|%s|%s', r.deuda_total, r.dinero_depositado, r.di
 select is((select r.deuda_total from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b1')),
           1200000::bigint, 'cuentas: el alquiler es una deuda aparte: no se suma a la deuda con la casa editora');
 
+-- Las cuatro cifras son del colportor y no de la campaña: salen solo en su campaña vigente hoy.
+select is((select format('%s|%s|%s|%s', coalesce(r.deuda_total::text, 'null'), coalesce(r.dinero_depositado::text, 'null'),
+                         coalesce(r.dinero_en_mano::text, 'null'), coalesce(r.dinero_por_cobrar::text, 'null'))
+             from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b3')),
+          'null|null|null|null', 'cuentas: el de baja (ya sin campaña vigente) trae las cuatro cifras en null');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is((select format('%s|%s|%s|%s|%s', coalesce(r.deuda_total::text, 'null'), coalesce(r.dinero_depositado::text, 'null'),
+                         coalesce(r.dinero_en_mano::text, 'null'), coalesce(r.dinero_por_cobrar::text, 'null'), r.alquiler_debe)
+             from public.cuentas_de_campania(pg_temp.u('e2')) r where r.colportor_id = pg_temp.u('b1')),
+          'null|null|null|null|30000',
+          'cuentas: b1 ya está en Cuentas (más nueva): visto desde Otra, sus cuatro cifras son null y su alquiler de Otra sigue');
+select is((select format('%s|%s|%s|%s', coalesce(r.deuda_total::text, 'null'), coalesce(r.dinero_depositado::text, 'null'),
+                         coalesce(r.dinero_en_mano::text, 'null'), coalesce(r.dinero_por_cobrar::text, 'null'))
+             from public.cuentas_de_campania(pg_temp.u('e5')) r where r.colportor_id = pg_temp.u('b2')),
+          'null|null|null|null', 'cuentas: una campaña terminada hace más de 15 días tampoco muestra las cuatro cifras');
+select is((select count(*)::int from public.cuentas_de_campania(pg_temp.u('e2')) r where r.de_baja is not null), 1,
+          'cuentas: pero la fila sigue estando');
+select pg_temp.actuar_como(pg_temp.u('a1'));
+
 -- Último depósito de casa editora.
 select is((select to_char(r.ultimo_deposito_fecha at time zone 'UTC', 'YYYY-MM-DD') || '|' || r.ultimo_deposito_monto
              from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b1')),
           '2026-09-10|10000',
           'cuentas: el último depósito es el último de CASA EDITORA (no el de alquiler más nuevo ni el dado de baja)');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is((select to_char(r.ultimo_deposito_fecha at time zone 'UTC', 'YYYY-MM-DD') || '|' || r.ultimo_deposito_monto
+             from public.cuentas_de_campania(pg_temp.u('e2')) r where r.colportor_id = pg_temp.u('b1')),
+          '2026-09-15|3000',
+          'cuentas: en la otra campaña, su último depósito es el que lleva el campania_id de ella, no el de Cuentas (10/09)');
+select is((select to_char(r.ultimo_deposito_fecha at time zone 'UTC', 'YYYY-MM-DD') || '|' || r.ultimo_deposito_monto
+             from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b1')),
+          '2026-09-10|10000',
+          'cuentas: y en Cuentas no aparece el del 15/09 de la otra campaña, aunque sea más nuevo');
+select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select r.ultimo_deposito_fecha from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b4')),
           null::timestamptz, 'cuentas: el que solo pagó alquiler no tiene depósito de casa editora');
 

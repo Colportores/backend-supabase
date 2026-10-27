@@ -55,9 +55,17 @@
 --   dinero_en_mano, dinero_por_cobrar           `estado_cuenta` (0 si el colportor todavía no tiene fila).
 --                                                «En mano» es una referencia: lo cobrado y no depositado,
 --                                                sin descontar gastos del día (dicho en la reunión).
---                                                Son del colportor, no de la campaña.
---   ultimo_deposito_fecha, _monto               «Últ. depósito»: el último depósito de CASA_EDITORA
---                                                (el mismo criterio que pedido_contexto, 0112).
+--                                                Son del colportor, no de la campaña: por eso salen SOLO si
+--                                                esta es su campaña vigente hoy (campania_del_ticket(usuario,
+--                                                now()), 0113); si su cuenta sigue en otra campaña, o en
+--                                                ninguna (campaña terminada, baja), los cuatro son null y
+--                                                el panel muestra «—» sin inventar un cero (decisión del
+--                                                orquestador, 27/10, revisión de #183). El desglose por
+--                                                campaña llega con #155.
+--   ultimo_deposito_fecha, _monto               «Últ. depósito»: el último depósito de CASA_EDITORA de ESTA
+--                                                campaña: el que lleva su campania_id o, si no la lleva, el
+--                                                que cae en la ventana de la inscripción (campania_del_ticket,
+--                                                0113). Nunca el de otra campaña.
 --   alquiler_monto                              lo que cobra la campaña por colportor (null = no cobra).
 --   alquiler_pagado                             depósitos de ALQUILER de ESTA campaña con el ticket
 --                                                VALIDADO («validar acredita», R-CT05).
@@ -106,6 +114,20 @@
 
 alter table public.deposito
   add column campania_id uuid references public.campania(id);
+
+-- Los depósitos de ALQUILER que ya hubiera sin campaña (nunca se borran): se les asigna la de la inscripción
+-- vigente ese día (campania_del_ticket, 0113) o, si ninguna la cubre, la de su inscripción más nueva. Un
+-- colportor sin ninguna inscripción haría fallar el CHECK de abajo: ante la duda se bloquea, con el error a la
+-- vista (decisión del orquestador, 27/10, P4 de #111).
+update public.deposito d
+   set campania_id = coalesce(
+         public.campania_del_ticket(d.colportor_id, d.fecha),
+         (select cc.campania_id
+            from public.campania_colportor cc
+           where cc.usuario_id = d.colportor_id
+           order by cc.created_at desc, cc.id desc
+           limit 1))
+ where d.concepto = 'ALQUILER' and d.campania_id is null;
 
 -- El nombre va después de los CHECK de 0067 (Postgres los evalúa por orden alfabético): un depósito
 -- inválido por otra razón sigue dando el error de siempre.
@@ -250,10 +272,10 @@ begin
            ciu.id,
            ciu.nombre,
            ciu.departamento,
-           coalesce(cu.deuda_total, 0),
-           coalesce(cu.dinero_depositado, 0),
-           coalesce(cu.dinero_en_mano, 0),
-           coalesce(cu.dinero_por_cobrar, 0),
+           case when vg.vigente then coalesce(cu.deuda_total, 0) end,
+           case when vg.vigente then coalesce(cu.dinero_depositado, 0) end,
+           case when vg.vigente then coalesce(cu.dinero_en_mano, 0) end,
+           case when vg.vigente then coalesce(cu.dinero_por_cobrar, 0) end,
            ult.fecha,
            ult.monto,
            v_campania.alquiler_monto,
@@ -271,11 +293,20 @@ begin
       left join public.ciudad ciu on ciu.id = cc.ciudad_id
       left join public.estado_cuenta cu
              on cu.usuario_id = i.usuario_id and cu.deleted_at is null
+      -- ¿Esta es la campaña vigente del colportor hoy? (la ventana de su inscripción, 0113). Las cuatro cifras
+      -- no tienen campaña: solo se muestran a quien coordina la campaña en la que el colportor está ahora.
+      cross join lateral (
+        select (public.campania_del_ticket(i.usuario_id, now()) = p_campania_id) as vigente
+      ) vg
       left join lateral (
         select d.fecha, d.monto
           from public.deposito d
          where d.colportor_id = i.usuario_id and d.deleted_at is null
            and d.concepto = 'CASA_EDITORA'
+           -- Solo los de ESTA campaña: el que lleva campania_id, o el que no la lleva y su fecha cae en la
+           -- ventana de esta inscripción (campania_del_ticket, 0113). Lo que el colportor hace en otra campaña
+           -- no se le muestra a este coordinador.
+           and coalesce(d.campania_id, public.campania_del_ticket(d.colportor_id, d.fecha)) = p_campania_id
          order by d.fecha desc, d.id
          limit 1
       ) ult on true
