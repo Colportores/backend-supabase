@@ -128,7 +128,7 @@ update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b3');
 
 -- La cuenta (snapshot) de b1; la de b2 está dada de baja (no cuenta).
-insert into public.estado_cuenta (usuario_id, deuda_total, dinero_depositado, dinero_en_mano, dinero_por_cobrar, deleted_at) values
+insert into public.cuenta_colportor (usuario_id, deuda_total, dinero_depositado, dinero_en_mano, dinero_por_cobrar, deleted_at) values
   (pg_temp.u('b1'), 1200000, 500000, 30000, 80000, null),
   (pg_temp.u('b2'), 777,     777,    777,   777,   now());
 

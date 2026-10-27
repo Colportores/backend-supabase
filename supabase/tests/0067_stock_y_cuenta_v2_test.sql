@@ -12,7 +12,7 @@
 --      no otro colportor ni un coordinador de otra campaña ni uno sin campañas. Una transferencia la ven
 --      las dos puntas.
 --   7. Escritura: nadie con JWT (42501), anon tampoco lee.
---   8. La función estado_cuenta() de 0004 sigue andando con la tabla del mismo nombre.
+--   8. La función estado_cuenta() de 0004 sigue andando (la tabla se llama cuenta_colportor desde 0119).
 begin;
 select * from no_plan();
 
@@ -119,7 +119,7 @@ insert into public.ticket (id, usuario_id, tipo, monto, subido_en)
 select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000, now() - interval '1 day' from unnest(array['b1','b2','b3','b4']) s;
 insert into public.deposito (id, colportor_id, monto, destino, concepto)
 select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA' from unnest(array['b1','b2','b3','b4']) s;
-insert into public.estado_cuenta (id, usuario_id, deuda_total)
+insert into public.cuenta_colportor (id, usuario_id, deuda_total)
 select pg_temp.u('9' || right(s, 1)), pg_temp.u(s), 1500 from unnest(array['b1','b2','b3','b4']) s;
 -- Una transferencia de b1 a b2 (e1 -> e2) y otra de b3 a b4.
 insert into public.transferencia_stock (id, origen_id, destino_id) values
@@ -134,7 +134,7 @@ insert into public.transferencia_item (id, transferencia_id, producto_id, cantid
 -- ============================================================================
 select has_table('public', t, format('existe %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select has_column('public', 'campania', 'alquiler_monto', 'campania.alquiler_monto');
 select col_type_is('public', 'campania', 'alquiler_monto', 'bigint', 'alquiler_monto es bigint (centavos)');
@@ -145,7 +145,7 @@ select col_is_null('public', 'campania_colportor', c, format('campania_colportor
   from unnest(array['tipo_beca','meta_monto_ces','limite_pedido']) c;
 select has_column('public', 'pedido_casa_editora', c, format('pedido_casa_editora.%s', c))
   from unnest(array['origen','excede_limite','estado','monto_total','colportor_id','coordinador_id','fecha_pedido']) c;
-select has_column('public', 'estado_cuenta', 'deuda_alquiler', 'estado_cuenta.deuda_alquiler');
+select has_column('public', 'cuenta_colportor', 'deuda_alquiler', 'cuenta_colportor.deuda_alquiler');
 select has_column('public', 'deposito', c, format('deposito.%s', c)) from unnest(array['destino','concepto']) c;
 select has_column('public', 'ticket', c, format('ticket.%s', c))
   from unnest(array['numero_autorizacion','tarjeta_tipo','tarjeta_marca','monto','fecha','estado','motivo_rechazo']) c;
@@ -153,10 +153,10 @@ select has_column('public', 'ticket', c, format('ticket.%s', c))
 -- Cursor del delta y auditoría: las exige el resto del sistema en toda tabla de public.
 select col_type_is('public', t, 'xmin_w', 'xid8', format('%s.xmin_w es xid8', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 select has_trigger('public', t, t || '_auditoria_insert', format('%s tiene auditoría de alta', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 -- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, tiene las de su dueña:
 -- supabase/tests/0113_ticket_sube_por_push_test.sql).
@@ -164,32 +164,32 @@ select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd = 'SELECT'), 1,
           format('%s tiene una política de lectura', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','estado_cuenta']) t;
+                    'transferencia_item','deposito','cuenta_colportor']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'authenticated'), 'SELECT',
           format('authenticated solo tiene SELECT sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','estado_cuenta']) t;
+                    'transferencia_item','deposito','cuenta_colportor']) t;
 select is((select count(*)::int from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'anon'), 0,
           format('anon no tiene privilegios sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 select is((select count(*)::int from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'service_role'), 7,
           format('service_role tiene todos los privilegios sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select is((select count(*)::int from sync.entidad
             where nombre in ('stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                             'transferencia_item','deposito','estado_cuenta')), 0,
+                             'transferencia_item','deposito','cuenta_colportor')), 0,
           'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
@@ -391,10 +391,10 @@ select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, 
           '23502: null value in column "concepto" of relation "deposito" violates not-null constraint',
           'el concepto lo elige el colportor: no tiene valor por defecto');
 
-select is((select deuda_alquiler from public.estado_cuenta where id = pg_temp.u('91')), 0::bigint,
+select is((select deuda_alquiler from public.cuenta_colportor where id = pg_temp.u('91')), 0::bigint,
           'la deuda de alquiler arranca en cero, aparte de la deuda total');
-select is(pg_temp.error_de($$ insert into public.estado_cuenta (usuario_id) values ('01920000-0000-7000-8000-0000000067b1') $$),
-          '23505: duplicate key value violates unique constraint "estado_cuenta_usuario_key"',
+select is(pg_temp.error_de($$ insert into public.cuenta_colportor (usuario_id) values ('01920000-0000-7000-8000-0000000067b1') $$),
+          '23505: duplicate key value violates unique constraint "cuenta_colportor_usuario_key"',
           'una sola cuenta por usuario');
 
 -- ============================================================================
@@ -485,7 +485,7 @@ select is(pg_temp.ve('stock', array['a1','a2','a3','a4']), 'a1', 'b1 ve solo su 
 select is(pg_temp.ve('pedido_casa_editora', array['b1','b2','b3','b4']), 'b1', 'b1 ve solo su pedido');
 select is(pg_temp.ve('movimiento_stock', array['f1','f2','f3','f4']), 'f1', 'b1 ve solo sus movimientos');
 select is(pg_temp.ve('deposito', array['81','82','83','84']), '81', 'b1 ve solo su depósito');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '91', 'b1 ve solo su cuenta');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '91', 'b1 ve solo su cuenta');
 select is(pg_temp.ve('pedido_item', array['d1','d2','d3','d4']), 'd1', 'b1 ve las líneas de su pedido y no las de otros');
 select is(pg_temp.ve('transferencia_stock', array['e5','e6']), 'e5', 'b1 ve la transferencia en la que es origen y no la ajena');
 select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5', 'y sus líneas');
@@ -511,7 +511,7 @@ select is(pg_temp.ve('pedido_item', array['d1','d2','d3','d4']), 'd1,d4', 'las l
 select is(pg_temp.ve('movimiento_stock', array['f1','f2','f3','f4']), 'f1,f4', 'sus movimientos');
 select is(pg_temp.ve('ticket', array['71','72','73','74']), '71,74', 'sus tickets');
 select is(pg_temp.ve('deposito', array['81','82','83','84']), '81,84', 'sus depósitos');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '91,94', 'su estado de cuenta');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '91,94', 'su estado de cuenta');
 select is(pg_temp.ve('transferencia_stock', array['e5','e6']), 'e5,e6',
           'a1 ve la transferencia de b1 a b2 (b1 es suyo) y la de b3 a b4 (b4 es suyo)');
 select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5,d6', 'y sus líneas');
@@ -520,7 +520,7 @@ select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5,d6', 'y sus l�
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(pg_temp.ve('pedido_casa_editora', array['b1','b2','b3','b4']), 'b2', 'a2 ve solo los pedidos de su colportor');
 select is(pg_temp.ve('transferencia_stock', array['e5','e6']), 'e5', 'y la transferencia donde su colportor recibe');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '92', 'y su cuenta');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '92', 'y su cuenta');
 
 -- Un coordinador sin campañas no ve nada ajeno.
 select pg_temp.actuar_como(pg_temp.u('a5'));
@@ -533,7 +533,7 @@ select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.ve('stock', array['a1','a2','a3','a4']), 'a1,a2,a3,a4', 'el ADMIN ve todo el stock');
 select is(pg_temp.ve('pedido_item', array['d1','d2','d3','d4']), 'd1,d2,d3,d4', 'todas las líneas');
 select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5,d6', 'todas las transferencias');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '91,92,93,94', 'y todas las cuentas');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '91,92,93,94', 'y todas las cuentas');
 
 -- Las bajas lógicas también se leen (el tombstone).
 select pg_temp.actuar_como_servidor();
@@ -552,7 +552,7 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
     ('stock', $$ insert into public.stock (usuario_id, producto_id) values ('01920000-0000-7000-8000-0000000067b3', '01920000-0000-7000-8000-000000006712') $$),
     ('pedido_casa_editora', $$ insert into public.pedido_casa_editora (colportor_id, estado, origen) values ('01920000-0000-7000-8000-0000000067b3', 'BORRADOR', 'COORDINADOR') $$),
     ('deposito', $$ insert into public.deposito (colportor_id, monto, destino, concepto) values ('01920000-0000-7000-8000-0000000067b3', 1, 'BANCO', 'ALQUILER') $$),
-    ('estado_cuenta', $$ insert into public.estado_cuenta (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
+    ('cuenta_colportor', $$ insert into public.cuenta_colportor (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
   ) x(t, s);
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
@@ -561,12 +561,12 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
     ('stock', $$ update public.stock set cantidad_disponible = 99 where id = '01920000-0000-7000-8000-0000000067a1' $$),
     ('pedido_casa_editora', $$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067b1' $$),
     ('transferencia_stock', $$ update public.transferencia_stock set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067e5' $$),
-    ('estado_cuenta', $$ update public.estado_cuenta set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
+    ('cuenta_colportor', $$ update public.cuenta_colportor set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
   ) x(t, s);
 select is(pg_temp.error_de($$ delete from public.stock where id = '01920000-0000-7000-8000-0000000067a1' $$),
           '42501: permission denied for table stock', 'y nadie borra');
 select pg_temp.actuar_como_rol('anon');
-select is(pg_temp.error_de($$ select count(*) from public.estado_cuenta $$), '42501: permission denied for table estado_cuenta',
+select is(pg_temp.error_de($$ select count(*) from public.cuenta_colportor $$), '42501: permission denied for table cuenta_colportor',
           'anon no lee la cuenta');
 select pg_temp.actuar_como_servidor();
 select is((select cantidad_disponible from public.stock where id = pg_temp.u('a1')), 5,
