@@ -157,8 +157,8 @@ insert into public.ticket (id, usuario_id, tipo, url_cloud, subido_en, monto, fe
    now() - interval '20 days', 10, null, null, null, null, 'VALIDADO', pg_temp.u('c1'), now() - interval '19 days', null, null),
   (pg_temp.u('ae'), pg_temp.u('b1'), 'DEPOSITO', null,
    now() - interval '40 days', 25000, now() - interval '40 days', null, null, null, 'PENDIENTE', null, null, null, null);
-insert into public.deposito (colportor_id, monto, destino, concepto, ticket_id)
-values (pg_temp.u('b2'), 950000, 'BANCO', 'ALQUILER', pg_temp.u('a2'));
+insert into public.deposito (colportor_id, monto, destino, concepto, ticket_id, campania_id)
+values (pg_temp.u('b2'), 950000, 'BANCO', 'ALQUILER', pg_temp.u('a2'), pg_temp.u('e1'));
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma y los privilegios
