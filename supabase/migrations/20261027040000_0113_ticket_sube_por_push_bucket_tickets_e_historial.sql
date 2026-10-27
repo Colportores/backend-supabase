@@ -20,12 +20,22 @@
 --   2. La foto vive en el bucket PRIVADO `tickets` de Supabase Storage (ADR-012) y se mira con una URL
 --      firmada de corta duración. Ruta: `<usuario_id>/<ticket_id>` con extensión opcional
 --      (.jpg, .jpeg, .png o .webp). Políticas de `storage.objects`: la colportora sube y ve las suyas; el
---      ADMIN y el coordinador del colportor ven las del colportor. Nadie con JWT pisa ni borra una foto.
+--      ADMIN y el coordinador de la campaña del ticket ven las del colportor (punto 6). Nadie con JWT pisa ni
+--      borra una foto.
 --   3. `tickets_de_campania(...)`: el historial del panel (HU-COB-009) con filtros por ciudad, colportor,
 --      estado y fecha, los pendientes primero.
 --   4. `tickets_con_foto_vencida()` y `soltar_foto_de_ticket()`: la foto se conserva 4 meses (RF-CO08A);
 --      pasado el plazo el ticket conserva sus datos y deja de mostrar la foto. Solo las usa el servidor.
 --   5. Una guarda en `cobranza`: el `ticket_id` de un cobro tiene que ser un ticket de quien hizo la venta.
+--   6. De qué campaña es un ticket (decisión del orquestador del 26/10, #101 y #179: «a una coordinadora no se
+--      le muestra lo de otra campaña»). El ticket no lleva `campania_id`: se ubica por su fecha
+--      (`coalesce(fecha, subido_en)`, la del cobro o el depósito) en la ventana de la inscripción del
+--      colportor, que va del alta hasta la baja; sin baja, hasta el fin de la campaña + 15 días. Si cae en
+--      las ventanas de dos inscripciones, gana la más nueva: un ticket, una campaña (`campania_del_ticket()`).
+--      Esa regla manda en el historial (`tickets_de_campania`), en la lectura de la tabla (`ticket_select`,
+--      que se recrea acá) y en la foto del bucket (`tickets_ver`): la coordinadora de otra campaña no ve ni
+--      la fila ni la foto, aunque alguna vez haya coordinado al colportor. La dueña y el ADMIN ven todo.
+--      Un ticket cuya fecha no cae en ninguna inscripción solo lo ven su dueña y el ADMIN (pendiente).
 --
 -- ## Lo que el teléfono puede hacer con un ticket (trigger `ticket_del_cliente`, solo para `authenticated`)
 --
@@ -297,6 +307,107 @@ create trigger cobranza_ticket_propio
   for each row execute function public.tg_cobranza_ticket_propio();
 
 -- ----------------------------------------------------------------------------
+-- 5b. De qué campaña es un ticket, y quién lo ve
+-- ----------------------------------------------------------------------------
+
+-- La campaña a la que pertenece lo que el colportor hizo en p_fecha (un ticket, un cobro): la de la inscripción
+-- cuya ventana la contiene. La ventana va del alta hasta la baja si la hubo (fuera de los huecos
+-- `tramos_afuera`); sin baja, hasta el fin de la campaña + 15 días (el plazo de escritura, 0020), contado en
+-- días de Montevideo. Sin recortar a fecha_inicio. Si la fecha cae en dos ventanas, gana la inscripción más
+-- nueva. null si no cae en ninguna. Interna: la llaman funciones DEFINER (decisión del 26/10, #101 y #179).
+create function public.campania_del_ticket(p_usuario_id uuid, p_fecha timestamptz)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select cc.campania_id
+    from public.campania_colportor cc
+    join public.campania c on c.id = cc.campania_id
+   where cc.usuario_id = p_usuario_id
+     and c.deleted_at is null
+     and public.inscripcion_cubre_el_instante(cc.created_at, cc.deleted_at, cc.tramos_afuera, p_fecha)
+     and (cc.deleted_at is not null
+          or c.fecha_fin is null
+          or public.hoy_montevideo(p_fecha) <= c.fecha_fin + 15)
+   order by cc.created_at desc, cc.id desc
+   limit 1;
+$$;
+
+comment on function public.campania_del_ticket(uuid, timestamptz) is
+  'La campaña de lo que p_usuario_id hizo en p_fecha: la de la inscripción cuya ventana (alta a baja; sin baja, '
+  'hasta fin + 15 días) la contiene; si son dos, la más nueva; null si ninguna. Interna (0113, decisión del 26/10).';
+
+revoke all on function public.campania_del_ticket(uuid, timestamptz) from public, anon, authenticated, service_role;
+
+-- ¿El usuario autenticado puede ver el ticket de p_usuario_id con esa fecha? La dueña, el ADMIN o el
+-- COORDINADOR de la campaña a la que pertenece el ticket (aun terminada o con el colportor dado de baja). No
+-- recibe al que pregunta: sale de auth.uid(). La usan `ticket_select` y la política de la foto.
+create function public.puede_ver_ticket_de(p_usuario_id uuid, p_fecha timestamptz)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p_usuario_id = auth.uid()
+      or public.tiene_rol('ADMIN')
+      or (public.tiene_rol('COORDINADOR')
+          and exists (select 1
+                        from public.campania c
+                       where c.id = public.campania_del_ticket(p_usuario_id, p_fecha)
+                         and c.coordinador_id = auth.uid()));
+$$;
+
+comment on function public.puede_ver_ticket_de(uuid, timestamptz) is
+  'true si el usuario autenticado es el dueño (p_usuario_id), ADMIN, o COORDINADOR de la campaña a la que '
+  'pertenece lo hecho por p_usuario_id en p_fecha (campania_del_ticket). La coordinadora de otra campaña, '
+  'aunque haya coordinado antes al colportor, no. Para ticket_select y la foto del bucket (0113).';
+
+revoke all on function public.puede_ver_ticket_de(uuid, timestamptz) from public, anon, authenticated, service_role;
+grant execute on function public.puede_ver_ticket_de(uuid, timestamptz) to authenticated;
+
+-- ¿Puede ver quien pregunta la foto de esta ruta del bucket (`<usuario_id>/<ticket_id>[.ext]`)? Según el ticket
+-- de la ruta y la misma regla de arriba. Sin ticket (la foto subió antes que él) o con una ruta que no
+-- es de ticket: no (la dueña y el ADMIN ya la ven por su política). El cast a uuid va dentro del CASE.
+create function public.puede_ver_foto_de_ticket(p_ruta text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select case
+           when split_part(p_ruta, '/', 1) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            and regexp_replace(split_part(p_ruta, '/', 2), '\.(jpg|jpeg|png|webp)$', '')
+                ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+             then exists (select 1
+                            from public.ticket t
+                           where t.id = regexp_replace(split_part(p_ruta, '/', 2), '\.(jpg|jpeg|png|webp)$', '')::uuid
+                             and t.usuario_id = split_part(p_ruta, '/', 1)::uuid
+                             and public.puede_ver_ticket_de(t.usuario_id, coalesce(t.fecha, t.subido_en)))
+           else false
+         end;
+$$;
+
+comment on function public.puede_ver_foto_de_ticket(text) is
+  'true si el usuario autenticado puede ver el ticket que nombra la ruta <usuario_id>/<ticket_id>[.ext] '
+  '(puede_ver_ticket_de, por la fecha del ticket). Sin ticket o con otra ruta: false. Para la política tickets_ver (0113).';
+
+revoke all on function public.puede_ver_foto_de_ticket(text) from public, anon, authenticated, service_role;
+grant execute on function public.puede_ver_foto_de_ticket(text) to authenticated;
+
+-- La lectura de la tabla (0067) dejaba ver el ticket a quien alguna vez coordinó al colportor
+-- (`coordina_al_colportor`, sin ventana). Ahora solo a quien coordina la campaña del ticket.
+drop policy ticket_select on public.ticket;
+create policy ticket_select on public.ticket
+  for select to authenticated
+  using (usuario_id = (select auth.uid())
+         or (select public.tiene_rol('ADMIN'))
+         or public.puede_ver_ticket_de(usuario_id, coalesce(fecha, subido_en)));
+
+-- ----------------------------------------------------------------------------
 -- 6. El historial del coordinador (HU-COB-009, vista 29)
 -- ----------------------------------------------------------------------------
 
@@ -392,7 +503,11 @@ begin
            dep.concepto
       from inscripcion ins
       join public.usuario usr on usr.id = ins.usuario_id
-      join public.ticket t on t.usuario_id = ins.usuario_id and t.deleted_at is null
+      join public.ticket t
+        on t.usuario_id = ins.usuario_id
+       and t.deleted_at is null
+       -- Un ticket, una campaña: el de otra inscripción del mismo colportor no sale acá.
+       and public.campania_del_ticket(t.usuario_id, coalesce(t.fecha, t.subido_en)) = p_campania_id
       left join public.ciudad ciu on ciu.id = ins.ciudad_k
       left join lateral (
         select d.destino, d.concepto
@@ -421,7 +536,8 @@ comment on function public.tickets_de_campania(uuid, text, uuid, uuid, date, dat
   'cuando venció: 4 meses) y, si hay depósito, su destino y concepto. Filtros opcionales: estado, colportor, '
   'ciudad y fecha del ticket (día de Montevideo, ambos incluidos). Pendientes primero. Hasta 500 filas '
   '(p_limite, p_desplazamiento). Sin datos de clientes. Errores: 42501 sin permiso; CZ001 campaña inexistente; '
-  '22023 filtro inválido. Una campaña terminada se lee.';
+  '22023 filtro inválido. Una campaña terminada se lee. Un ticket sale solo en la campaña a la que pertenece por su '
+  'fecha (campania_del_ticket).';
 
 revoke all on function public.tickets_de_campania(uuid, text, uuid, uuid, date, date, integer, integer)
   from public, anon, authenticated, service_role;
@@ -512,8 +628,9 @@ begin
       and name ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.(jpg|jpeg|png|webp))?$'
     );
 
-  -- Ver (y pedir la URL firmada): la dueña, el ADMIN y quien coordina al colportor de la carpeta. El cast a
-  -- uuid va dentro del CASE: Postgres no garantiza el orden de un AND.
+  -- Ver (y pedir la URL firmada): la dueña, el ADMIN y quien coordina la campaña a la que pertenece el ticket
+  -- de la ruta (puede_ver_foto_de_ticket: la misma ventana que ticket_select, por la fecha del ticket). Quien
+  -- coordinó al colportor en otra campaña no ve la foto.
   drop policy if exists tickets_ver on storage.objects;
   create policy tickets_ver on storage.objects
     for select to authenticated
@@ -522,11 +639,7 @@ begin
       and (
         split_part(name, '/', 1) = (select auth.uid())::text
         or (select public.tiene_rol('ADMIN'))
-        or case
-             when split_part(name, '/', 1) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-               then public.coordina_al_colportor(split_part(name, '/', 1)::uuid)
-             else false
-           end
+        or public.puede_ver_foto_de_ticket(name)
       )
     );
 end

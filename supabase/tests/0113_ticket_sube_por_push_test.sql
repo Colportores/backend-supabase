@@ -104,7 +104,9 @@ select pg_temp.u(x.s), r.id
   join public.rol r on r.codigo = x.codigo;
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 ticket13', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('c1'));
-insert into public.campania_colportor (campania_id, usuario_id) values (pg_temp.u('e1'), pg_temp.u('b1'));
+-- `created_at` explícito: lo que b1 hace cuenta desde su alta (la coordinadora ve los tickets de su ventana).
+insert into public.campania_colportor (campania_id, usuario_id, created_at)
+values (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '10 days');
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais tk13', 'ZV');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)

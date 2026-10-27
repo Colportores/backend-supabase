@@ -24,8 +24,8 @@ select x.u::uuid, r.id
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000113e1', 'Campaña 113', 'VERANO', current_date - 10, current_date + 30,
    '01920000-0000-7000-8000-0000000113d1');
-insert into public.campania_colportor (campania_id, usuario_id) values
-  ('01920000-0000-7000-8000-0000000113e1', '01920000-0000-7000-8000-0000000113b1');
+insert into public.campania_colportor (campania_id, usuario_id, created_at) values
+  ('01920000-0000-7000-8000-0000000113e1', '01920000-0000-7000-8000-0000000113b1', now() - interval '10 days');
 
 -- Los tickets de antes (los cargaba el servidor: todavía no subían del teléfono).
 insert into public.ticket (id, usuario_id, tipo, subido_en, monto, fecha, numero_autorizacion, tarjeta_tipo, tarjeta_marca,

@@ -92,11 +92,12 @@ select pg_temp.u(x.s), r.id
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 stock67', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'e2 stock67', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a2'));
-insert into public.campania_colportor (id, campania_id, usuario_id, zona_id) values
-  (pg_temp.u('c1'), pg_temp.u('e1'), pg_temp.u('b1'), null),
-  (pg_temp.u('c2'), pg_temp.u('e2'), pg_temp.u('b2'), null);
-insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, deleted_at) values
-  (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now());
+-- `created_at` explícito: desde 0113 el coordinador lee un ticket solo dentro de la ventana de la inscripción.
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('c1'), pg_temp.u('e1'), pg_temp.u('b1'), null, now() - interval '5 days'),
+  (pg_temp.u('c2'), pg_temp.u('e2'), pg_temp.u('b2'), null, now() - interval '5 days');
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at, deleted_at) values
+  (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now() - interval '5 days', now());
 
 insert into public.producto (id, nombre, tipo, precio_base_compra) values
   (pg_temp.u('11'), 'Libro p1 stock67', 'LIBRO', 1500),
@@ -114,8 +115,8 @@ select pg_temp.u('d' || right(s, 1)), pg_temp.u('b' || right(s, 1)), pg_temp.u('
 insert into public.movimiento_stock (id, usuario_id, producto_id, tipo, cantidad, pedido_id)
 select pg_temp.u('f' || right(s, 1)), pg_temp.u(s), pg_temp.u('11'), 'ENTRADA_PEDIDO', 1, pg_temp.u('b' || right(s, 1))
   from unnest(array['b1','b2','b3','b4']) s;
-insert into public.ticket (id, usuario_id, tipo, monto)
-select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000 from unnest(array['b1','b2','b3','b4']) s;
+insert into public.ticket (id, usuario_id, tipo, monto, subido_en)
+select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000, now() - interval '1 day' from unnest(array['b1','b2','b3','b4']) s;
 insert into public.deposito (id, colportor_id, monto, destino, concepto)
 select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA' from unnest(array['b1','b2','b3','b4']) s;
 insert into public.estado_cuenta (id, usuario_id, deuda_total)

@@ -1,7 +1,9 @@
 -- pgTAP · migración 0113 (backend-supabase#108, ADR-012): el bucket `tickets` es PRIVADO (la foto se mira con
 -- una URL firmada de corta duración), tiene el tope de 2 MiB y solo acepta imágenes; cada colportora sube a
--- su carpeta (`<usuario_id>/<ticket_id>.jpg`) y a ninguna otra; ve lo suyo, el coordinador ve lo de sus
--- colportores, el ADMIN ve todo, nadie más ve nada; y NADIE desde el teléfono pisa ni borra una foto subida.
+-- su carpeta (`<usuario_id>/<ticket_id>.jpg`) y a ninguna otra; ve lo suyo, el coordinador ve la foto de los
+-- tickets de SU campaña (la ventana de la inscripción por la fecha del ticket: decisión del 26/10, #101 y #179; no
+-- la de quien alguna vez coordinó al colportor), el ADMIN ve todo, nadie más ve nada; y NADIE desde el teléfono
+-- pisa ni borra una foto subida.
 --
 -- Las tablas de `storage` las crea el servicio Storage, no la imagen de Postgres: contra la base del job
 -- `migraciones` de CI (solo `db`) no existen y las pruebas se saltean, a la vista (SKIP). Con Storage corriendo
@@ -73,8 +75,14 @@ select pg_temp.u(x.s), r.id
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 bk14', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('c1')),
   (pg_temp.u('e2'), 'e2 bk14', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('c2'));
-insert into public.campania_colportor (campania_id, usuario_id) values
-  (pg_temp.u('e1'), pg_temp.u('b1')), (pg_temp.u('e2'), pg_temp.u('b2'));
+-- `created_at` explícito: lo que un colportor hace cuenta desde el día en que se inscribió.
+insert into public.campania_colportor (campania_id, usuario_id, created_at) values
+  (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '8 days'), (pg_temp.u('e2'), pg_temp.u('b2'), now() - interval '8 days');
+-- Los tickets de las fotos que se suben abajo (el coordinador ve la foto según el ticket de la ruta): a1, a2 y a4
+-- de b1 y a3 de b2, cobrados hace 2 días, dentro de su ventana.
+insert into public.ticket (id, usuario_id, tipo, subido_en, monto, fecha, estado)
+select pg_temp.u(x.t), pg_temp.u(x.b), 'DEPOSITO', now() - interval '2 days', 1000, now() - interval '2 days', 'PENDIENTE'
+  from (values ('a1','b1'), ('a2','b1'), ('a4','b1'), ('a3','b2')) x(t, b);
 
 -- --- el bucket --------------------------------------------------------------------
 select is((select count(*) from storage.buckets where id = 'tickets'), 1::bigint, 'existe el bucket tickets');
@@ -164,12 +172,13 @@ insert into public.usuario_rol (usuario_id, rol_id) select pg_temp.u('c3'), r.id
 select pg_temp.actuar_como(pg_temp.u('c3'));
 select is(pg_temp.veo(), '-', 'un coordinador sin colportores no ve ninguna (y la carpeta rara no hace fallar la consulta)');
 
--- Si un colportor se da de baja de la campaña, su coordinador sigue viendo lo que subió (coordina_al_colportor
+-- Si un colportor se da de baja de la campaña, su coordinador sigue viendo lo que subió (la ventana de la inscripción
 -- cuenta la inscripción dada de baja, como el ticket).
 select pg_temp.actuar_como_servidor();
 update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b1');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.veo(), '#b1/#a1.jpg,#b1/#a2.png,#b1/#a4', 'de baja el colportor, el coordinador sigue viendo lo que subió');
+select is(pg_temp.veo(), '#b1/#a1.jpg,#b1/#a2.png,#b1/#a4',
+          'de baja el colportor, el coordinador sigue viendo lo que subió (los tickets son de antes de la baja)');
 
 -- --- pisar y borrar -------------------------------------------------------------------------
 -- Sin política de UPDATE ni de DELETE, RLS deja las dos en cero filas (o las rechaza): sirve cualquiera de las
@@ -193,6 +202,40 @@ select pg_temp.actuar_como_servidor();
 select is((select count(*)::int from storage.objects where bucket_id = 'tickets' and name <> 'pisada.jpg'), 5,
           'ni el coordinador ni el ADMIN por la API: el vencimiento lo borra el servidor');
 reset storage.allow_delete_query;
+
+-- --- La foto de otra campaña (decisión del 26/10: a una coordinadora no se le muestra lo de otra campaña) -------
+-- b1 pasa a la campaña e3, de c2 (alta hace 1 día; en e1 ya está de baja desde ahora). El ticket a8 es de hoy, de
+-- e3; la foto a7 subió antes que su ticket; la foto a9 es de un ticket de b1 que no es de ninguna campaña
+-- (cobrado hace 100 días, antes de toda inscripción).
+select pg_temp.actuar_como_servidor();
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id)
+values (pg_temp.u('e3'), 'e3 bk14', 'VERANO', public.hoy_montevideo() - 5, public.hoy_montevideo() + 30, pg_temp.u('c2'));
+insert into public.campania_colportor (campania_id, usuario_id, created_at)
+values (pg_temp.u('e3'), pg_temp.u('b1'), now() - interval '1 day');
+insert into public.ticket (id, usuario_id, tipo, subido_en, monto, fecha, estado) values
+  (pg_temp.u('a8'), pg_temp.u('b1'), 'DEPOSITO', now(), 1000, now() + interval '1 hour', 'PENDIENTE'),
+  (pg_temp.u('a9'), pg_temp.u('b1'), 'DEPOSITO', now(), 1000, now() - interval '100 days', 'PENDIENTE'),
+  (pg_temp.u('aa'), pg_temp.u('b1'), 'DEPOSITO', now(), 1000, now() - interval '2 days', 'PENDIENTE');
+-- El ticket aa subió tarde (hoy, ya en e3) pero es de hace 2 días, de e1: la campaña la da la fecha del ticket, no
+-- la de subida. Y una foto de la carpeta de b2 que nombra al ticket a8, que es de b1: la ruta no es de ese ticket.
+insert into storage.objects (bucket_id, name) values
+  ('tickets', pg_temp.u('b1')::text || '/' || pg_temp.u('aa')::text || '.jpg'),
+  ('tickets', pg_temp.u('b2')::text || '/' || pg_temp.u('a8')::text || '.jpg'),
+  ('tickets', pg_temp.u('b1')::text || '/' || pg_temp.u('a8')::text || '.jpg'),
+  ('tickets', pg_temp.u('b1')::text || '/' || pg_temp.u('a7')::text || '.jpg'),
+  ('tickets', pg_temp.u('b1')::text || '/' || pg_temp.u('a9')::text || '.jpg');
+select pg_temp.actuar_como(pg_temp.u('c1'));
+select is(pg_temp.veo(), '#b1/#a1.jpg,#b1/#a2.png,#b1/#a4,#b1/#aa.jpg',
+          'c1 coordinó a b1 en e1: ve la foto de los tickets de e1 (también el aa, que subió tarde), no la del a8 (de e3) ni la a7 (sin ticket) ni la a9 (de ninguna campaña)');
+select pg_temp.actuar_como(pg_temp.u('c2'));
+select is(pg_temp.veo(), '#b1/#a8.jpg,#b2/#a3.jpg',
+          'c2 ve la foto del a8, que es de su campaña e3, y la de b2; no las de e1 de b1 (aunque ahora coordine a b1) ni la de la carpeta de b2 que nombra al ticket de b1');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select count(*)::int from storage.objects where bucket_id = 'tickets'), 7,
+          'b1 ve sus siete fotos, también la sin ticket (a7) y la de ninguna campaña (a9)');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is((select count(*)::int from storage.objects where bucket_id = 'tickets'), 10, 'el ADMIN ve las diez');
+select pg_temp.actuar_como_servidor();
 
 \else
 
