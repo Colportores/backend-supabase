@@ -20,7 +20,11 @@
 --      porque el pull filtra por una columna de la propia tabla; las filas que ya había se completan.
 --   2. Qué decide el servidor sobre un pedido que llega del teléfono (trigger `pedido_del_cliente`, solo para
 --      `authenticated`; el servidor, un RPC DEFINER o el editor SQL no pasan por él):
---        · nace `PENDIENTE_AUTORIZACION` (23514 si el teléfono manda otro estado) y con `origen = 'COLPORTOR'`;
+--        · nace `PENDIENTE_AUTORIZACION` (23514 si el teléfono manda otro estado) y con `origen = 'COLPORTOR'`.
+--          Una excepción, decidida el 27/10 (mapa §2): el alta que nace `CANCELADO` (la colportora armó el pedido
+--          sin conexión y lo canceló antes de que subiera: el motor funde la cancelación en el alta) se acepta sin
+--          pedir campaña ni cuenta al día, y sus líneas entran como parte de un pedido cancelado, sin efecto en
+--          el monto, la deuda ni el stock;
 --        · la dueña sale del JWT, y `coordinador_id`, `monto_total`, `excede_limite` y `fecha_pedido` los pone el
 --          servidor (están en `columnas_servidor`: se descartan del payload). `fecha_pedido` es cuándo LLEGÓ
 --          («el pedido se envía al sincronizar», HU-STK-009), no cuándo se armó: así la campaña a la que pertenece
@@ -70,8 +74,9 @@
 --     (`monto_total`, `excede_limite`, `precio_unitario`, `origen`, `fecha_pedido`). Cancelar es un update con
 --     { id, estado: 'CANCELADO' } y la `sync_version` que tiene. `invalid` con 23514 (estado, producto sin
 --     precio), 23503 (producto inexistente), 42501 (sin campaña, pedido ajeno o ya decidido, cualquier otro
---     cambio) y 23505 (producto repetido en el pedido). Como cada línea sube la versión del pedido, el teléfono
---     tiene que bajar antes de cancelar.
+--     cambio) y 23505 (producto repetido en el pedido). Recalcular el monto y el aviso con cada línea NO sube la
+--     `sync_version` del pedido (solo xmin_w, como el republicado de 0011): la versión que devuelve el push del
+--     pedido sigue valiendo para cancelar aunque ya hayan entrado sus líneas.
 --   · front-coordinadores-web / backend-supabase#104: `excede_limite` sale como lo guardó esta migración.
 --   · docs-organizacion: esquema-datos.md, contrato-sync-engine.md §2 (las dos filas) y HU-STK-009.
 --
@@ -194,7 +199,7 @@ begin
   if v_dueno is null or v_dueno is distinct from (select auth.uid()) then
     return 'AJENO';
   end if;
-  if v_estado <> 'PENDIENTE_AUTORIZACION' then
+  if v_estado not in ('PENDIENTE_AUTORIZACION', 'CANCELADO') then
     return 'ESTADO';
   end if;
   return null;
@@ -213,11 +218,18 @@ grant execute on function public.pedido_no_acepta_lineas(uuid) to authenticated;
 -- es la del pedido (campania_del_ticket con su fecha). No bloquea nada: solo informa (R-ST06). Idempotente.
 create function public.recalcular_pedido_del_colportor(p_pedido_id uuid)
 returns void
-language sql
+language plpgsql
 volatile
 security definer
 set search_path = ''
 as $$
+declare
+  v_antes text := current_setting('colportores.republicar', true);
+begin
+  -- Republicado (0011): el update sube xmin_w (el teléfono baja el monto y el aviso nuevos) pero NO la
+  -- sync_version ni updated_at. Sin esto cada línea que entra subiría la versión del pedido y el push le habría
+  -- devuelto al teléfono la de antes de sus líneas: cancelar daría `conflict` y el motor no reintenta.
+  perform set_config('colportores.republicar', 'on', true);
   update public.pedido_casa_editora p
      set monto_total = t.monto,
          excede_limite = public.pedido_excede_limite_de_deuda(
@@ -232,6 +244,8 @@ as $$
      and (p.monto_total is distinct from t.monto
           or p.excede_limite is distinct from public.pedido_excede_limite_de_deuda(
                            p.colportor_id, public.campania_del_ticket(p.colportor_id, p.fecha_pedido), t.monto));
+  perform set_config('colportores.republicar', coalesce(v_antes, 'off'), true);
+end;
 $$;
 
 comment on function public.recalcular_pedido_del_colportor(uuid) is
@@ -271,9 +285,14 @@ begin
     return new;
   end if;
 
-  if new.estado is distinct from 'PENDIENTE_AUTORIZACION' then
+  if new.estado is distinct from 'PENDIENTE_AUTORIZACION' and new.estado is distinct from 'CANCELADO' then
     raise exception 'El pedido se envía para que lo autorice tu coordinador. Envialo desde la pantalla de pedidos.'
       using errcode = '23514', constraint = 'pedido_del_colportor_nace_por_autorizar';
+  end if;
+
+  -- Nació cancelado: no hay nada que pedir ni que autorizar, solo queda el registro (nunca se pierde nada).
+  if new.estado = 'CANCELADO' then
+    return new;
   end if;
 
   if public.mi_cuenta_esta_suspendida() then
@@ -290,7 +309,7 @@ end;
 $$;
 
 comment on function public.tg_pedido_casa_editora_del_cliente() is
-  'BEFORE INSERT de pedido_casa_editora, solo para authenticated (0124): nace PENDIENTE_AUTORIZACION (23514), la '
+  'BEFORE INSERT de pedido_casa_editora, solo para authenticated (0124): nace PENDIENTE_AUTORIZACION o CANCELADO (23514), la '
   'colportora no está suspendida y está en una campaña (42501) y el servidor fija origen COLPORTOR, sin coordinador, monto 0 y sin '
   'aviso (los recalcula con cada línea). El servidor no pasa por acá.';
 
@@ -448,7 +467,7 @@ create policy pedido_casa_editora_insert_propio on public.pedido_casa_editora
   for insert to authenticated
   with check (colportor_id = (select auth.uid())
               and origen = 'COLPORTOR'
-              and estado = 'PENDIENTE_AUTORIZACION');
+              and estado in ('PENDIENTE_AUTORIZACION', 'CANCELADO'));
 
 create policy pedido_casa_editora_update_propio on public.pedido_casa_editora
   for update to authenticated

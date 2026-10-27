@@ -123,7 +123,8 @@ insert into public.campania_colportor (campania_id, usuario_id, created_at, dele
 insert into public.producto (id, nombre, tipo, precio_base_compra) values
   (pg_temp.u('d1'), 'Libro uno pedido23', 'LIBRO', 1500),
   (pg_temp.u('d2'), 'Revista dos pedido23', 'REVISTA', 2000),
-  (pg_temp.u('d3'), 'Libro sin precio pedido23', 'LIBRO', null);
+  (pg_temp.u('d3'), 'Libro sin precio pedido23', 'LIBRO', null),
+  (pg_temp.u('d5'), 'Libro cinco pedido23', 'LIBRO', 100);
 insert into public.producto (id, nombre, tipo, precio_base_compra, deleted_at) values
   (pg_temp.u('d4'), 'Libro de baja pedido23', 'LIBRO', 900, now());
 
@@ -553,8 +554,11 @@ select is(pg_temp.error_de($$ update public.pedido_casa_editora set estado = 'PE
           '42501 ', 'y no se "des-cancela" desde el teléfono');
 select is(pg_temp.error_de($$ insert into public.pedido_item (id, pedido_id, producto_id, cantidad)
                               values ('01920000-0000-7000-8000-0000000023e8', '01920000-0000-7000-8000-0000000023a3',
-                                      '01920000-0000-7000-8000-0000000023d2', 1) $$),
-          '23514 pedido_item_pedido_por_autorizar', 'un pedido cancelado no recibe más líneas');
+                                      '01920000-0000-7000-8000-0000000023d5', 1) $$),
+          'ok', 'un pedido cancelado acepta líneas (como parte del pedido cancelado)');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.pedido(pg_temp.u('a3')), '9500/true/CANCELADO/COLPORTOR', 'sin efecto en su monto');
+select pg_temp.actuar_como(pg_temp.u('b1'));
 select pg_temp.actuar_como(pg_temp.u('c1'));
 select is(pg_temp.filas($$ update public.pedido_casa_editora set estado = 'CANCELADO'
                           where id = '01920000-0000-7000-8000-0000000023a1' $$),
@@ -576,7 +580,7 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is((select string_agg(right(id::text, 2), ',' order by right(id::text, 2)) from public.pedido_casa_editora
             where id::text like '01920000-0000-7000-8000-0000000023a_'), 'a1,a3,a7,a8,a9', 'b1 ve solo los suyos');
 select is((select string_agg(right(id::text, 2), ',' order by right(id::text, 2)) from public.pedido_item
-            where id::text like '01920000-0000-7000-8000-0000000023e_'), 'e1,e3,e5,e6,e9', 'b1 ve solo sus líneas');
+            where id::text like '01920000-0000-7000-8000-0000000023e_'), 'e1,e3,e5,e6,e8,e9', 'b1 ve solo sus líneas');
 select pg_temp.actuar_como(pg_temp.u('c1'));
 select is((select string_agg(right(id::text, 2), ',' order by right(id::text, 2)) from public.pedido_casa_editora
             where id::text like '01920000-0000-7000-8000-0000000023a_'), 'a1,a2,a3,a4,a7,a8,a9',
@@ -694,6 +698,55 @@ select is(pg_temp.push1(pg_temp.op('36'), 'pedido_item', 'update', jsonb_build_o
           '42501', 'cambiar una línea: invalid 42501');
 select is(pg_temp.push1(pg_temp.op('37'), 'pedido_item', 'delete', jsonb_build_object('id', pg_temp.u('f1')), 0) ->> 'code',
           '42501', 'borrar una línea: invalid 42501');
+
+-- Un lote con el pedido y sus dos líneas: la versión que devolvió el push del pedido sigue valiendo para cancelar
+-- (las líneas recalculan el monto sin subir la sync_version) y el delta baja el monto nuevo.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table lote_ba as
+select sync.push(jsonb_build_array(
+         jsonb_build_object('client_op_id', pg_temp.op('60'), 'entity', 'pedido_casa_editora', 'op', 'insert',
+                            'payload', pg_temp.pd(pg_temp.u('ba'))),
+         jsonb_build_object('client_op_id', pg_temp.op('61'), 'entity', 'pedido_item', 'op', 'insert',
+                            'payload', pg_temp.ln(pg_temp.u('ca'), pg_temp.u('ba'), pg_temp.u('d1'), 2)),
+         jsonb_build_object('client_op_id', pg_temp.op('62'), 'entity', 'pedido_item', 'op', 'insert',
+                            'payload', pg_temp.ln(pg_temp.u('cb'), pg_temp.u('ba'), pg_temp.u('d2'), 1)))) -> 'results' as r;
+grant select on lote_ba to authenticated;
+select is((select string_agg(e ->> 'outcome', ',') from lote_ba, jsonb_array_elements(r) e), 'accepted,accepted,accepted',
+          'el pedido y sus dos líneas entran en un lote');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.pedido(pg_temp.u('ba')), '5000/false/PENDIENTE_AUTORIZACION/COLPORTOR', 'con el monto de las dos líneas');
+select is((select p.sync_version from public.pedido_casa_editora p where p.id = pg_temp.u('ba')),
+          (select (r -> 0 ->> 'sync_version')::bigint from lote_ba),
+          'y su sync_version es la que devolvió el push del pedido: las líneas no la movieron');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.push1(pg_temp.op('63'), 'pedido_casa_editora', 'update', jsonb_build_object('id', pg_temp.u('ba'), 'estado', 'CANCELADO'),
+                        (select (r -> 0 ->> 'sync_version')::bigint from lote_ba)) ->> 'outcome',
+          'accepted', 'cancelar con la versión que devolvió el push, sin bajar antes: accepted');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.pedido(pg_temp.u('ba')), '5000/false/CANCELADO/COLPORTOR', 'queda cancelado');
+
+-- Armó el pedido sin conexión y lo canceló antes de subir: el motor sube un alta que nace CANCELADA, con sus
+-- líneas. Se acepta todo, aunque no esté en una campaña (b3), sin efecto en monto, aviso, deuda ni stock.
+select pg_temp.actuar_como(pg_temp.u('b3'));
+create temp table lote_bb as
+select sync.push(jsonb_build_array(
+         jsonb_build_object('client_op_id', pg_temp.op('64'), 'entity', 'pedido_casa_editora', 'op', 'insert',
+                            'payload', pg_temp.pd(pg_temp.u('bb'), '{"estado": "CANCELADO"}')),
+         jsonb_build_object('client_op_id', pg_temp.op('65'), 'entity', 'pedido_item', 'op', 'insert',
+                            'payload', pg_temp.ln(pg_temp.u('cc'), pg_temp.u('bb'), pg_temp.u('d1'), 2)),
+         jsonb_build_object('client_op_id', pg_temp.op('66'), 'entity', 'pedido_item', 'op', 'insert',
+                            'payload', pg_temp.ln(pg_temp.u('cd'), pg_temp.u('bb'), pg_temp.u('d2'), 1)))) -> 'results' as r;
+grant select on lote_bb to authenticated;
+select is((select string_agg(e ->> 'outcome', ',') from lote_bb, jsonb_array_elements(r) e), 'accepted,accepted,accepted',
+          'el alta que nace CANCELADA y sus dos líneas entran, sin errores');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.pedido(pg_temp.u('bb')), '0/false/CANCELADO/COLPORTOR', 'queda cancelado, en cero y sin aviso');
+select is((select count(*)::int from public.pedido_item where pedido_id = pg_temp.u('bb') and colportor_id = pg_temp.u('b3')),
+          2, 'con sus dos líneas, de b3');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.push1(pg_temp.op('67'), 'pedido_casa_editora', 'insert',
+                        pg_temp.pd(pg_temp.u('bc'), '{"estado": "AUTORIZADO"}')) ->> 'code',
+          '23514', 'pero un alta que nace autorizada sigue siendo invalid 23514');
 
 -- b3, sin campaña, sube un pedido.
 select pg_temp.actuar_como(pg_temp.u('b3'));
