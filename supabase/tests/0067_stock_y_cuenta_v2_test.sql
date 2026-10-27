@@ -3,8 +3,9 @@
 --      lectura por tabla, privilegios (authenticated solo SELECT, anon nada, service_role todo) y que
 --      ninguna entra todavía a sync.entidad.
 --   2. Las columnas nuevas de campania (alquiler_monto) y de campania_colportor (tipo_beca,
---      meta_monto_ces, limite_pedido) y sus CHECK; viajan en el pull del colportor.
---   3. Quién cambia la beca y el límite: el ADMIN, el coordinador DE ESA campaña y el servidor; no otro
+--      meta_monto_ces; el limite_pedido salió en la 0120: el límite es de la campaña) y sus CHECK; viajan en el pull
+--      del colportor.
+--   3. Quién cambia la beca y la meta: el ADMIN, el coordinador DE ESA campaña y el servidor; no otro
 --      coordinador ni el propio colportor.
 --   4. Los CHECK de cada tabla: estados, origen, destino, concepto, montos y cantidades.
 --   5. El ticket: rechazar exige motivo; uno resuelto no se edita (TK001) salvo la foto y la baja.
@@ -12,7 +13,7 @@
 --      no otro colportor ni un coordinador de otra campaña ni uno sin campañas. Una transferencia la ven
 --      las dos puntas.
 --   7. Escritura: nadie con JWT (42501), anon tampoco lee.
---   8. La función estado_cuenta() de 0004 sigue andando con la tabla del mismo nombre.
+--   8. La función estado_cuenta() de 0004 sigue andando (la tabla se llama cuenta_colportor desde 0119).
 begin;
 select * from no_plan();
 
@@ -92,11 +93,12 @@ select pg_temp.u(x.s), r.id
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 stock67', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'e2 stock67', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a2'));
-insert into public.campania_colportor (id, campania_id, usuario_id, zona_id) values
-  (pg_temp.u('c1'), pg_temp.u('e1'), pg_temp.u('b1'), null),
-  (pg_temp.u('c2'), pg_temp.u('e2'), pg_temp.u('b2'), null);
-insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, deleted_at) values
-  (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now());
+-- `created_at` explícito: desde 0113 el coordinador lee un ticket solo dentro de la ventana de la inscripción.
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('c1'), pg_temp.u('e1'), pg_temp.u('b1'), null, now() - interval '5 days'),
+  (pg_temp.u('c2'), pg_temp.u('e2'), pg_temp.u('b2'), null, now() - interval '5 days');
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at, deleted_at) values
+  (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now() - interval '5 days', now());
 
 insert into public.producto (id, nombre, tipo, precio_base_compra) values
   (pg_temp.u('11'), 'Libro p1 stock67', 'LIBRO', 1500),
@@ -114,11 +116,11 @@ select pg_temp.u('d' || right(s, 1)), pg_temp.u('b' || right(s, 1)), pg_temp.u('
 insert into public.movimiento_stock (id, usuario_id, producto_id, tipo, cantidad, pedido_id)
 select pg_temp.u('f' || right(s, 1)), pg_temp.u(s), pg_temp.u('11'), 'ENTRADA_PEDIDO', 1, pg_temp.u('b' || right(s, 1))
   from unnest(array['b1','b2','b3','b4']) s;
-insert into public.ticket (id, usuario_id, tipo, monto)
-select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000 from unnest(array['b1','b2','b3','b4']) s;
-insert into public.deposito (id, colportor_id, monto, destino, concepto)
-select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA' from unnest(array['b1','b2','b3','b4']) s;
-insert into public.estado_cuenta (id, usuario_id, deuda_total)
+insert into public.ticket (id, usuario_id, tipo, monto, subido_en)
+select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000, now() - interval '1 day' from unnest(array['b1','b2','b3','b4']) s;
+insert into public.deposito (id, colportor_id, monto, destino, concepto, ticket_id)
+select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA', pg_temp.u('7' || right(s, 1)) from unnest(array['b1','b2','b3','b4']) s;
+insert into public.cuenta_colportor (id, usuario_id, deuda_total)
 select pg_temp.u('9' || right(s, 1)), pg_temp.u(s), 1500 from unnest(array['b1','b2','b3','b4']) s;
 -- Una transferencia de b1 a b2 (e1 -> e2) y otra de b3 a b4.
 insert into public.transferencia_stock (id, origen_id, destino_id) values
@@ -133,18 +135,18 @@ insert into public.transferencia_item (id, transferencia_id, producto_id, cantid
 -- ============================================================================
 select has_table('public', t, format('existe %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select has_column('public', 'campania', 'alquiler_monto', 'campania.alquiler_monto');
 select col_type_is('public', 'campania', 'alquiler_monto', 'bigint', 'alquiler_monto es bigint (centavos)');
 select col_is_null('public', 'campania', 'alquiler_monto', 'alquiler_monto es opcional');
 select has_column('public', 'campania_colportor', c, format('campania_colportor.%s', c))
-  from unnest(array['tipo_beca','meta_monto_ces','limite_pedido']) c;
+  from unnest(array['tipo_beca','meta_monto_ces']) c;
 select col_is_null('public', 'campania_colportor', c, format('campania_colportor.%s es opcional', c))
-  from unnest(array['tipo_beca','meta_monto_ces','limite_pedido']) c;
+  from unnest(array['tipo_beca','meta_monto_ces']) c;
 select has_column('public', 'pedido_casa_editora', c, format('pedido_casa_editora.%s', c))
   from unnest(array['origen','excede_limite','estado','monto_total','colportor_id','coordinador_id','fecha_pedido']) c;
-select has_column('public', 'estado_cuenta', 'deuda_alquiler', 'estado_cuenta.deuda_alquiler');
+select has_column('public', 'cuenta_colportor', 'deuda_alquiler', 'cuenta_colportor.deuda_alquiler');
 select has_column('public', 'deposito', c, format('deposito.%s', c)) from unnest(array['destino','concepto']) c;
 select has_column('public', 'ticket', c, format('ticket.%s', c))
   from unnest(array['numero_autorizacion','tarjeta_tipo','tarjeta_marca','monto','fecha','estado','motivo_rechazo']) c;
@@ -152,43 +154,45 @@ select has_column('public', 'ticket', c, format('ticket.%s', c))
 -- Cursor del delta y auditoría: las exige el resto del sistema en toda tabla de public.
 select col_type_is('public', t, 'xmin_w', 'xid8', format('%s.xmin_w es xid8', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 select has_trigger('public', t, t || '_auditoria_insert', format('%s tiene auditoría de alta', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
--- Una política de lectura y ninguna de escritura en cada una.
+-- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, el depósito, desde 0122, y el
+-- pedido con sus líneas, desde 0124, tienen las de su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql,
+-- 0122_deposito_sube_por_push_test.sql y 0124_pedido_del_colportor_test.sql).
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd = 'SELECT'), 1,
           format('%s tiene una política de lectura', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
-  from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+  from unnest(array['stock','movimiento_stock','transferencia_stock',
+                    'transferencia_item','cuenta_colportor']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'authenticated'), 'SELECT',
           format('authenticated solo tiene SELECT sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','cuenta_colportor']) t;
 select is((select count(*)::int from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'anon'), 0,
           format('anon no tiene privilegios sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 select is((select count(*)::int from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'service_role'), 7,
           format('service_role tiene todos los privilegios sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select is((select count(*)::int from sync.entidad
-            where nombre in ('stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                             'transferencia_item','deposito','ticket','estado_cuenta')), 0,
-          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs');
+            where nombre in ('stock','movimiento_stock','transferencia_stock',
+                             'transferencia_item','cuenta_colportor')), 0,
+          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
@@ -215,72 +219,69 @@ select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = '
 select is(pg_temp.error_de($$ update public.campania_colportor set meta_monto_ces = -5 where id = '01920000-0000-7000-8000-0000000067c1' $$),
           '23514: new row for relation "campania_colportor" violates check constraint "campania_colportor_meta_monto_ces_check"',
           'una meta de monto negativa se rechaza');
-select is(pg_temp.error_de($$ update public.campania_colportor set limite_pedido = -5 where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          '23514: new row for relation "campania_colportor" violates check constraint "campania_colportor_limite_pedido_check"',
-          'un límite negativo se rechaza');
 select is(pg_temp.error_de($$ update public.campania_colportor
-                                 set tipo_beca = 'COMPLETA', meta_monto_ces = 6000000, limite_pedido = 2000000
+                                 set tipo_beca = 'COMPLETA', meta_monto_ces = 6000000
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          'ok', 'el servidor carga beca completa, meta y límite');
-select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = null, limite_pedido = null
+          'ok', 'el servidor carga beca completa y meta');
+select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = null, meta_monto_ces = null
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          'ok', 'y los vuelve a null (sin beca, sin límite)');
+          'ok', 'y los vuelve a null (sin beca, sin meta)');
 
 -- ============================================================================
--- 3. Quién cambia la beca y el límite
+-- 3. Quién cambia la beca y la meta
 -- ============================================================================
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = 2000000
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = 2000000
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 1,
-          'el coordinador de la campaña fija el límite de su colportor');
+          'el coordinador de la campaña fija la meta de monto de su colportor');
 select is(pg_temp.filas($$ update public.campania_colportor set tipo_beca = 'MEDIA', meta_monto_ces = 3000000
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 1,
           'y la beca con su meta de monto');
-select is(pg_temp.error_de($$ update public.campania_colportor set limite_pedido = 1
+select is(pg_temp.error_de($$ update public.campania_colportor set meta_monto_ces = 1
                                where id = '01920000-0000-7000-8000-0000000067c2' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'pero no el de otra campaña (b2 está en e2)');
 select is(pg_temp.filas($$ update public.campania_colportor set meta_libros = 10
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 1,
-          'lo que no es beca ni límite sigue como estaba (meta_libros)');
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = limite_pedido
+          'lo que no es beca ni meta de monto sigue como estaba (meta_libros)');
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = meta_monto_ces
                             where id = '01920000-0000-7000-8000-0000000067c2' $$), 1,
           'y un UPDATE que nombra la columna sin cambiarla no se rechaza');
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = 'COMPLETA'
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'el coordinador de e2 no le da beca a un colportor de e1');
 select pg_temp.actuar_como(pg_temp.u('a5'));
-select is(pg_temp.error_de($$ update public.campania_colportor set limite_pedido = 5
+select is(pg_temp.error_de($$ update public.campania_colportor set meta_monto_ces = 5
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'ni un coordinador sin campañas');
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = 3000000
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = 3000000
                             where id = '01920000-0000-7000-8000-0000000067c2' $$), 1,
           'el ADMIN lo cambia en cualquier campaña');
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = null, tipo_beca = 'COMPLETA'
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = null, tipo_beca = 'COMPLETA'
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 0,
-          'el colportor no toca su propia beca ni su límite (no ve la fila para escribirla)');
-select is((select limite_pedido from public.campania_colportor where id = pg_temp.u('c1')), 2000000::bigint,
-          'su límite sigue siendo el que fijó el coordinador y él lo lee');
+          'el colportor no toca su propia beca ni su meta (no ve la fila para escribirla)');
+select is((select meta_monto_ces from public.campania_colportor where id = pg_temp.u('c1')), 3000000::bigint,
+          'su meta sigue siendo la que fijó el coordinador y él la lee');
 select is((select tipo_beca from public.campania_colportor where id = pg_temp.u('c1')), 'MEDIA',
           'y su tipo de beca también');
 select pg_temp.actuar_como_servidor();
 
 -- Viaja en el pull: el motor serializa las columnas de la tabla (sync.expresion_json), sin lista aparte, así que
--- la inscripción trae la beca y el límite, y la campaña el alquiler. (El delta solo sirve filas commiteadas:
+-- la inscripción trae la beca y la meta, y la campaña el alquiler. (El delta solo sirve filas commiteadas:
 -- este test va en una transacción, por eso se mira la expresión y no un pull.)
 select ok(sync.expresion_json('public.campania_colportor'::regclass) ~ 'tipo_beca'
           and sync.expresion_json('public.campania_colportor'::regclass) ~ 'meta_monto_ces'
-          and sync.expresion_json('public.campania_colportor'::regclass) ~ 'limite_pedido',
-          'el pull de campania_colportor serializa tipo_beca, meta_monto_ces y limite_pedido');
+          and sync.expresion_json('public.campania_colportor'::regclass) !~ 'limite_pedido',
+          'el pull de campania_colportor serializa tipo_beca y meta_monto_ces (limite_pedido ya no existe: 0120)');
 select ok(sync.expresion_json('public.campania'::regclass) ~ 'alquiler_monto',
           'el pull de campania serializa alquiler_monto');
 select is((select permite_push from sync.entidad where nombre = 'campania_colportor'), false,
-          'campania_colportor sigue siendo solo de lectura para el teléfono: la app no escribe su beca ni su límite');
+          'campania_colportor sigue siendo solo de lectura para el teléfono: la app no escribe su beca ni su meta');
 
 -- ============================================================================
 -- 4. Los CHECK de cada tabla
@@ -341,8 +342,10 @@ select is(pg_temp.error_de($$ update public.transferencia_stock set estado = 'EJ
                               where id = '01920000-0000-7000-8000-0000000067e5' $$),
           '23514: new row for relation "transferencia_stock" violates check constraint "transferencia_stock_estado_check"',
           'el estado EJECUTADA del esquema viejo no existe: es EJECUTADO');
-select is(pg_temp.error_de(format($$ update public.transferencia_stock set estado = %L
-                                    where id = '01920000-0000-7000-8000-0000000067e5' $$, e)), 'ok',
+-- Desde 0126, rechazada exige un motivo y solo ella lo tiene.
+select is(pg_temp.error_de(format($$ update public.transferencia_stock set estado = %L,
+                                           motivo_rechazo = case when %L = 'RECHAZADO' then 'prueba' end
+                                    where id = '01920000-0000-7000-8000-0000000067e5' $$, e, e)), 'ok',
           format('la transferencia admite %s', e))
   from unnest(array['AUTORIZADO','EJECUTADO','RECHAZADO','CANCELADO','PENDIENTE_AUTORIZACION']) e;
 select is(pg_temp.error_de($$ insert into public.transferencia_item (transferencia_id, producto_id, cantidad)
@@ -380,18 +383,19 @@ select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, 
                               values ('01920000-0000-7000-8000-0000000067b1', 0, 'BANCO', 'ALQUILER') $$),
           '23514: new row for relation "deposito" violates check constraint "deposito_monto_check"',
           'un depósito de cero se rechaza');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto)
-                              values ('01920000-0000-7000-8000-0000000067b4', 500, 'RETIRO_COORDINADOR', 'ALQUILER') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id)
+                              values ('01920000-0000-7000-8000-0000000067b4', 500, 'RETIRO_COORDINADOR', 'ALQUILER',
+                                      '01920000-0000-7000-8000-0000000067e1') $$),
           'ok', 'un retiro por el coordinador no lleva ticket');
 select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino)
                               values ('01920000-0000-7000-8000-0000000067b1', 500, 'BANCO') $$),
           '23502: null value in column "concepto" of relation "deposito" violates not-null constraint',
           'el concepto lo elige el colportor: no tiene valor por defecto');
 
-select is((select deuda_alquiler from public.estado_cuenta where id = pg_temp.u('91')), 0::bigint,
+select is((select deuda_alquiler from public.cuenta_colportor where id = pg_temp.u('91')), 0::bigint,
           'la deuda de alquiler arranca en cero, aparte de la deuda total');
-select is(pg_temp.error_de($$ insert into public.estado_cuenta (usuario_id) values ('01920000-0000-7000-8000-0000000067b1') $$),
-          '23505: duplicate key value violates unique constraint "estado_cuenta_usuario_key"',
+select is(pg_temp.error_de($$ insert into public.cuenta_colportor (usuario_id) values ('01920000-0000-7000-8000-0000000067b1') $$),
+          '23505: duplicate key value violates unique constraint "cuenta_colportor_usuario_key"',
           'una sola cuenta por usuario');
 
 -- ============================================================================
@@ -482,7 +486,7 @@ select is(pg_temp.ve('stock', array['a1','a2','a3','a4']), 'a1', 'b1 ve solo su 
 select is(pg_temp.ve('pedido_casa_editora', array['b1','b2','b3','b4']), 'b1', 'b1 ve solo su pedido');
 select is(pg_temp.ve('movimiento_stock', array['f1','f2','f3','f4']), 'f1', 'b1 ve solo sus movimientos');
 select is(pg_temp.ve('deposito', array['81','82','83','84']), '81', 'b1 ve solo su depósito');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '91', 'b1 ve solo su cuenta');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '91', 'b1 ve solo su cuenta');
 select is(pg_temp.ve('pedido_item', array['d1','d2','d3','d4']), 'd1', 'b1 ve las líneas de su pedido y no las de otros');
 select is(pg_temp.ve('transferencia_stock', array['e5','e6']), 'e5', 'b1 ve la transferencia en la que es origen y no la ajena');
 select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5', 'y sus líneas');
@@ -508,7 +512,7 @@ select is(pg_temp.ve('pedido_item', array['d1','d2','d3','d4']), 'd1,d4', 'las l
 select is(pg_temp.ve('movimiento_stock', array['f1','f2','f3','f4']), 'f1,f4', 'sus movimientos');
 select is(pg_temp.ve('ticket', array['71','72','73','74']), '71,74', 'sus tickets');
 select is(pg_temp.ve('deposito', array['81','82','83','84']), '81,84', 'sus depósitos');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '91,94', 'su estado de cuenta');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '91,94', 'su estado de cuenta');
 select is(pg_temp.ve('transferencia_stock', array['e5','e6']), 'e5,e6',
           'a1 ve la transferencia de b1 a b2 (b1 es suyo) y la de b3 a b4 (b4 es suyo)');
 select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5,d6', 'y sus líneas');
@@ -517,7 +521,7 @@ select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5,d6', 'y sus l�
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(pg_temp.ve('pedido_casa_editora', array['b1','b2','b3','b4']), 'b2', 'a2 ve solo los pedidos de su colportor');
 select is(pg_temp.ve('transferencia_stock', array['e5','e6']), 'e5', 'y la transferencia donde su colportor recibe');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '92', 'y su cuenta');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '92', 'y su cuenta');
 
 -- Un coordinador sin campañas no ve nada ajeno.
 select pg_temp.actuar_como(pg_temp.u('a5'));
@@ -530,7 +534,7 @@ select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.ve('stock', array['a1','a2','a3','a4']), 'a1,a2,a3,a4', 'el ADMIN ve todo el stock');
 select is(pg_temp.ve('pedido_item', array['d1','d2','d3','d4']), 'd1,d2,d3,d4', 'todas las líneas');
 select is(pg_temp.ve('transferencia_item', array['d5','d6']), 'd5,d6', 'todas las transferencias');
-select is(pg_temp.ve('estado_cuenta', array['91','92','93','94']), '91,92,93,94', 'y todas las cuentas');
+select is(pg_temp.ve('cuenta_colportor', array['91','92','93','94']), '91,92,93,94', 'y todas las cuentas');
 
 -- Las bajas lógicas también se leen (el tombstone).
 select pg_temp.actuar_como_servidor();
@@ -540,32 +544,27 @@ select is(pg_temp.ve('stock', array['a1']), 'a1', 'la baja lógica sigue a la vi
 select pg_temp.actuar_como_servidor();
 
 -- ============================================================================
--- 7. Escritura: nadie con JWT
+-- 7. Escritura: nadie con JWT (el ticket, desde 0113, el depósito, desde 0122, y el pedido, desde 0124, los crea su dueña)
 -- ============================================================================
 select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
           format('ni el ADMIN inserta en %s con su JWT', x.t))
   from (values
     ('stock', $$ insert into public.stock (usuario_id, producto_id) values ('01920000-0000-7000-8000-0000000067b3', '01920000-0000-7000-8000-000000006712') $$),
-    ('pedido_casa_editora', $$ insert into public.pedido_casa_editora (colportor_id, estado, origen) values ('01920000-0000-7000-8000-0000000067b3', 'BORRADOR', 'COORDINADOR') $$),
-    ('deposito', $$ insert into public.deposito (colportor_id, monto, destino, concepto) values ('01920000-0000-7000-8000-0000000067b3', 1, 'BANCO', 'ALQUILER') $$),
-    ('ticket', $$ insert into public.ticket (usuario_id, tipo) values ('01920000-0000-7000-8000-0000000067b3', 'OTRO') $$),
-    ('estado_cuenta', $$ insert into public.estado_cuenta (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
+    ('cuenta_colportor', $$ insert into public.cuenta_colportor (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
   ) x(t, s);
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
           format('el colportor no actualiza %s', x.t))
   from (values
     ('stock', $$ update public.stock set cantidad_disponible = 99 where id = '01920000-0000-7000-8000-0000000067a1' $$),
-    ('pedido_casa_editora', $$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067b1' $$),
     ('transferencia_stock', $$ update public.transferencia_stock set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067e5' $$),
-    ('ticket', $$ update public.ticket set estado = 'VALIDADO' where id = '01920000-0000-7000-8000-000000006771' $$),
-    ('estado_cuenta', $$ update public.estado_cuenta set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
+    ('cuenta_colportor', $$ update public.cuenta_colportor set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
   ) x(t, s);
 select is(pg_temp.error_de($$ delete from public.stock where id = '01920000-0000-7000-8000-0000000067a1' $$),
           '42501: permission denied for table stock', 'y nadie borra');
 select pg_temp.actuar_como_rol('anon');
-select is(pg_temp.error_de($$ select count(*) from public.estado_cuenta $$), '42501: permission denied for table estado_cuenta',
+select is(pg_temp.error_de($$ select count(*) from public.cuenta_colportor $$), '42501: permission denied for table cuenta_colportor',
           'anon no lee la cuenta');
 select pg_temp.actuar_como_servidor();
 select is((select cantidad_disponible from public.stock where id = pg_temp.u('a1')), 5,
