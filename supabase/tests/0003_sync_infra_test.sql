@@ -48,10 +48,10 @@ select col_not_null('public', 'venta', 'xmin_w', 'xmin_w es not null');
 -- 3. El registro es el espejo del contrato §2
 -- ---------------------------------------------------------------------------
 
-select is((select count(*)::integer from sync.entidad), 27, 'hay 27 entidades registradas');
+select is((select count(*)::integer from sync.entidad), 29, 'hay 29 entidades registradas');
 
 -- 0008 suma campania_ciudad y zona_vertice (el mapa de la campaña); 0014, campania_colportor; 0032,
--- ubicacion_par_decidido (push, como espacio_persona); 0108, devolucion (push, como cobranza); 0113, ticket (push); 0122, deposito y deposito_cobro (push).
+-- ubicacion_par_decidido (push, como espacio_persona); 0108, devolucion (push, como cobranza); 0113, ticket (push); 0122, deposito y deposito_cobro (push); 0124, pedido_casa_editora y pedido_item (push).
 select is(
   (select array_agg(nombre order by nombre) from sync.entidad where not permite_push),
   array['campania','campania_ciudad','campania_colportor','ciudad','coleccion','pais','precio_por_ciudad',
@@ -62,8 +62,9 @@ select is(
 select is(
   (select array_agg(nombre order by nombre) from sync.entidad where permite_push),
   array['agenda','cobranza','deposito','deposito_cobro','devolucion','entrega','espacio','espacio_persona',
-        'house_status','jornada','ticket','ubicacion','ubicacion_par_decidido','venta','venta_item','visita'],
-  'las entidades push son las del contrato §2 (con espacio_persona, ubicacion_par_decidido, devolucion, ticket, deposito y deposito_cobro)'
+        'house_status','jornada','pedido_casa_editora','pedido_item','ticket','ubicacion','ubicacion_par_decidido',
+        'venta','venta_item','visita'],
+  'las entidades push son las del contrato §2 (con espacio_persona, ubicacion_par_decidido, devolucion, ticket, deposito, deposito_cobro, pedido_casa_editora y pedido_item)'
 );
 
 -- Ley 18.331: no es una omisión temporal, es la restricción de diseño.
