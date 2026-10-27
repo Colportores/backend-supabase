@@ -159,8 +159,8 @@ select has_trigger('public', t, t || '_auditoria_insert', format('%s tiene audit
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
                     'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
--- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, tiene las de su dueña:
--- supabase/tests/0113_ticket_sube_por_push_test.sql).
+-- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, y el depósito, desde 0122,
+-- tienen las de su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql y 0122_deposito_sube_por_push_test.sql).
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd = 'SELECT'), 1,
           format('%s tiene una política de lectura', t))
@@ -170,13 +170,13 @@ select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','cuenta_colportor']) t;
+                    'transferencia_item','cuenta_colportor']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'authenticated'), 'SELECT',
           format('authenticated solo tiene SELECT sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','cuenta_colportor']) t;
+                    'transferencia_item','cuenta_colportor']) t;
 select is((select count(*)::int from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'anon'), 0,
           format('anon no tiene privilegios sobre %s', t))
@@ -190,8 +190,8 @@ select is((select count(*)::int from information_schema.role_table_grants
 
 select is((select count(*)::int from sync.entidad
             where nombre in ('stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                             'transferencia_item','deposito','cuenta_colportor')), 0,
-          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113)');
+                             'transferencia_item','cuenta_colportor')), 0,
+          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
@@ -541,7 +541,7 @@ select is(pg_temp.ve('stock', array['a1']), 'a1', 'la baja lógica sigue a la vi
 select pg_temp.actuar_como_servidor();
 
 -- ============================================================================
--- 7. Escritura: nadie con JWT (el ticket, desde 0113, lo crea su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql)
+-- 7. Escritura: nadie con JWT (el ticket, desde 0113, y el depósito, desde 0122, los crea su dueña)
 -- ============================================================================
 select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
@@ -549,7 +549,6 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
   from (values
     ('stock', $$ insert into public.stock (usuario_id, producto_id) values ('01920000-0000-7000-8000-0000000067b3', '01920000-0000-7000-8000-000000006712') $$),
     ('pedido_casa_editora', $$ insert into public.pedido_casa_editora (colportor_id, estado, origen) values ('01920000-0000-7000-8000-0000000067b3', 'BORRADOR', 'COORDINADOR') $$),
-    ('deposito', $$ insert into public.deposito (colportor_id, monto, destino, concepto) values ('01920000-0000-7000-8000-0000000067b3', 1, 'BANCO', 'ALQUILER') $$),
     ('cuenta_colportor', $$ insert into public.cuenta_colportor (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
   ) x(t, s);
 select pg_temp.actuar_como(pg_temp.u('b1'));
