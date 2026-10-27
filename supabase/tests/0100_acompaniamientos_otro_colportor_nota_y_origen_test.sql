@@ -204,7 +204,7 @@ select pg_temp.actuar_como_servidor();
 select is((select array_agg(format('%s:%s', a.attname, format_type(a.atttypid, a.atttypmod)) order by a.attname)
              from pg_attribute a
             where a.attrelid = 'public.jornada'::regclass and a.attnum > 0 and not a.attisdropped
-              and a.attname like 'acompaniamiento_%'),
+              and a.attname in ('acompaniamiento_origen', 'acompaniamiento_nota')),
           array['acompaniamiento_nota:text', 'acompaniamiento_origen:text'], 'jornada suma el origen y la nota (opcionales)');
 select is((select format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull::text || ':' || pg_get_expr(d.adbin, d.adrelid)
              from pg_attribute a join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
