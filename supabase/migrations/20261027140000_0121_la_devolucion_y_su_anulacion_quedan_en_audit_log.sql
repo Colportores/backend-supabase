@@ -8,6 +8,7 @@
 --
 -- ## Qué crea
 --
+--   · `public.devolucion_detalle_de_auditoria(devolucion)`, interna: arma el detalle de los dos eventos.
 --   · `public.tg_devolucion_auditar_alta()` (SECURITY DEFINER) y el trigger `devolucion_auditar_alta`, AFTER
 --     INSERT en `devolucion`, por fila: deja `devolucion_registrada`. Si la fila ya entra dada de baja (la
 --     colportora la registró y la anuló sin conexión, y sube todo junto), deja además `devolucion_anulada`:
@@ -20,10 +21,15 @@
 --   Cada evento: `tabla = 'devolucion'`, `fila_id` = la devolución, `target_user_id` = null (quien la hizo es
 --   el actor, `auth.uid()` de la sesión, que lo pone `auditoria.registrar()`), y `metadata` =
 --
---       {venta_id, productos_devueltos [{producto_id, cantidad}], dinero_retenido, monto_reembolsado,
+--       {venta_id, productos_distintos, unidades_devueltas, dinero_retenido, monto_reembolsado,
 --        fecha_devolucion}
 --
---   Solo ids, cantidades, centavos (`monto_reembolsado` es null si no devolvió plata) y la fecha del teléfono.
+--   Solo la venta, dos totales (cuántos productos distintos y cuántas unidades), centavos
+--   (`monto_reembolsado` es null si no devolvió plata) y la fecha del teléfono. La lista de productos NO se
+--   copia: `metadata` admite hasta 4000 caracteres (CHECK de 0073) y cada renglón ocupa ~75, así que una
+--   devolución de 53 renglones o más haría fallar el INSERT de `audit_log` (23514) y, con él, el push y la
+--   anulación de esa devolución. Qué productos eran se lee de la propia fila (`fila_id`): la devolución nunca
+--   se borra, solo se da de baja. El detalle tiene un tamaño fijo, sea cual sea la devolución.
 --   Nunca texto libre: la tabla no tiene `motivo` (pendiente de Cristian, #134) y, si algún día lo suma, no se
 --   copia acá (regla de 0073). Ningún dato del cliente.
 --
@@ -38,11 +44,11 @@
 --     servidor la aplicará con el criterio que Cristian elija en la pregunta «Anular offline»
 --     (back-133-impl-p1-anular-offline: con qué hora se mide el plazo cuando la anulación sube tarde).
 --     Hasta esa respuesta el servidor acepta la baja en cualquier momento y la deja en el registro, sin un
---     criterio provisorio. Queda en el issue #172 (esa parte espera).
+--     criterio provisorio. Queda en el issue #191 (esa parte espera).
 --
 -- ## Los datos
 --
--- Solo suma: dos funciones y dos triggers. No hay tabla, columna, UPDATE ni DELETE de datos: ninguna fila
+-- Solo suma: tres funciones y dos triggers. No hay tabla, columna, UPDATE ni DELETE de datos: ninguna fila
 -- existente cambia, ni su `sync_version` ni su `xmin_w`, y no se crea ningún evento retroactivo (la tabla de
 -- 0108 estuvo vacía hasta ahora en producción; si no lo estuviera, las devoluciones de antes quedarían sin
 -- evento, como toda fila anterior a un evento nuevo).
@@ -55,6 +61,37 @@
 --
 -- Forward-only: esta migración no se edita una vez aplicada.
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 0. El detalle de los dos eventos (tamaño fijo)
+-- ----------------------------------------------------------------------------
+
+-- Interna: la llaman los dos triggers. Inmutable de entrada a salida; no lee tablas. Un producto_id repetido
+-- no puede pasar (productos_devueltos_validos), pero el conteo es de elementos del arreglo igual. Si la fila
+-- no tuviera la forma esperada (no puede: el CHECK corre antes de los AFTER) los totales quedan en null.
+create function public.devolucion_detalle_de_auditoria(p_fila public.devolucion)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+           'venta_id', p_fila.venta_id,
+           'productos_distintos', jsonb_array_length(p_fila.productos_devueltos),
+           'unidades_devueltas', (select sum((e ->> 'cantidad')::bigint)
+                                    from jsonb_array_elements(p_fila.productos_devueltos) e),
+           'dinero_retenido', p_fila.dinero_retenido,
+           'monto_reembolsado', p_fila.monto_reembolsado,
+           'fecha_devolucion', p_fila.fecha_devolucion);
+$$;
+
+comment on function public.devolucion_detalle_de_auditoria(public.devolucion) is
+  'El metadata de devolucion_registrada y devolucion_anulada (0121): la venta, cuántos productos distintos y '
+  'cuántas unidades, los dos montos en centavos y la fecha. Tamaño fijo: la lista de productos no se copia '
+  '(audit_log.metadata admite 4000 caracteres) y se lee de la fila.';
+
+revoke all on function public.devolucion_detalle_de_auditoria(public.devolucion)
+  from public, anon, authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- 1. Al registrar (y, si entra ya anulada, también la anulación)
@@ -70,14 +107,9 @@ as $$
 declare
   v_detalle jsonb;
 begin
-  -- Solo ids, cantidades, centavos y la fecha del teléfono (regla de 0073). Quién: auth.uid() lo pone
+  -- Solo la venta, dos totales, centavos y la fecha del teléfono (regla de 0073). Quién: auth.uid() lo pone
   -- auditoria.registrar(); la colportora que sube la devolución es el actor.
-  v_detalle := jsonb_build_object(
-    'venta_id', new.venta_id,
-    'productos_devueltos', new.productos_devueltos,
-    'dinero_retenido', new.dinero_retenido,
-    'monto_reembolsado', new.monto_reembolsado,
-    'fecha_devolucion', new.fecha_devolucion);
+  v_detalle := public.devolucion_detalle_de_auditoria(new);
 
   perform auditoria.registrar('devolucion_registrada', 'devolucion', new.id, null, v_detalle);
 
@@ -92,7 +124,7 @@ $$;
 
 comment on function public.tg_devolucion_auditar_alta() is
   'AFTER INSERT en devolucion (0121, backend-supabase#172, HU-VEN-004, ADR-002): deja devolucion_registrada en '
-  'audit_log con la venta, los productos y cantidades, el dinero retenido, el reembolso y la fecha; y '
+  'audit_log con la venta, cuántos productos y unidades, el dinero retenido, el reembolso y la fecha; y '
   'devolucion_anulada si la fila ya entra dada de baja. Nunca texto libre.';
 
 revoke all on function public.tg_devolucion_auditar_alta() from public, anon, authenticated, service_role;
@@ -116,12 +148,7 @@ as $$
 begin
   perform auditoria.registrar(
     'devolucion_anulada', 'devolucion', new.id, null,
-    jsonb_build_object(
-      'venta_id', new.venta_id,
-      'productos_devueltos', new.productos_devueltos,
-      'dinero_retenido', new.dinero_retenido,
-      'monto_reembolsado', new.monto_reembolsado,
-      'fecha_devolucion', new.fecha_devolucion));
+    public.devolucion_detalle_de_auditoria(new));
   return null;
 end;
 $$;

@@ -6,7 +6,7 @@
 --   3. La anulación (deleted_at null -> fecha) deja `devolucion_anulada`; otra columna, una baja repetida o
 --      reactivar no registran nada; la ajena no se puede anular ni deja evento.
 --   4. Registrada y anulada en el mismo lote (la fila entra ya dada de baja): los dos eventos.
---   5. Por sync.push: el alta y la baja registran una vez; el reintento (duplicate), la baja repetida y lo que
+--   5. Por sync.push (y una devolución de 120 renglones: el detalle es de tamaño fijo y no tumba el alta ni la baja): el alta y la baja registran una vez; el reintento (duplicate), la baja repetida y lo que
 --      se rechaza (invalid) no suman eventos.
 begin;
 select * from no_plan();
@@ -179,18 +179,15 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 0, 'y ninguno 
 select is(pg_temp.quien('devolucion_registrada', pg_temp.u('d1')), pg_temp.u('b1')::text || '|null|devolucion',
           'el actor es la colportora que la sube, sin target, sobre la tabla devolucion');
 select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1')) - 'fecha_devolucion',
-          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_devueltos', pg_temp.items('11', '2', '12', '1'),
+          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3,
                              'dinero_retenido', 50000, 'monto_reembolsado', 190000),
-          'el detalle lleva la venta, los productos con su cantidad y los dos montos en centavos');
+          'el detalle lleva la venta, cuántos productos y unidades y los dos montos en centavos');
 select is((pg_temp.detalle('devolucion_registrada', pg_temp.u('d1')) ->> 'fecha_devolucion')::timestamptz,
           '2026-10-05T12:00:00Z'::timestamptz, 'y la fecha del teléfono');
 select is((select array_agg(k order by k) from jsonb_object_keys(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1'))) k),
-          array['dinero_retenido', 'fecha_devolucion', 'monto_reembolsado', 'productos_devueltos', 'venta_id'],
-          'exactamente esas cinco claves: ningún texto libre ni dato del cliente');
-select is((select array_agg(distinct k order by k)
-             from jsonb_array_elements(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1')) -> 'productos_devueltos') e,
-                  jsonb_object_keys(e) k),
-          array['cantidad', 'producto_id'], 'y cada producto, solo su id y su cantidad');
+          array['dinero_retenido', 'fecha_devolucion', 'monto_reembolsado', 'productos_distintos', 'unidades_devueltas',
+                'venta_id'],
+          'exactamente esas seis claves: ningún texto libre, dato del cliente ni lista de productos');
 select ok(auditoria.metadata_sin_datos_personales(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1'))),
           'el detalle pasa la red de seguridad de 0073 (sin @ ni claves de datos personales)');
 
@@ -245,12 +242,13 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 1, 'anular dej
 select is(pg_temp.quien('devolucion_anulada', pg_temp.u('d1')), pg_temp.u('b1')::text || '|null|devolucion',
           'con la colportora de actor, sin target, sobre la tabla devolucion');
 select is(pg_temp.detalle('devolucion_anulada', pg_temp.u('d1')) - 'fecha_devolucion',
-          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_devueltos', pg_temp.items('11', '2', '12', '1'),
+          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3,
                              'dinero_retenido', 60000, 'monto_reembolsado', 190000),
           'el detalle es el de la devolución tal como quedó (con la retención ya corregida)');
 select is((select array_agg(k order by k) from jsonb_object_keys(pg_temp.detalle('devolucion_anulada', pg_temp.u('d1'))) k),
-          array['dinero_retenido', 'fecha_devolucion', 'monto_reembolsado', 'productos_devueltos', 'venta_id'],
-          'las mismas cinco claves, sin texto libre');
+          array['dinero_retenido', 'fecha_devolucion', 'monto_reembolsado', 'productos_distintos', 'unidades_devueltas',
+                'venta_id'],
+          'las mismas seis claves, sin texto libre');
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d1')), 1, 'el «registrada» sigue siendo uno (el registro solo se agrega)');
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d2')), 0, 'la d2 no se anuló: sin evento');
 
@@ -330,8 +328,34 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d4')), 1,
           'repetir la baja (mismo client_op_id, o uno nuevo) no suma otro evento');
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d4')), 1, 'ni toca el «registrada»');
 
--- El total: 4 registradas (d1, d2, d3, d4; las rechazadas no cuentan) y 4 anuladas (d1, d2, d3, d4).
-select is(pg_temp.total(), 8, '4 registradas y 4 anuladas en total: nada de más, nada de menos');
+-- Una devolución enorme: el detalle tiene tamaño fijo y ni el push ni la anulación fallan (el CHECK de
+-- audit_log.metadata admite 4000 caracteres; copiar 60 renglones lo pasaba, ~75 caracteres cada uno).
+insert into public.producto (id, nombre, tipo)
+select ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid, 'Libro masivo ' || i || ' t91', 'LIBRO'
+  from generate_series(1, 120) i;
+create or replace function pg_temp.muchos(p_n int) returns jsonb language sql as $$
+  select jsonb_agg(jsonb_build_object('producto_id', ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid,
+                                      'cantidad', 2))
+    from generate_series(1, p_n) i;
+$$;
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.push1(pg_temp.op('07'), 'insert', pg_temp.dev(pg_temp.u('d7'), pg_temp.u('71'), pg_temp.muchos(120))) ->> 'outcome',
+          'accepted', 'una devolución de 120 renglones se acepta por push (el detalle no copia la lista)');
+select is(pg_temp.push1(pg_temp.op('08'), 'delete', jsonb_build_object('id', pg_temp.u('d7')), 0) ->> 'outcome',
+          'accepted', 'y se puede anular');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d7')), 1, 'la de 120 renglones deja su «registrada»');
+select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d7')), 1, 'y su «anulada»');
+select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d7')) - 'fecha_devolucion',
+          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 120, 'unidades_devueltas', 240,
+                             'dinero_retenido', 0, 'monto_reembolsado', null),
+          'con los totales (120 productos, 240 unidades)');
+select ok((select length(a.metadata::text) < 400 from auditoria.audit_log a
+            where a.event_type = 'devolucion_registrada' and a.fila_id = pg_temp.u('d7')),
+          'y el mismo tamaño corto de siempre');
+
+-- El total: 5 registradas (d1, d2, d3, d4, d7; las rechazadas no cuentan) y 5 anuladas (las mismas).
+select is(pg_temp.total(), 10, '5 registradas y 5 anuladas en total: nada de más, nada de menos');
 
 select * from finish();
 rollback;
