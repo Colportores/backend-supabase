@@ -29,7 +29,7 @@
 --     Una fila por parámetro (`clave` única entre las vivas) con un valor ENTERO. Hoy una sola clave,
 --     `dias_antiguedad_precios`, con su fila sembrada en 15 por esta misma migración (es un valor de
 --     referencia y no un seed de negocio: sin la fila el teléfono no sabría cuándo avisar). El CHECK
---     limita las claves conocidas y el rango de cada una (1 a 365 días): un parámetro nuevo ensancha
+--     limita las claves conocidas y el rango de cada una (1 día o más, sin tope: decisión P2 de #137, 25/10): un parámetro nuevo ensancha
 --     el CHECK en su propia migración. Forma elegida: una tabla genérica clave-valor y no una columna
 --     de `campania` ni de `producto`, porque el valor es de toda la aplicación y porque los próximos
 --     parámetros de Administración tienen el mismo lugar donde vivir.
@@ -109,7 +109,7 @@ create table public.parametro_global (
   xmin_w        xid8 not null default pg_current_xact_id(),
   -- Las claves conocidas y el rango de cada una. Un parámetro nuevo ensancha este CHECK.
   constraint parametro_global_clave_valor_check
-    check (clave = 'dias_antiguedad_precios' and valor between 1 and 365)
+    check (clave = 'dias_antiguedad_precios' and valor >= 1)
 );
 
 comment on table public.parametro_global is
@@ -117,11 +117,11 @@ comment on table public.parametro_global is
   'HU-CAT-006). Una fila por clave, valor entero. Hoy: dias_antiguedad_precios (15 por defecto), los días '
   'desde que el colportor bajó los precios a partir de los cuales el aviso se pone fuerte y le pide '
   'conectarse (la deja vender). Baja por el pull; lo lee todo usuario autenticado; lo escribe solo el '
-  'servidor hasta que cada cambio quede en audit_log (backend-supabase#136).';
+  'servidor y cada cambio queda en audit_log (0110, backend-supabase#152).';
 comment on column public.parametro_global.clave is
   'Nombre del parámetro. Hoy solo dias_antiguedad_precios.';
 comment on column public.parametro_global.valor is
-  'Valor entero. Para dias_antiguedad_precios: días, de 1 a 365.';
+  'Valor entero. Para dias_antiguedad_precios: días, 1 o más (sin tope).';
 comment on column public.parametro_global.created_by is
   'Quién lo creó, si entró por la API; null si lo creó el servidor o el SQL Editor.';
 

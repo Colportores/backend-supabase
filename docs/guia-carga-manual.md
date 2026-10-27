@@ -579,7 +579,7 @@ pull del catálogo.
 -- Ver el valor actual:
 select clave, valor, updated_at from public.parametro_global where deleted_at is null;
 
--- Cambiarlo (de 1 a 365; cualquier otro valor lo rechaza el check, 23514):
+-- Cambiarlo (1 o más, sin tope; cualquier valor menor a 1 lo rechaza el check, 23514):
 update public.parametro_global set valor = 20
  where clave = 'dias_antiguedad_precios' and deleted_at is null;
 ```

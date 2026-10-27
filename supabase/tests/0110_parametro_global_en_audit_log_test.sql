@@ -175,8 +175,8 @@ select is(pg_temp.n(), 4::bigint, 'ni uno que reescribe la misma clave');
 -- Un valor fuera de rango lo rechaza el CHECK de 0070 y el cambio no existe: tampoco su registro.
 select is(pg_temp.codigo_de($$ update public.parametro_global set valor = 0 where clave = 'dias_antiguedad_precios' $$),
           '23514', '0 días lo rechaza el CHECK');
-select is(pg_temp.codigo_de($$ update public.parametro_global set valor = 366 where clave = 'dias_antiguedad_precios' $$),
-          '23514', '366 también');
+select is(pg_temp.codigo_de($$ update public.parametro_global set valor = -1 where clave = 'dias_antiguedad_precios' $$),
+          '23514', 'un valor negativo también');
 select is(pg_temp.n(), 4::bigint, 'un cambio rechazado no deja registro');
 select is((select valor from public.parametro_global where id = (select id from fila)), 40, 'y el valor sigue en 40');
 

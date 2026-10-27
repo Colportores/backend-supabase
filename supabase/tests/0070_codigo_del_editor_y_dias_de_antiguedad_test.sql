@@ -153,14 +153,12 @@ select is((select deleted_at from public.parametro_global where clave = 'dias_an
 -- ===============================================================================
 select pg_temp.actuar_como_servidor();
 select lives_ok($$ update public.parametro_global set valor = 1 where clave = 'dias_antiguedad_precios' $$, '1 día es el mínimo');
-select lives_ok($$ update public.parametro_global set valor = 365 where clave = 'dias_antiguedad_precios' $$, '365 días es el máximo');
+select lives_ok($$ update public.parametro_global set valor = 400 where clave = 'dias_antiguedad_precios' $$, 'sin tope: 400 días vale (decisión P2 de #137)');
 select lives_ok($$ update public.parametro_global set valor = 100 where clave = 'dias_antiguedad_precios' $$, 'y uno del medio');
 select throws_ok($$ update public.parametro_global set valor = 0 where clave = 'dias_antiguedad_precios' $$,
                  '23514', null, '0 días no: el aviso saltaría siempre');
 select throws_ok($$ update public.parametro_global set valor = -3 where clave = 'dias_antiguedad_precios' $$,
                  '23514', null, 'un valor negativo no');
-select throws_ok($$ update public.parametro_global set valor = 366 where clave = 'dias_antiguedad_precios' $$,
-                 '23514', null, 'más de 365 no');
 select throws_ok($$ update public.parametro_global set clave = 'otra_cosa' where clave = 'dias_antiguedad_precios' $$,
                  '23514', null, 'una clave que no existe no');
 select throws_ok($$ insert into public.parametro_global (clave, valor) values ('otra_cosa', 5) $$,
