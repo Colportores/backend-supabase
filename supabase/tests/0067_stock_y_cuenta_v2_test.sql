@@ -342,8 +342,10 @@ select is(pg_temp.error_de($$ update public.transferencia_stock set estado = 'EJ
                               where id = '01920000-0000-7000-8000-0000000067e5' $$),
           '23514: new row for relation "transferencia_stock" violates check constraint "transferencia_stock_estado_check"',
           'el estado EJECUTADA del esquema viejo no existe: es EJECUTADO');
-select is(pg_temp.error_de(format($$ update public.transferencia_stock set estado = %L
-                                    where id = '01920000-0000-7000-8000-0000000067e5' $$, e)), 'ok',
+-- Desde 0126, rechazada exige un motivo y solo ella lo tiene.
+select is(pg_temp.error_de(format($$ update public.transferencia_stock set estado = %L,
+                                           motivo_rechazo = case when %L = 'RECHAZADO' then 'prueba' end
+                                    where id = '01920000-0000-7000-8000-0000000067e5' $$, e, e)), 'ok',
           format('la transferencia admite %s', e))
   from unnest(array['AUTORIZADO','EJECUTADO','RECHAZADO','CANCELADO','PENDIENTE_AUTORIZACION']) e;
 select is(pg_temp.error_de($$ insert into public.transferencia_item (transferencia_id, producto_id, cantidad)
