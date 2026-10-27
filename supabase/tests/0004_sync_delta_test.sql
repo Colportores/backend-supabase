@@ -29,8 +29,10 @@ insert into public.pais (id, nombre, iso_code) values
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
   ('01920000-0000-7000-8000-0000000004c1', 'Montevideo', 'Departamento de prueba', '01920000-0000-7000-8000-0000000004c0', -34.9, -56.16);
 -- Desde 0008 toda zona es de una ciudad de una campaña (campania_ciudad) y tiene forma.
+-- Desde 0115 el servidor no acepta una jornada anterior al inicio de la campaña del colportor: las jornadas
+-- de este archivo son del 2026-09-02, así que la campaña empieza antes y con fecha fija (no relativa a hoy).
 insert into public.campania (id, nombre, tipo, fecha_inicio) values
-  ('01920000-0000-7000-8000-0000000004b0', 'Campaña sync', 'PERMANENTE', current_date - 30);
+  ('01920000-0000-7000-8000-0000000004b0', 'Campaña sync', 'PERMANENTE', date '2026-09-01');
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   ('01920000-0000-7000-8000-0000000004b1', '01920000-0000-7000-8000-0000000004b0', '01920000-0000-7000-8000-0000000004c1');
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, centro_lat, centro_lon, radio_m) values

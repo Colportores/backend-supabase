@@ -120,7 +120,7 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006b2');
 select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', 'campaña vencida (fecha_fin ayer) → PENDIENTE_ASIGNACION');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006b3');
-select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', 'campaña futura (fecha_inicio mañana) → PENDIENTE_ASIGNACION');
+select is(public.estado_cuenta(), 'ACTIVA', 'campaña futura (fecha_inicio mañana) → ACTIVA desde que lo suman (0102, «Cuenta antes»)');
 
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000006b4');
 select is(public.estado_cuenta(), 'PENDIENTE_ASIGNACION', 'inscripción borrada (campania_colportor.deleted_at) → PENDIENTE_ASIGNACION');

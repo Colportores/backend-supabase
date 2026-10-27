@@ -3,13 +3,12 @@
 --   1. Una campaña por empezar admite inscribir_colportor(), buscar_candidatos(), asignar_zona() y
 --      quitar_zona(); una campaña terminada, no (CI002 / CZ002, como antes). El borde: la que termina
 --      hoy sí, la que terminó ayer no, la que empieza mañana sí.
---   2. Una en curso y otra por empezar a la vez, sí; dos en curso, no (CI007, R-CM02); dos por empezar,
---      no (pendiente del PR, ante la duda se bloquea). Las inscripciones dadas de baja, las de una campaña
---      terminada o borrada y las del mismo colportor en la misma campaña no cuentan.
+--   2. (R-CM02, «otra campaña»: desde la 0102 es por fechas que se pisan; los casos están en el test 0102.)
 --   3. El permiso no cambia: el coordinador de otra campaña, un colportor y quien no tiene sesión no
 --      pueden; el ADMIN sí.
 --   4. Lo que el colportor ve: la inscripción y la zona de una campaña por empezar bajan con el sync
---      (mis_inscripciones_no_terminadas()), pero no es una campaña vigente (estado de la cuenta).
+--      (mis_inscripciones_no_terminadas()); no es una campaña vigente (en curso), pero la cuenta ya está
+--      ACTIVA desde que lo sumaron (0102).
 begin;
 select * from no_plan();
 
@@ -255,94 +254,10 @@ select throws_ok(
   'CZ001', null, 'asignar_zona() en una borrada: CZ001');
 
 -- ---------------------------------------------------------------------------
--- 4. R-CM02: una en curso y otra por empezar, sí; dos en el mismo momento, no
+-- 4. R-CM02
 -- ---------------------------------------------------------------------------
--- b2 está en e1 (en curso): sumarlo a una por empezar, sí; a otra en curso, no.
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e2'), pg_temp.u('b2')),
-  'en curso + por empezar: se puede (el colportor sigue en e1 y se suma a e2)');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('b4')),
-  'CI007', 'Está en campaña En curso A. Reasignar primero.', 'dos en curso a la vez: CI007 con el literal de la HU');
-select is(
-  pg_temp.detalle_error(format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('b4')))::jsonb,
-  jsonb_build_object('campania_id', pg_temp.u('e1'), 'campania_nombre', 'En curso A'),
-  'CI007 trae en details la campaña en conflicto (id y nombre)');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e3'), pg_temp.u('b2')),
-  'CI007', 'Está en campaña Por empezar A. Reasignar primero.',
-  'b2 (en e1 en curso y en e2 por empezar) a otra por empezar: el conflicto es e2, no e1');
--- b3 está en e2 (por empezar): sumarlo a una en curso, sí; a otra por empezar, no.
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e1'), pg_temp.u('b3')),
-  'por empezar + en curso: se puede (el colportor está en e2 y se suma a e1)');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e3'), pg_temp.u('b5')),
-  'CI007', 'Está en campaña Por empezar A. Reasignar primero.', 'dos por empezar a la vez: CI007');
--- Con las tres cosas a la vez, el aviso nombra la que empezó más tarde y es del mismo momento.
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e3'), pg_temp.u('b3')),
-  'CI007', 'Está en campaña Por empezar A. Reasignar primero.',
-  'b3 (en e1 en curso y en e2 por empezar) a otra por empezar: el conflicto es e2, no e1');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('b3')),
-  'CI007', 'Está en campaña En curso A. Reasignar primero.',
-  'b3 a otra en curso: el conflicto es e1, no e2');
-
--- Lo que no cuenta como «otra campaña».
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('b6')),
-  'una inscripción dada de baja en otra campaña en curso no cuenta');
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e1'), pg_temp.u('b7')),
-  'una inscripción viva en una campaña terminada no cuenta (en curso)');
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e3'), pg_temp.u('b9')),
-  'una inscripción en una campaña borrada no cuenta (por empezar)');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e7'), pg_temp.u('b4')),
-  'CI007', null, 'la que termina hoy sigue siendo en curso: dos en curso, CI007');
-
--- Los bordes del día en la campaña «otra»: la que empieza hoy ya está en curso, la que termina hoy
--- todavía, la que empieza mañana sigue por empezar y la que terminó ayer no cuenta.
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('bd')),
-  'CI007', 'Está en campaña Empieza hoy. Reasignar primero.', 'la otra empieza hoy: está en curso, dos en curso, CI007');
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e2'), pg_temp.u('bd')),
-  'la otra empieza hoy (en curso) y esta empieza en cinco días: se puede');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('b1')),
-  'CI007', 'Está en campaña Termina hoy. Reasignar primero.', 'la otra termina hoy: sigue en curso, CI007');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e3'), pg_temp.u('ba')),
-  'CI007', 'Está en campaña Empieza manana. Reasignar primero.', 'la otra empieza mañana: sigue por empezar, CI007 con otra por empezar');
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('be')),
-  'la otra terminó ayer: ya no cuenta');
-
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e7'), pg_temp.u('bf')),
-  'CI007', 'Está en campaña En curso B. Reasignar primero.', 'con dos en conflicto, el aviso nombra la que empezó más tarde');
-select throws_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e1'), pg_temp.u('b6')),
-  'CI007', 'Está en campaña En curso B. Reasignar primero.',
-  'una campaña en curso sin fecha de fin cuenta: reactivar a b6 en e1 mientras está en e5, CI007');
-select lives_ok(
-  format($$ select public.inscribir_colportor(%L, %L) $$, pg_temp.u('e5'), pg_temp.u('b9')),
-  'una inscripción viva en una campaña borrada y en curso (ea) no cuenta');
-
--- La vista 23 muestra el mismo bloqueo que el RPC.
-select results_eq(
-  format($$ select usuario_id, motivo_bloqueo from public.buscar_candidatos(%L, 'antes62-b5@example.com') $$,
-         pg_temp.u('e3')),
-  format($$ values (%L::uuid, 'EN_OTRA_CAMPANIA'::text) $$, pg_temp.u('b5')),
-  'buscar_candidatos() en e3: b5, que ya está en otra por empezar, sale bloqueado');
-select results_eq(
-  format($$ select usuario_id, motivo_bloqueo from public.buscar_candidatos(%L, 'antes62-b5@example.com') $$,
-         pg_temp.u('e5')),
-  format($$ values (%L::uuid, null::text) $$, pg_temp.u('b5')),
-  'buscar_candidatos() en e5 (en curso): b5, que está en una por empezar, sale sin bloqueo');
+-- La regla de «otra campaña» pasó de «las dos en curso o las dos por empezar» a «las fechas se pisan»
+-- (0102, backend-supabase#142): sus casos viven en 0102_inscripcion_por_fechas_que_no_se_pisan_test.sql.
 
 -- ---------------------------------------------------------------------------
 -- 5. El permiso no cambia
@@ -391,8 +306,8 @@ select is(
 -- ---------------------------------------------------------------------------
 -- 6. Lo que ve el colportor
 -- ---------------------------------------------------------------------------
--- El sync baja la campaña por empezar y su zona (mis_inscripciones_no_terminadas, 0013); el estado de
--- la cuenta y las zonas de la RLS siguen mirando solo las en curso (pendiente del PR, P2).
+-- El sync baja la campaña por empezar y su zona (mis_inscripciones_no_terminadas, 0013); la cuenta ya
+-- está ACTIVA (0102), pero las zonas de la RLS siguen mirando solo las en curso.
 -- mis_inscripciones_no_terminadas() es interna (la llaman los DEFINER del pull y la RLS): se llama con la
 -- sesión de b1 pero con el rol del servidor.
 select pg_temp.actuar_como(pg_temp.u('b1'));
@@ -402,7 +317,10 @@ select is(
   pg_temp.u('f2'), 'el colportor ve su zona de la campaña por empezar (baja el mapa antes del inicio)');
 select is(
   (select count(*) from public.mis_campanias_vigentes() where campania_id = pg_temp.u('e2')),
-  0::bigint, 'pero la campaña por empezar todavía no es una campaña vigente suya');
+  0::bigint, 'pero la campaña por empezar todavía no es una campaña vigente (en curso) suya');
+select set_config('role', 'authenticated', true);
+select is(public.estado_cuenta(), 'ACTIVA',
+          'y su cuenta está ACTIVA desde que lo sumaron, aunque la campaña no haya empezado (0102)');
 
 select * from finish();
 rollback;
