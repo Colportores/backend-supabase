@@ -207,7 +207,10 @@ select pg_temp.u(x.id), pg_temp.u('f3'), 'T-' || x.id, x.m, x.f::timestamptz, pg
     ('7a', 'b7', '2026-09-09 08:00-03', 1000,  null)
   ) x(id, s, f, m, baja);
 
--- Entregas: (venta, producto, cantidad, pendiente, dada de baja).
+-- Entregas: (venta, producto, cantidad, pendiente, dada de baja). Sin los triggers de la 0118 (descuentan el stock
+-- de lo entregado): acá el stock es el de arriba y las entregas son solo lo que se lee.
+alter table public.entrega disable trigger entrega_descuenta_stock;
+alter table public.entrega disable trigger entrega_stock_inconsistente;
 insert into public.entrega (venta_id, producto_id, cantidad, pendiente, deleted_at)
 select pg_temp.u(x.v), pg_temp.u(x.p), x.c, x.pend, x.baja
   from (values
@@ -235,6 +238,8 @@ select pg_temp.u(x.v), pg_temp.u(x.p), x.c, x.pend, x.baja
     ('70', '91', 5,   true,  null),
     ('7a', '91', 1,   true,  null)
   ) x(v, p, c, pend, baja);
+alter table public.entrega enable trigger entrega_descuenta_stock;
+alter table public.entrega enable trigger entrega_stock_inconsistente;
 
 -- Cobros (centavos): 10 pagada justo; 12 parcial; 13 anulado; 18 dado de baja; 30 pagada.
 insert into public.cobranza (venta_id, monto, medio, fecha, deleted_at, anulado_at, motivo_anulacion)

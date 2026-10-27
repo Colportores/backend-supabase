@@ -187,16 +187,16 @@ select pg_temp.como('Etc/GMT+12', 'b3');
 select is(pg_temp.observar(), 'mapa=1 vigentes=1 ciudades=1 casas=1 escribe=1 cuenta=ACTIVA',
           'b3 (empieza hoy), sesión en UTC-12: lo mismo');
 
--- b4: empieza MAÑANA. Ve el mapa y las casas (decisión del 30/09 y del 02/10), todavía no escribe ni
---     tiene la cuenta activa.
+-- b4: empieza MAÑANA. Ve el mapa y las casas (decisión del 30/09 y del 02/10), todavía no escribe; la
+--     cuenta ya está activa desde que lo sumaron (0102, «Cuenta antes»).
 select pg_temp.como('UTC', 'b4');
-select is(pg_temp.observar(), 'mapa=1 vigentes=0 ciudades=1 casas=1 escribe=0 cuenta=PENDIENTE_ASIGNACION',
+select is(pg_temp.observar(), 'mapa=1 vigentes=0 ciudades=1 casas=1 escribe=0 cuenta=ACTIVA',
           'b4 (empieza mañana), sesión en UTC: ve el mapa y las casas, todavía no escribe');
 select pg_temp.como('Pacific/Kiritimati', 'b4');
-select is(pg_temp.observar(), 'mapa=1 vigentes=0 ciudades=1 casas=1 escribe=0 cuenta=PENDIENTE_ASIGNACION',
+select is(pg_temp.observar(), 'mapa=1 vigentes=0 ciudades=1 casas=1 escribe=0 cuenta=ACTIVA',
           'b4 (empieza mañana), sesión en UTC+14: lo mismo');
 select pg_temp.como('Etc/GMT+12', 'b4');
-select is(pg_temp.observar(), 'mapa=1 vigentes=0 ciudades=1 casas=1 escribe=0 cuenta=PENDIENTE_ASIGNACION',
+select is(pg_temp.observar(), 'mapa=1 vigentes=0 ciudades=1 casas=1 escribe=0 cuenta=ACTIVA',
           'b4 (empieza mañana), sesión en UTC-12: lo mismo');
 
 -- La vigencia de cada campaña, directo (como el servidor), con las tres zonas horarias.

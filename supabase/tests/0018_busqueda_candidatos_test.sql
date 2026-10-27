@@ -31,7 +31,7 @@ $$;
 --           e5 Borrada.
 -- Cuentas (created_at relativo a hoy, en días):
 --   b1 Ana Martínez        pendiente                                   +10
---   b2 Anabel Pereira      pendiente, inscripta en Futura (no bloquea) +9
+--   b2 Anabel Pereira      activa: inscripta en Futura, que se pisa con Verano (0102) +9
 --   b5 Rodrigo Barrios     pendiente, inscripta en Vieja (terminada)   +8
 --   ba Noelia Acosta       pendiente, inscripción BORRADA en Verano    +7
 --   bd Ignacio Núñez       pendiente                                   +5 (empate con be)
@@ -206,13 +206,13 @@ select throws_ok($$ select * from public.buscar_candidatos(pg_temp.u('e4'), 'ana
 select results_eq(
   $$ select usuario_id, estado, campania_actual, motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1')) $$,
   $$ values (pg_temp.u('b1'), 'PENDIENTE_ASIGNACION'::text, null::text, null::text),
-            (pg_temp.u('b2'), 'PENDIENTE_ASIGNACION', null, null),
             (pg_temp.u('b5'), 'PENDIENTE_ASIGNACION', null, null),
             (pg_temp.u('ba'), 'PENDIENTE_ASIGNACION', null, null),
-            (pg_temp.u('be'), 'PENDIENTE_ASIGNACION', null, null) $$,
+            (pg_temp.u('be'), 'PENDIENTE_ASIGNACION', null, null),
+            (pg_temp.u('bd'), 'PENDIENTE_ASIGNACION', null, null) $$,
   'sugeridos: hasta 5 pendientes, más nuevas primero (empate por id desc: be antes que bd); '
   'sin suspendidas, en otra campaña, ya en el equipo, sin verificar ni dadas de baja aunque sean más nuevas; '
-  'una inscripción futura, terminada o borrada no las saca de pendientes'
+  'una inscripción terminada o borrada no las saca de pendientes, una por empezar sí (b2 es ACTIVA, 0102)'
 );
 select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), null) $$,
                   $$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1')) $$,
@@ -232,11 +232,12 @@ select is((select creada_en::date from public.buscar_candidatos(pg_temp.u('e1'))
 select results_eq(
   $$ select usuario_id, estado, motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1'), 'ana') $$,
   $$ values (pg_temp.u('b1'), 'PENDIENTE_ASIGNACION'::text, null::text),
-            (pg_temp.u('b2'), 'PENDIENTE_ASIGNACION', null),
+            (pg_temp.u('b2'), 'ACTIVA', 'EN_OTRA_CAMPANIA'),
             (pg_temp.u('b0'), 'PENDIENTE_ASIGNACION', null),
             (pg_temp.u('b3'), 'SUSPENDIDA', 'USUARIO_SUSPENDIDO') $$,
   '«ana»: primero las que empiezan con el texto (Ana, Anabel), después las que lo contienen '
-  '(Adriana antes que Mariana), alfabético; la suspendida aparece con su motivo'
+  '(Adriana antes que Mariana), alfabético; la suspendida aparece con su motivo y Anabel, que está en '
+  'Futura (se pisa con Verano), sale ACTIVA y bloqueada'
 );
 select results_eq(
   $$ select usuario_id, estado, campania_actual, motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1'), 'rodrigo') $$,
@@ -409,11 +410,16 @@ select throws_ok($$ select * from public.buscar_candidatos(pg_temp.u('e1'), 'pag
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('b4')) $$,
-  'CI007', 'Está en campaña Otoño Norte. Reasignar primero.', 'EN_OTRA_CAMPANIA → CI007');
+  'CI007', 'Está en la campaña Otoño Norte (desde el ' || to_char(current_date - 20, 'DD/MM')
+    || ', sin fecha de fin). Elegí otra campaña o quitalo de esa primero.', 'EN_OTRA_CAMPANIA → CI007');
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('b3')) $$,
   'CI005', null, 'USUARIO_SUSPENDIDO → CI005');
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('bb')) $$,
   'CI005', null, 'suspendido y en otra campaña → CI005, como dice el motivo');
+select results_eq(
+  $$ select usuario_id, estado, campania_actual, motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1'), 'anabel') $$,
+  $$ values (pg_temp.u('b2'), 'ACTIVA'::text, 'Futura'::text, 'EN_OTRA_CAMPANIA'::text) $$,
+  'Anabel, inscripta en Futura (+5 a +60), no entra en Verano (hasta +30): ACTIVA, su campaña y el motivo (0102)');
 select is((select motivo_bloqueo from public.buscar_candidatos(pg_temp.u('e1'), 'acosta')), null,
   'con una inscripción dada de baja en esta campaña no hay motivo: inscribir la reactiva (0035)');
 select lives_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), c.usuario_id)
@@ -421,8 +427,8 @@ select lives_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), c.usuario_
                     where c.motivo_bloqueo is null $$,
   'toda cuenta sin motivo se puede inscribir');
 select results_eq($$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1'), 'ana') $$,
-                  $$ values (pg_temp.u('b3')) $$,
-                  'las inscriptas dejan de ser candidatas; queda la suspendida');
+                  $$ values (pg_temp.u('b2')), (pg_temp.u('b3')) $$,
+                  'las inscriptas dejan de ser candidatas; quedan la bloqueada por fechas (b2) y la suspendida');
 select results_eq(
   $$ select usuario_id from public.buscar_candidatos(pg_temp.u('e1')) $$,
   $$ values (pg_temp.u('b5')), (pg_temp.u('ba')), (pg_temp.u('be')), (pg_temp.u('bd')), (pg_temp.u('bc')) $$,
@@ -438,7 +444,6 @@ select results_eq(
   $$ values (pg_temp.u('b7'), 'Joel'::text, 'Cabrera'::text, 'jcabrera@equipo18.test'::text, 'SUSPENDIDA'::text, true),
             (pg_temp.u('b0'), 'Adriana', 'Luz', 'aluz@correo.uy', 'ACTIVA', false),
             (pg_temp.u('b1'), 'Ana', 'Martínez', 'ana.martinez@correo.uy', 'ACTIVA', false),
-            (pg_temp.u('b2'), 'Anabel', 'Pereira', 'anabel.p@correo.uy', 'ACTIVA', false),
             (pg_temp.u('b6'), 'Diego', 'Rocha', 'drocha@equipo18.test', 'ACTIVA', false) $$,
   'el coordinador ve a los de su campaña con email y estado (la suspendida marcada), por apellido'
 );

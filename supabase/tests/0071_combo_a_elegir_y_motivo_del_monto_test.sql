@@ -96,6 +96,12 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));
 insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   (pg_temp.u('e1'), pg_temp.u('b1'), null);
+-- Una campaña larga que ya había empezado en las fechas fijas de las ventas del push (2026 y 2027): el
+-- servidor rechaza una venta anterior al inicio de la campaña del colportor (0102).
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
+  (pg_temp.u('e0'), 'e0 combo71 larga', 'PERMANENTE', '2026-01-01', '2027-12-31');
+insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
+  (pg_temp.u('e0'), pg_temp.u('b1'), null);
 
 -- Catálogo: un libro (11), una revista (12), otro libro (13). El «Pack Familiar» (d0) es fijo: 1 libro y 2 revistas.
 -- La «Colección de 2 libros» (d1) no lleva nada fijo y deja elegir 2 libros.

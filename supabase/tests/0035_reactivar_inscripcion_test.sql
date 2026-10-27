@@ -229,9 +229,11 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('b4')) $$,
   'CI005', 'La cuenta está suspendida. Contactá al administrador.', 'una cuenta suspendida no se reactiva (CI005)');
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('b5')) $$,
-  'CI007', 'Está en campaña Salto. Reasignar primero.', 'quien hoy está en otra campaña vigente, tampoco (CI007)');
+  'CI007', 'Está en la campaña Salto (desde el ' || to_char(current_date - 10, 'DD/MM') || ', sin fecha de fin). Elegí otra campaña o quitalo de esa primero.',
+  'quien hoy está en otra campaña cuyas fechas se pisan, tampoco (CI007)');
 select is(pg_temp.detalle_error($$ select public.inscribir_colportor(pg_temp.u('e1'), pg_temp.u('b5')) $$)::jsonb,
-  jsonb_build_object('campania_id', pg_temp.u('e2'), 'campania_nombre', 'Salto'),
+  jsonb_build_object('campania_id', pg_temp.u('e2'), 'campania_nombre', 'Salto',
+                     'fecha_inicio', to_char(current_date - 10, 'YYYY-MM-DD'), 'fecha_fin', null),
   'con la campaña en conflicto en details');
 select throws_ok($$ select public.inscribir_colportor(pg_temp.u('e4'), pg_temp.u('b6')) $$,
   'CI002', null, 'en una campaña terminada no se reactiva (CI002)');
