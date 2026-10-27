@@ -211,6 +211,39 @@ create trigger deposito_validado_no_se_edita
   before update on public.deposito
   for each row execute function public.tg_deposito_validado_no_se_edita();
 
+-- Un vínculo que llega después de que el ticket de su depósito ya fue rechazado. El teléfono puede subir el ticket,
+-- el coordinador rechazarlo, y recién entonces llegar el depósito y sus vínculos (otro lote, sin señal). rechazar_ticket
+-- solo da de baja los vínculos que ya existen; este trigger hace que el que llega tarde nazca dado de baja, así el
+-- cobro queda libre para el depósito corregido (el índice único deposito_cobro_cobro_unico solo mira los vivos) y el
+-- teléfono no ve un invalid. Vale para el cliente y para el servidor.
+create function public.tg_deposito_cobro_de_ticket_rechazado()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.deleted_at is null
+     and exists (select 1
+                   from public.deposito d
+                   join public.ticket t on t.id = d.ticket_id
+                  where d.id = new.deposito_id and t.estado = 'RECHAZADO') then
+    new.deleted_at := clock_timestamp();
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_deposito_cobro_de_ticket_rechazado() is
+  'BEFORE INSERT de deposito_cobro (0129): si el ticket de su depósito ya está RECHAZADO, el vínculo nace dado de '
+  'baja y el cobro queda libre para el depósito corregido.';
+
+revoke all on function public.tg_deposito_cobro_de_ticket_rechazado() from public, anon, authenticated, service_role;
+
+create trigger deposito_cobro_de_ticket_rechazado
+  before insert on public.deposito_cobro
+  for each row execute function public.tg_deposito_cobro_de_ticket_rechazado();
+
 -- ----------------------------------------------------------------------------
 -- 3. Piezas internas
 -- ----------------------------------------------------------------------------
@@ -676,7 +709,8 @@ begin
    where t.id = v_t.id;
 
   -- Los cobros que el depósito rechazado incluía vuelven a estar en mano: el colportor los incluye en el depósito
-  -- nuevo que sube con el ticket corregido.
+  -- nuevo que sube con el ticket corregido. Los vínculos que lleguen después de este rechazo nacen dados de baja
+  -- (trigger deposito_cobro_de_ticket_rechazado).
   if v_t.tipo = 'DEPOSITO' then
     update public.deposito_cobro dc
        set deleted_at = v_ahora

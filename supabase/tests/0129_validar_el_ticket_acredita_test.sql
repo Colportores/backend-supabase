@@ -499,6 +499,43 @@ select is(pg_temp.error_de($$ insert into public.deposito_cobro (id, deposito_id
                               values (pg_temp.u('41'), pg_temp.u('40'), pg_temp.u('a3')) $$), 'ok',
           'y vuelve a incluir el cobro que estaba en el depósito rechazado');
 
+-- El depósito y sus vínculos llegan DESPUÉS de que el ticket fue rechazado (otro lote del push): el vínculo nace
+-- dado de baja y el cobro queda libre para el depósito corregido.
+select pg_temp.actuar_como_servidor();
+insert into public.ticket (id, usuario_id, tipo, monto, fecha, estado) values
+  (pg_temp.u('3a'), pg_temp.u('b1'), 'DEPOSITO', 22222, now(), 'PENDIENTE'),
+  (pg_temp.u('3c'), pg_temp.u('b1'), 'DEPOSITO', 22222, now(), 'PENDIENTE');
+select pg_temp.actuar_como(pg_temp.u('c1'));
+select is(pg_temp.rt('3a', 'No se lee la foto'), 'RECHAZADO|0|f', 'se rechaza antes de que llegue el depósito: nada que liberar');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.error_de($$ insert into public.deposito (id, monto, fecha, destino, concepto, ticket_id)
+                              values (pg_temp.u('3b'), 22222, now(), 'BANCO', 'CASA_EDITORA', pg_temp.u('3a')) $$), 'ok',
+          'después llega el depósito del ticket rechazado');
+select is(pg_temp.error_de($$ insert into public.deposito_cobro (id, deposito_id, cobranza_id)
+                              values (pg_temp.u('3e'), pg_temp.u('3b'), pg_temp.u('a9')) $$), 'ok',
+          'y su vínculo con el cobro: entra sin error');
+select pg_temp.actuar_como_servidor();
+select is((select deleted_at is not null from public.deposito_cobro where id = pg_temp.u('3e')), true,
+          'pero nace dado de baja: el cobro no queda atrapado');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.error_de($$ insert into public.deposito (id, monto, fecha, destino, concepto, ticket_id)
+                              values (pg_temp.u('3d'), 22222, now(), 'BANCO', 'CASA_EDITORA', pg_temp.u('3c')) $$), 'ok',
+          'b1 sube el depósito corregido');
+select is(pg_temp.error_de($$ insert into public.deposito_cobro (id, deposito_id, cobranza_id)
+                              values (pg_temp.u('3f'), pg_temp.u('3d'), pg_temp.u('a9')) $$), 'ok',
+          'y vuelve a incluir el mismo cobro (sin 23505)');
+select pg_temp.actuar_como(pg_temp.u('c1'));
+select is((select format('%s|%s', p.cobros_vinculados, p.diferencia) from public.validacion_de_ticket(pg_temp.u('3c')) p),
+          '22222|0', 'la vista previa del corregido ve su cobro y no marca diferencia');
+select pg_temp.actuar_como_servidor();
+select is((select count(*)::int from public.deposito_cobro where cobranza_id = pg_temp.u('a9') and deleted_at is null), 1,
+          'el cobro está en un solo depósito vivo');
+select pg_temp.actuar_como(pg_temp.u('c1'));
+select is(pg_temp.error_de($$ select * from public.rechazar_ticket(pg_temp.u('3a'), 'Otra vez') $$), 'TV002 ',
+          'rechazar el mismo ticket otra vez da TV002, y ya no hace falta');
+select pg_temp.actuar_como_servidor();
+select has_trigger('public', 'deposito_cobro', 'deposito_cobro_de_ticket_rechazado', 'el trigger que da de baja el vínculo tardío');
+
 -- ---------------------------------------------------------------------------
 -- 6. Confirmar un retiro sin ticket
 -- ---------------------------------------------------------------------------
