@@ -519,6 +519,17 @@ Desde la migración `0117` (backend-supabase#112, HU-BEC-006, HU-BEC-001, vista 
 - **Pendiente.** El avance y el estado «media / completa alcanzada» (HU-BEC-002, HU-BEC-005), el push al asignar (HU-NOT-003) y las metas de una campaña PERMANENTE (`BC004` hasta que se decida).
 - **Probado** en `supabase/tests/0117_beca_con_dos_medidas_test.sql` y `supabase/tests_migracion/0117_ok`.
 
+## La entrega descuenta el stock del colportor (0118)
+
+Desde la migración `0118` (backend-supabase#147, HU-STK-007, Supuesto S46, [docs#69](https://github.com/Colportores/docs-organizacion/issues/69)) cuando el colportor registra una entrega, el servidor le descuenta el stock producto por producto. Es V2 (se conecta después del 20/11). Un combo se entrega como una fila de `entrega` por componente (0056): cada una descuenta su producto.
+
+- **Cuándo descuenta.** Cuando la fila de `entrega` pasa a **entregada** (`pendiente = false` y sin `deleted_at`): al insertarse así (entrega inmediata, HU-VEN-002) o al pasar de pendiente a entregada (HU-VEN-003). Una entrega pendiente no descuenta. Una sola vez por entrega: lo garantizan el trigger y un índice único parcial sobre `movimiento_stock(entrega_id)` (tipo `SALIDA_ENTREGA`); un UPDATE de otra columna, volver a pendiente y entregar de nuevo, o subir la misma entrega dos veces no descuentan otra vez.
+- **Qué hace.** En la misma transacción del push: resta `cantidad` de `stock.cantidad_disponible` del colportor de la venta (crea la fila si no existía), agrega un `movimiento_stock` `SALIDA_ENTREGA` con su `entrega_id` (fechado en `fecha_entrega` si vino) y deja el evento `stock_descontado_por_entrega` en `audit_log` (`tabla = 'entrega'`, `fila_id` = la entrega, `target_user_id` = el colportor, `metadata = {producto_id, cantidad, stock_antes, stock_despues, inconsistente}`).
+- **Nunca frena una venta (S46).** Si el stock registrado no alcanzaba (sin fila de stock vale 0), la entrega se registra igual, el stock queda en negativo y la entrega queda marcada con `entrega.stock_inconsistente = true`. La marca es del servidor: está en las columnas del servidor de `entrega` (el push la descarta) y un cliente que escribe directo no la cambia. Baja al teléfono en el pull de `entrega`; la advertencia «Tu stock registrado era N pero entregaste M» es del teléfono con su stock local.
+- **Dos triggers.** `entrega_stock_inconsistente` (BEFORE, calcula la marca y solo lee: el `INSERT … ON CONFLICT DO NOTHING` del push lo dispara aun para una fila que no entra) y `entrega_descuenta_stock` (AFTER, `SECURITY DEFINER`: el push no puede escribir `stock` ni `movimiento_stock`). Las entregas anteriores a la `0118` no descontaron nada, quedan con la marca en `false` y no descuentan si se editan; sí si se anulan y se restauran.
+- **Pendiente** (decisión de Cristian): devolver stock cuando una entrega descontada se anula, vuelve a pendiente o cambia de cantidad, y la devolución de una venta (HU-VEN-004; el CHECK de `movimiento_stock` no tiene un tipo de entrada por devolución). El reporte de inconsistencias (R49, HU-REP).
+- **Probado** en `supabase/tests/0118_la_entrega_descuenta_el_stock_test.sql` y `supabase/tests_migracion/0118_ok`.
+
 ## La auditoría: audit_log (0073)
 
 Desde la migración `0073` (backend-supabase#136, decisión de Cristian del 23/10 «Audit log»; RA-SE05, HU-ADM-007, HU-JOR-004) está la tabla `audit_log` de la nube: una fila por operación crítica, con el evento, quién, sobre quién, sobre qué fila y un detalle. **Nunca un correo ni datos de clientes.**
