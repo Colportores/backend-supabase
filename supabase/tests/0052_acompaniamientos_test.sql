@@ -231,13 +231,15 @@ select is((select array(select k from jsonb_object_keys(
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.historial_de_acompaniamientos(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
+          array['acompaniamiento_cargado_por','acompaniamiento_cargado_por_apellido','acompaniamiento_cargado_por_nombre',
+                'acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
                 'acompaniante_nombre','apellido','colportor_id','dia','en_curso','horas','jornada_id','nombre'],
-          'el historial trae el día, las horas, quién acompañó, de dónde salió el dato y la nota: ni la hora de inicio, ni clientes, ni email');
+          'el historial trae el día, las horas, quién acompañó, de dónde salió el dato, la nota y quién la cargó: ni la hora de inicio, ni clientes, ni email');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.jornadas_cerradas_de_colportor(pg_temp.u('e1'), pg_temp.u('b1')) r limit 1)) k
                  order by k collate "C")),
-          array['acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
+          array['acompaniamiento_cargado_por','acompaniamiento_cargado_por_apellido','acompaniamiento_cargado_por_nombre',
+                'acompaniamiento_nota','acompaniamiento_origen','acompaniante_apellido','acompaniante_id',
                 'acompaniante_nombre','dia','horas','jornada_id'],
           'las jornadas traen el día, las horas, quién acompañó, el origen y la nota: ni la hora de inicio ni clientes');
 select is((select array(select k from jsonb_object_keys(
