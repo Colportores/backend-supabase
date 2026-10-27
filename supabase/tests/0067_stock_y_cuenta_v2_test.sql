@@ -290,8 +290,9 @@ select is(pg_temp.error_de($$ insert into public.pedido_casa_editora (colportor_
                               values ('01920000-0000-7000-8000-0000000067b1', 'PENDIENTE', 'COLPORTOR') $$),
           '23514: new row for relation "pedido_casa_editora" violates check constraint "pedido_casa_editora_estado_check"',
           'el estado viejo PENDIENTE del esquema no existe: es PENDIENTE_AUTORIZACION');
-select is(pg_temp.error_de(format($$ insert into public.pedido_casa_editora (colportor_id, estado, origen)
-                                      values ('01920000-0000-7000-8000-0000000067b1', %L, 'COORDINADOR') $$, e)), 'ok',
+select is(pg_temp.error_de(format($$ insert into public.pedido_casa_editora (colportor_id, estado, origen, motivo_rechazo)
+                                      values ('01920000-0000-7000-8000-0000000067b1', %L, 'COORDINADOR', %L) $$,
+                                      e, case when e = 'RECHAZADO' then 'Motivo de prueba' end)), 'ok',
           format('el pedido admite el estado %s', e))
   from unnest(array['BORRADOR','PENDIENTE_AUTORIZACION','AUTORIZADO','DESPACHADO','RECIBIDO','RECHAZADO','CANCELADO']) e;
 select is(pg_temp.error_de($$ insert into public.pedido_casa_editora (colportor_id, estado, origen)

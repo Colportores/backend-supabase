@@ -161,11 +161,11 @@ insert into public.entrega (id, venta_id, producto_id, cantidad, pendiente, dele
   (pg_temp.u('94'), pg_temp.u('71'), pg_temp.u('d1'), 6, true, now());
 
 -- Un pedido de b2 y otro de b1 que el servidor ya autorizó, para las pruebas de lo ajeno y de lo decidido.
-insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, origen) values
-  (pg_temp.u('a2'), pg_temp.u('b2'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR'),
-  (pg_temp.u('a9'), pg_temp.u('b1'), 'AUTORIZADO', 3000, 'COLPORTOR'),
-  (pg_temp.u('a8'), pg_temp.u('b1'), 'RECHAZADO', 3000, 'COLPORTOR'),
-  (pg_temp.u('a7'), pg_temp.u('b1'), 'BORRADOR', 0, 'COORDINADOR');
+insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, origen, motivo_rechazo) values
+  (pg_temp.u('a2'), pg_temp.u('b2'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', null),
+  (pg_temp.u('a9'), pg_temp.u('b1'), 'AUTORIZADO', 3000, 'COLPORTOR', null),
+  (pg_temp.u('a8'), pg_temp.u('b1'), 'RECHAZADO', 3000, 'COLPORTOR', 'Excede capacidad de pago actual'),
+  (pg_temp.u('a7'), pg_temp.u('b1'), 'BORRADOR', 0, 'COORDINADOR', null);
 insert into public.pedido_item (id, pedido_id, producto_id, cantidad, precio_unitario) values
   (pg_temp.u('e2'), pg_temp.u('a2'), pg_temp.u('d1'), 1, 1500),
   (pg_temp.u('e9'), pg_temp.u('a9'), pg_temp.u('d1'), 2, 1500);
