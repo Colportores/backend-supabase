@@ -48,11 +48,11 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000112a1');
 
 select is((select monto_autorizado from public.autorizar_pedido('01920000-0000-7000-8000-000000011201')),
           500000::bigint, 'el pedido de antes se autoriza por lo que pidió');
-select is((select deuda_total from public.estado_cuenta where usuario_id = '01920000-0000-7000-8000-0000000112b1'),
+select is((select deuda_total from public.cuenta_colportor where usuario_id = '01920000-0000-7000-8000-0000000112b1'),
           500000::bigint, 'y suma su deuda');
 select is((select estado from public.deshacer_decision_de_pedido('01920000-0000-7000-8000-000000011201')),
           'PENDIENTE_AUTORIZACION', 'y se deshace dentro del plazo');
-select is((select deuda_total from public.estado_cuenta where usuario_id = '01920000-0000-7000-8000-0000000112b1'),
+select is((select deuda_total from public.cuenta_colportor where usuario_id = '01920000-0000-7000-8000-0000000112b1'),
           0::bigint, 'la deuda vuelve a donde estaba');
 
 select * from finish();

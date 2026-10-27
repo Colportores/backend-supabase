@@ -110,7 +110,7 @@ $$;
 
 -- Lo que hay hoy en la deuda de un colportor (como el servidor).
 create or replace function pg_temp.deuda(p_col text) returns bigint language sql as $$
-  select coalesce((select deuda_total from public.estado_cuenta where usuario_id = pg_temp.u(p_col)), -1)
+  select coalesce((select deuda_total from public.cuenta_colportor where usuario_id = pg_temp.u(p_col)), -1)
 $$;
 
 -- Hace que lo decidido hace p_seg segundos (para probar el plazo sin esperar).
@@ -130,14 +130,14 @@ $$;
 --        b3 Carla Cruz (Abierta, inscripción dada de baja)  b4 Diego Duarte (Otra)  b5 Elena Eguren (Cerrada
 --        hace más de 15 días)  b6 Fede Fuentes (Reciente: terminó hace 10 días; hoy en Nueva)  b7 Gabi Gómez (terminó hace
 --        15 días justos)  b8 Hugo Haedo (terminó hace 16 días)  b9 Ines Ibarra (solo en la campaña Borrada;
---        su cuenta está dada de baja).
+--        su cuenta está dada de baja)  ba Ivan Iglesias (solo en Reciente, terminó hace 10 días: hoy no está en otra).
 -- Campañas: e1 Abierta (sin fin, a1)  e2 Otra (a2)  e3 Cerrada (2025, a1)  e4 Reciente  e7 Borde15
 --        e8 Borde16  e5 Vacía (a1)  e6 Borrada (a1).
 -- Productos: 91 Libro Uno (1500)  92 Libro Dos (2500)  93 Revista Uno (200).
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'bandeja-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7','b8','b9']) s;
+  from unnest(array['a0','a1','a2','a3','a4','ad','b1','b2','b3','b4','b5','b6','b7','b8','b9','ba']) s;
 
 update public.usuario u set nombre = x.n, apellido = x.a
   from (values ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz'), ('b4','Diego','Duarte'),
@@ -148,7 +148,7 @@ insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
   from (values ('a1','COORDINADOR'), ('a2','COORDINADOR'), ('ad','ADMIN'), ('a0','COLPORTOR'),
                ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR'),
-               ('b5','COLPORTOR'), ('b6','COLPORTOR'), ('b7','COLPORTOR'), ('b8','COLPORTOR'), ('b9','COLPORTOR')) x(s, codigo)
+               ('b5','COLPORTOR'), ('b6','COLPORTOR'), ('b7','COLPORTOR'), ('b8','COLPORTOR'), ('b9','COLPORTOR'), ('ba','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 insert into public.usuario_rol (usuario_id, rol_id, valido_desde, valido_hasta)
 select pg_temp.u('a4'), r.id, now() - interval '10 days', now() - interval '1 day'
@@ -184,7 +184,8 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, created
   (pg_temp.u('e7'), pg_temp.u('b7'), null,            (public.hoy_montevideo() - 90)::timestamptz),
   (pg_temp.u('e8'), pg_temp.u('b8'), null,            (public.hoy_montevideo() - 90)::timestamptz),
   (pg_temp.u('e6'), pg_temp.u('b9'), null,            '2026-08-01 10:00-03'),
-  (pg_temp.u('e9'), pg_temp.u('b6'), null,            (public.hoy_montevideo() - 5)::timestamptz);
+  (pg_temp.u('e9'), pg_temp.u('b6'), null,            (public.hoy_montevideo() - 5)::timestamptz),
+  (pg_temp.u('e4'), pg_temp.u('ba'), null,            (public.hoy_montevideo() - 60)::timestamptz);
 -- b4 estuvo fuera de Otra entre el 01/09 y el 20/09 (un hueco de la inscripción).
 update public.campania_colportor set tramos_afuera = array['[2026-09-01 00:00:00+00,2026-09-20 00:00:00+00)'::tstzrange]
  where campania_id = pg_temp.u('e2') and usuario_id = pg_temp.u('b4');
@@ -203,15 +204,16 @@ insert into public.stock (usuario_id, producto_id, cantidad_disponible, deleted_
   (pg_temp.u('b1'), pg_temp.u('93'), 50, now());
 
 -- La cuenta de b1 (b2 no tiene) y sus depósitos: el más reciente vivo es el del 17/10.
-insert into public.estado_cuenta (usuario_id, deuda_total, dinero_por_cobrar, deuda_alquiler)
+insert into public.cuenta_colportor (usuario_id, deuda_total, dinero_por_cobrar, deuda_alquiler)
 values (pg_temp.u('b1'), 20000, 7000, 1234);
-insert into public.estado_cuenta (usuario_id, deuda_total, dinero_por_cobrar, deuda_alquiler, deleted_at)
+insert into public.cuenta_colportor (usuario_id, deuda_total, dinero_por_cobrar, deuda_alquiler, deleted_at)
 values (pg_temp.u('b9'), 777, 888, 99, now());
-insert into public.deposito (colportor_id, monto, fecha, destino, concepto, deleted_at) values
-  (pg_temp.u('b1'), 9000,  '2026-10-10 12:00:00+00', 'BANCO', 'CASA_EDITORA', null),
-  (pg_temp.u('b1'), 12000, '2026-10-17 12:00:00+00', 'BANCO', 'CASA_EDITORA', null),
-  (pg_temp.u('b1'), 1,     '2026-10-20 12:00:00+00', 'BANCO', 'CASA_EDITORA', now()),
-  (pg_temp.u('b1'), 777,   '2026-10-24 12:00:00+00', 'BANCO', 'ALQUILER',     null);
+-- Retiros del coordinador: no piden ticket (un depósito de banco u oficina sí, 0122). El de alquiler lleva campaña (0114).
+insert into public.deposito (colportor_id, monto, fecha, destino, concepto, campania_id, deleted_at) values
+  (pg_temp.u('b1'), 9000,  '2026-10-10 12:00:00+00', 'RETIRO_COORDINADOR', 'CASA_EDITORA', null, null),
+  (pg_temp.u('b1'), 12000, '2026-10-17 12:00:00+00', 'RETIRO_COORDINADOR', 'CASA_EDITORA', null, null),
+  (pg_temp.u('b1'), 1,     '2026-10-20 12:00:00+00', 'RETIRO_COORDINADOR', 'CASA_EDITORA', null, now()),
+  (pg_temp.u('b1'), 777,   '2026-10-24 12:00:00+00', 'RETIRO_COORDINADOR', 'ALQUILER',     pg_temp.u('e1'), null);
 
 -- Lo por entregar de b1: 3 + 1 vivas y pendientes; una entregada, una entrega dada de baja y una venta dada
 -- de baja no cuentan. Lo de b2 no se mezcla.
@@ -224,6 +226,9 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
   (pg_temp.u('10'), pg_temp.u('f3'), 'T-1', 5000, '2026-10-01 12:00:00+00', pg_temp.u('b1'), null),
   (pg_temp.u('11'), pg_temp.u('f3'), 'T-2', 5000, '2026-10-02 12:00:00+00', pg_temp.u('b1'), now()),
   (pg_temp.u('12'), pg_temp.u('f3'), 'T-3', 5000, '2026-10-03 12:00:00+00', pg_temp.u('b2'), null);
+-- La entrega que pasa a entregada descuenta stock (0118): acá el stock de arriba se fija a mano, así que se apagan los dos triggers.
+alter table public.entrega disable trigger entrega_descuenta_stock;
+alter table public.entrega disable trigger entrega_stock_inconsistente;
 insert into public.entrega (venta_id, producto_id, cantidad, pendiente, deleted_at) values
   (pg_temp.u('10'), pg_temp.u('91'), 3, true,  null),
   (pg_temp.u('10'), pg_temp.u('92'), 1, true,  null),
@@ -231,6 +236,8 @@ insert into public.entrega (venta_id, producto_id, cantidad, pendiente, deleted_
   (pg_temp.u('10'), pg_temp.u('93'), 7, true,  now()),
   (pg_temp.u('11'), pg_temp.u('91'), 2, true,  null),
   (pg_temp.u('12'), pg_temp.u('91'), 9, true,  null);
+alter table public.entrega enable trigger entrega_descuenta_stock;
+alter table public.entrega enable trigger entrega_stock_inconsistente;
 
 -- Pedidos (id, colportor, estado, total, origen, excede_limite, minuto, dado de baja, monto autorizado,
 -- decidió, cuándo, motivo). Más reciente = minuto más alto.
@@ -284,6 +291,15 @@ insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, o
   (pg_temp.u('de'), pg_temp.u('b4'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', '2026-07-30 12:00:00-03'),
   (pg_temp.u('df'), pg_temp.u('b4'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', '2026-09-10 12:00:00-03');
 
+-- Después del fin de la campaña (decisión del 26/10 de #104: sin baja, la ventana llega a fin + 15 días).
+-- (i) ba terminó Reciente hace 10 días y hoy pide e0: no está en otra campaña, el pedido es de Reciente (a1).
+-- Borde: b7 (Borde15, fin hace 15 días) pide a6 hoy, el último día de la ventana; b8 (Borde16, fin hace 16) pide
+-- a7 hoy, un día después: de ninguna campaña (lo ve solo el ADMIN).
+insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, origen, fecha_pedido) values
+  (pg_temp.u('e0'), pg_temp.u('ba'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', now()),
+  (pg_temp.u('a6'), pg_temp.u('b7'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', now()),
+  (pg_temp.u('a7'), pg_temp.u('b8'), 'PENDIENTE_AUTORIZACION', 1500, 'COLPORTOR', now());
+
 -- Líneas (pedido, producto, cantidad, costo, cantidad autorizada, dada de baja).
 insert into public.pedido_item (pedido_id, producto_id, cantidad, precio_unitario, cantidad_autorizada, deleted_at)
 select pg_temp.u(x.p), pg_temp.u(x.pr), x.c, x.pu, x.ca, x.baja
@@ -321,6 +337,9 @@ select pg_temp.u(x.p), pg_temp.u(x.pr), x.c, x.pu, x.ca, x.baja
     ('d9', '91', 1, 1500, null,          null),
     ('db', '91', 1, 1500, null,          null),
     ('dc', '91', 1, 1500, null,          null),
+    ('e0', '91', 1, 1500, null,          null),
+    ('a6', '91', 1, 1500, null,          null),
+    ('a7', '91', 1, 1500, null,          null),
     ('dd', '91', 1, 1500, null,          null),
     ('de', '91', 1, 1500, null,          null),
     ('df', '91', 1, 1500, null,          null)
@@ -364,7 +383,6 @@ select is(has_function_privilege(r, f, 'execute')::text, 'false',
           format('%s no tiene EXECUTE en la pieza interna %s', r, f))
   from unnest(array['public.pedido_para(uuid, boolean)', 'public.puede_decidir_pedido_de(uuid, timestamptz)',
                     'public.puede_ver_pedido_de(uuid, timestamptz)',
-                    'public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)',
                     'public.mover_deuda_casa_editora(uuid, bigint)', 'public.plazo_para_deshacer_pedido()',
                     'public.gracia_para_deshacer_pedido()']) f,
        unnest(array['anon', 'authenticated', 'service_role']) r;
@@ -379,7 +397,6 @@ select is((select count(*)::int
                             'public.pedido_para(uuid, boolean)'::regprocedure,
                             'public.puede_decidir_pedido_de(uuid, timestamptz)'::regprocedure,
                             'public.puede_ver_pedido_de(uuid, timestamptz)'::regprocedure,
-                            'public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)'::regprocedure,
                             'public.mover_deuda_casa_editora(uuid, bigint)'::regprocedure,
                             'public.plazo_para_deshacer_pedido()'::regprocedure,
                             'public.gracia_para_deshacer_pedido()'::regprocedure)), 0,
@@ -442,11 +459,16 @@ select is(pg_temp.ids(pg_temp.u('a2'), 'e2'), 'c7,dd',
 select is(pg_temp.ids(pg_temp.u('ad'), 'e2'), 'c7,dd', 'el administrador, igual: la ventana vale para todos');
 select is(pg_temp.ids(pg_temp.u('a2'), 'e9'), 'dc', 'el pedido de hoy de b6 sale en Nueva (a2)...');
 select is(pg_temp.ids(pg_temp.u('a1'), 'e3'), 'c9', 'una campaña terminada se lee');
-select is(pg_temp.ids(pg_temp.u('a1'), 'e4'), 'ca', '...y NO en Reciente (a1, terminó hace 10 días): solo el que hizo entonces');
+select is(pg_temp.ids(pg_temp.u('a1'), 'e4'), 'e0,ca',
+          '...y NO en Reciente (a1, terminó hace 10 días): solo el que b6 hizo entonces (ca) y el de hoy de ba, que no está en otra campaña (e0, fin + 15)');
+select is(pg_temp.ids(pg_temp.u('ad'), 'e4'), 'e0,ca', 'el administrador, igual');
+select is(pg_temp.ids(pg_temp.u('a1'), 'e7'), 'a6,d7', 'Borde15: hoy es el último día de la ventana (fin + 15), el pedido de hoy de b7 sale');
+select is(pg_temp.ids(pg_temp.u('a1'), 'e8'), 'd8', 'Borde16: un día más y el de hoy de b8 no es de ninguna campaña');
+select is(pg_temp.ids(pg_temp.u('ad'), 'e8'), 'd8', '...ni siquiera el administrador lo ve en una bandeja de campaña');
 select is(pg_temp.ids(pg_temp.u('a1'), 'e5'), '', 'la campaña sin colportores: bandeja vacía');
 
 select is(pg_temp.como(pg_temp.u('a1'), format('select coalesce(sum(pedidos), 0)::int as n from public.pedidos_por_autorizar_por_ciudad(%L)', pg_temp.u('e4'))) -> 0 ->> 'n',
-          '1', 'el aviso de Stock de Reciente cuenta solo ca, no el de hoy de b6 en Nueva (0111 con la ventana)');
+          '2', 'el aviso de Stock de Reciente cuenta ca y e0, no el de hoy de b6 en Nueva (0111 con la ventana)');
 select is(pg_temp.como(pg_temp.u('a2'), format('select coalesce(sum(pedidos), 0)::int as n from public.pedidos_por_autorizar_por_ciudad(%L)', pg_temp.u('e9'))) -> 0 ->> 'n',
           '1', 'y el de Nueva cuenta dc');
 select is(pg_temp.como(pg_temp.u('a2'), format('select coalesce(sum(pedidos), 0)::int as n from public.pedidos_por_autorizar_por_ciudad(%L)', pg_temp.u('e2'))) -> 0 ->> 'n',
@@ -542,6 +564,16 @@ select is(pg_temp.lineas(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'ni lee su
 select is(pg_temp.contexto(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'ni su contexto (la deuda de b6)');
 select is(pg_temp.des(pg_temp.u('a1'), 'dc') ->> 'error', '42501', 'ni lo deshace');
 select is(pg_temp.deuda('b6'), -1::bigint, 'b6 sigue sin deuda');
+-- (i) El pedido de hoy de ba (terminó Reciente hace 10 días, no está en otra): es de Reciente, lo decide a1; a2 no.
+select is(pg_temp.lineas(pg_temp.u('a2'), 'e0') ->> 'error', '42501', 'a2 no lee el pedido de hoy de ba (es de Reciente)');
+select is(pg_temp.aut(pg_temp.u('a2'), 'e0') ->> 'error', '42501', 'ni lo autoriza');
+select is(pg_temp.aut(pg_temp.u('a1'), 'e0') -> 0 ->> 'estado', 'AUTORIZADO', 'a1 sí autoriza el de hoy de ba (la ventana llega a fin + 15)');
+select is(pg_temp.deuda('ba'), 1500::bigint, 'y la deuda de ba sube');
+select is(pg_temp.des(pg_temp.u('a1'), 'e0') -> 0 ->> 'estado', 'PENDIENTE_AUTORIZACION', 'lo deshace');
+select is(pg_temp.deuda('ba'), 0::bigint, 'y vuelve a cero');
+-- Más allá de fin + 15 sin otra campaña: de ninguna; solo el ADMIN.
+select is(pg_temp.lineas(pg_temp.u('a1'), 'a7') ->> 'error', '42501', 'a1 no lee el de hoy de b8 (fin + 15 ya pasó)');
+select is(pg_temp.lineas(pg_temp.u('ad'), 'a7') -> 0 ->> 'cantidad', '1', 'el administrador sí');
 select is(pg_temp.aut(pg_temp.u('a2'), 'de') ->> 'error', '42501', 'a2 no decide el que b4 hizo antes de inscribirse');
 select is(pg_temp.aut(pg_temp.u('a2'), 'df') ->> 'error', '42501', 'ni el que hizo en el hueco de su inscripción');
 select is(pg_temp.lineas(pg_temp.u('a2'), 'de') ->> 'error', '42501', 'ni lo lee');
@@ -590,9 +622,9 @@ select is(pg_temp.pedido('c1') ->> 'coordinador_id', null, 'coordinador_id (quie
 select is((select count(*)::int from public.pedido_item where pedido_id = pg_temp.u('c1') and cantidad_autorizada is not null),
           0, 'autorizar todo no escribe cantidades en las líneas (null = lo pedido)');
 select is(pg_temp.deuda('b1'), 33000::bigint, 'la deuda del colportor sube lo autorizado: 20000 + 13000');
-select is((select dinero_por_cobrar from public.estado_cuenta where usuario_id = pg_temp.u('b1')), 7000::bigint,
+select is((select dinero_por_cobrar from public.cuenta_colportor where usuario_id = pg_temp.u('b1')), 7000::bigint,
           'lo demás de la cuenta no se mueve');
-select is((select deuda_alquiler from public.estado_cuenta where usuario_id = pg_temp.u('b1')), 1234::bigint,
+select is((select deuda_alquiler from public.cuenta_colportor where usuario_id = pg_temp.u('b1')), 1234::bigint,
           'ni el alquiler');
 select is((select cantidad_disponible from public.stock where usuario_id = pg_temp.u('b1') and producto_id = pg_temp.u('91')),
           5, 'el stock no cambia: entra al recibir');
@@ -723,6 +755,8 @@ select is(pg_temp.rech(pg_temp.u('a1'), 'd4', null) ->> 'error', 'PE004', 'sin m
 select alike(pg_temp.rech(pg_temp.u('a1'), 'd4', '') ->> 'mensaje', '%Escribí el motivo%', 'el aviso dice qué hacer');
 select is(pg_temp.rech(pg_temp.u('a1'), 'd4', '') ->> 'error', 'PE004', 'motivo vacío');
 select is(pg_temp.rech(pg_temp.u('a1'), 'd4', E'  \t\n ') ->> 'error', 'PE004', 'motivo en blanco');
+select is(pg_temp.rech(pg_temp.u('a1'), 'd4', E'\u200b') ->> 'error', 'PE004', 'un espacio de ancho cero tampoco es un motivo');
+select is(pg_temp.rech(pg_temp.u('a1'), 'd4', E' \u200b\u200c\u200d\ufeff ') ->> 'error', 'PE004', 'ni varios invisibles juntos');
 select is(pg_temp.rech(pg_temp.u('a1'), 'd4', repeat('x', 501)) ->> 'error', 'PE004', 'motivo de 501 caracteres');
 select is(pg_temp.rech(pg_temp.u('a1'), 'd4', repeat('ñ', 501)) ->> 'error', 'PE004', 'el largo se mide en caracteres: 501 «ñ»');
 select is(pg_temp.rech(pg_temp.u('a1'), 'd4', '  ' || repeat('x', 500) || '  ') ->> 'error', null, '500 caracteres rodeados de espacios entran: se mide recortado');
@@ -866,6 +900,9 @@ select is(pg_temp.sql_err(format($$ update public.pedido_casa_editora set estado
 select is(pg_temp.sql_err(format($$ update public.pedido_casa_editora set estado = 'RECHAZADO', motivo_rechazo = %L where id = %L $$, E' \t\n ', pg_temp.u('d0'))),
           '23514: new row for relation "pedido_casa_editora" violates check constraint "pedido_casa_editora_motivo_rechazo_check"',
           'ni con tabulaciones y saltos de línea');
+select is(pg_temp.sql_err(format($$ update public.pedido_casa_editora set estado = 'RECHAZADO', motivo_rechazo = %L where id = %L $$, E'\u200b\ufeff', pg_temp.u('d0'))),
+          '23514: new row for relation "pedido_casa_editora" violates check constraint "pedido_casa_editora_motivo_rechazo_check"',
+          'ni con espacios de ancho cero');
 select is(pg_temp.sql_err(format($$ update public.pedido_casa_editora set estado = 'RECHAZADO', motivo_rechazo = %L where id = %L $$, repeat('x', 501), pg_temp.u('d0'))),
           '23514: new row for relation "pedido_casa_editora" violates check constraint "pedido_casa_editora_motivo_rechazo_check"',
           'ni con 501 caracteres');
@@ -904,6 +941,35 @@ select is(pg_temp.sql_err(format($$ update public.pedido_item set cantidad_autor
           'ok', 'y cero también');
 
 -- ============================================================================
+-- 10b. Por el push del colportor (0124): lo que decide el coordinador se descarta del payload
+-- ============================================================================
+-- b1 sube un pedido y una línea con las columnas de esta migración (como si devolviera la fila que bajó del pull):
+-- entran (accepted, no invalid 42501) y las columnas del servidor quedan en null.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table lote_push104 as
+select sync.push(jsonb_build_array(
+         jsonb_build_object('client_op_id', pg_temp.u('fa'), 'entity', 'pedido_casa_editora', 'op', 'insert',
+                            'payload', jsonb_build_object('id', pg_temp.u('fa'), 'estado', 'PENDIENTE_AUTORIZACION',
+                                         'monto_autorizado', 999, 'decidido_por', pg_temp.u('a1'),
+                                         'decidido_en', now(), 'motivo_rechazo', 'lo escribe el teléfono')),
+         jsonb_build_object('client_op_id', pg_temp.u('fb'), 'entity', 'pedido_item', 'op', 'insert',
+                            'payload', jsonb_build_object('id', pg_temp.u('fb'), 'pedido_id', pg_temp.u('fa'),
+                                         'producto_id', pg_temp.u('91'), 'cantidad', 2, 'cantidad_autorizada', 1)))) -> 'results' as r;
+grant select on lote_push104 to authenticated;
+select is((select string_agg(e ->> 'outcome', ',') from lote_push104, jsonb_array_elements(r) e), 'accepted,accepted',
+          'el push con las columnas del coordinador entra, sin invalid 42501');
+select pg_temp.actuar_como_servidor();
+select is((select (monto_autorizado is null and decidido_por is null and decidido_en is null and motivo_rechazo is null)::text
+             from public.pedido_casa_editora where id = pg_temp.u('fa')),
+          'true', 'y el servidor descarta monto autorizado, quién decidió, cuándo y el motivo');
+select is((select cantidad_autorizada from public.pedido_item where id = pg_temp.u('fb')), null::integer,
+          'y la cantidad autorizada de la línea');
+select is((select count(*)::int from sync.entidad
+            where (nombre = 'pedido_casa_editora' and columnas_servidor @> array['monto_autorizado','decidido_por','decidido_en','motivo_rechazo'])
+               or (nombre = 'pedido_item' and columnas_servidor @> array['cantidad_autorizada'])), 2,
+          'las columnas de 0112 están en columnas_servidor de las dos entidades');
+
+-- ============================================================================
 -- 11. Lo de siempre no cambia
 -- ============================================================================
 select is(pg_temp.como(pg_temp.u('b1'), 'select count(*) as n from public.pedido_casa_editora') -> 0 ->> 'n',
@@ -913,11 +979,15 @@ select is(pg_temp.como(pg_temp.u('b2'), 'select count(*) as n from public.pedido
           (select count(*)::text from public.pedido_casa_editora where colportor_id = pg_temp.u('b2')), 'y b2 los suyos');
 select is(pg_temp.err_dml(pg_temp.u('b1'), format($$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = %L $$, pg_temp.u('d0'))),
           '42501', 'con un JWT nadie escribe el pedido directo: ni el dueño');
-select is(pg_temp.err_dml(pg_temp.u('a1'), format($$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = %L $$, pg_temp.u('d0'))),
-          '42501', 'ni su coordinador: solo por las funciones');
+-- Desde 0124 el rol tiene grant por columna sobre `estado`: la RLS (solo el dueño) esconde la fila al coordinador,
+-- así que el UPDATE no falla pero no toca nada.
+create temp table estado_d0_104 as select estado from public.pedido_casa_editora where id = pg_temp.u('d0');
+select ok(pg_temp.err_dml(pg_temp.u('a1'), format($$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = %L $$, pg_temp.u('d0'))) in ('ok', '42501')
+          and (select estado from public.pedido_casa_editora where id = pg_temp.u('d0')) = (select estado from estado_d0_104),
+          'ni su coordinador: el pedido queda como estaba y solo se decide por las funciones');
 select is(pg_temp.err_dml(pg_temp.u('a1'), format($$ update public.pedido_item set cantidad_autorizada = 1 where pedido_id = %L $$, pg_temp.u('d0'))),
           '42501', 'ni las líneas');
-select is(pg_temp.err_dml(pg_temp.u('a1'), format($$ update public.estado_cuenta set deuda_total = 0 where usuario_id = %L $$, pg_temp.u('b1'))),
+select is(pg_temp.err_dml(pg_temp.u('a1'), format($$ update public.cuenta_colportor set deuda_total = 0 where usuario_id = %L $$, pg_temp.u('b1'))),
           '42501', 'ni la deuda');
 select is(pg_temp.err(pg_temp.u('a1'), format($$ select public.mover_deuda_casa_editora(%L, 1) $$, pg_temp.u('b1'))),
           '42501', 'la pieza que mueve la deuda no se llama desde afuera');

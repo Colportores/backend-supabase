@@ -47,18 +47,19 @@
 --     AUTORIZADO o RECHAZADO. Una campaña terminada se lee.
 --   · `pedido_lineas`: lo que pide (cantidad × costo unitario de la casa editora), lo que se autorizó y
 --     el stock que el colportor tiene hoy de ese producto («Stock de estos productos»).
---   · `pedido_contexto`: la cuenta del colportor para decidir. `deuda_actual` es `estado_cuenta.deuda_total`
+--   · `pedido_contexto`: la cuenta del colportor para decidir. `deuda_actual` es `cuenta_colportor.deuda_total`
 --     (sin cuenta = 0). `deuda_con_pedido` es la deuda actual MÁS el pedido solo mientras está por
 --     autorizar; ya autorizado, el pedido está en la deuda actual. `por_cobrar` es
---     `estado_cuenta.dinero_por_cobrar`: la misma cifra que Cuentas. `libros_por_entregar` son las unidades
+--     `cuenta_colportor.dinero_por_cobrar`: la misma cifra que Cuentas. `libros_por_entregar` son las unidades
 --     vendidas todavía no entregadas (como `por_entregar` de 0111). El último depósito es el más reciente
 --     vivo, con su fecha y su monto.
---   · De qué campaña es un pedido (decisión del 26/10 de #101, `pedido_en_la_ventana()`): la campaña cuya
---     ventana de inscripción contiene su `fecha_pedido` (desde el alta, antes de la baja, fuera de los
---     `tramos_afuera`, hasta el día de fin de la campaña; sin recortar a `fecha_inicio`). Un colportor que
---     pasó de la campaña A (de Marta) a la B (de Pedro) y pide hoy: el pedido es de B; Marta no lo ve ni
---     lo decide. La misma regla corrige `pedidos_por_autorizar_por_ciudad` (0111), que contaba por
---     colportor solamente.
+--   · De qué campaña es un pedido (decisiones del 26/10 de #101 y #104): UNA sola. La ventana de una
+--     inscripción (`campania_del_ticket()`, 0113: la misma de tickets y depósitos) va desde el alta (sin recortar a `fecha_inicio`), fuera de los
+--     `tramos_afuera`, hasta la baja; sin baja, hasta el fin de la campaña MÁS 15 días. Si el pedido cae en
+--     la ventana de dos inscripciones del mismo colportor, gana la más nueva.
+--     Fede terminó A (de Marta) hace 10 días: (i) si no está en otra campaña y pide hoy, el pedido es de A y
+--     Marta lo decide; (ii) si ya está en B (de Pedro), el pedido es solo de B y Marta no lo ve ni lo decide.
+--     La misma regla corrige `pedidos_por_autorizar_por_ciudad` (0111), que contaba por colportor solamente.
 --   · Permiso de lectura: ADMIN, o COORDINADOR de la campaña a la que pertenece el pedido
 --     (`puede_ver_pedido_de()`, aun terminada o con el colportor dado de baja). La lista, por campaña, con
 --     el permiso de campaña de las demás lecturas del panel (42501 / CZ001).
@@ -77,7 +78,7 @@
 --     (Reducir); lo que no se nombra se autoriza entero. Cada cantidad va de 0 a lo pedido (nunca más),
 --     un producto no se repite y tiene que estar en el pedido; no se puede dejar todo en cero (eso es
 --     rechazar). Una cantidad igual a la pedida se guarda como null. SUMA `monto_autorizado` a la deuda del
---     colportor con la casa editora (`estado_cuenta.deuda_total`, la crea si no existe). El límite de deuda
+--     colportor con la casa editora (`cuenta_colportor.deuda_total`, la crea si no existe). El límite de deuda
 --     solo avisa: no bloquea (R-ST06). El stock no cambia: entra al pasar a RECIBIDO.
 --   · Rechazar: PENDIENTE_AUTORIZACION -> RECHAZADO con motivo obligatorio (no en blanco, hasta 500
 --     caracteres; se guarda recortado). No toca la deuda.
@@ -91,7 +92,7 @@
 --     actual con `ya_estaba = true`, sin tocar nada. Dos coordinadores a la vez: la fila se bloquea
 --     (FOR UPDATE) y el segundo recibe PE002.
 --   · Permiso de decisión (más estricto que el de lectura, ante la duda se bloquea): ADMIN, o COORDINADOR
---     de la campaña a la que pertenece el pedido (`pedido_en_la_ventana()`) con el colportor inscripto sin
+--     de la campaña a la que pertenece el pedido (`campania_del_ticket()`) con el colportor inscripto sin
 --     baja y cuyo plazo de escritura siga abierto (hasta 15 días después de su fin, 0020). Quien solo
 --     coordinó al colportor en una campaña ya cerrada la ve, pero no le autoriza más pedidos; y la
 --     coordinadora de la campaña anterior no ve ni decide lo que el colportor pide en la de otro.
@@ -120,16 +121,17 @@
 --   · No despacha ni recibe (DESPACHADO y RECIBIDO son frente a la casa editora y al colportor), no
 --     revierte la deuda de un pedido cancelado ni ajusta la de uno recibido incompleto (HU-STK-002), no
 --     manda el push al colportor (HU-NOT-003), no toca transferencias (#106).
---   · No va al sync: `pedido_casa_editora` sigue sin estar en `sync.entidad`. El motivo del rechazo y las
---     cantidades autorizadas le llegan al colportor cuando el contrato del sync los incluya.
+--   · Push del colportor (0124): las columnas nuevas son del servidor. Entran en `sync.entidad.columnas_servidor`
+--     (sección 9), así que un push que las trae (la fila tal como bajó del pull) las descarta en vez de dar
+--     42501; los grants por columna de 0124 tampoco las abren. Lo que decidió la coordinadora (estado, motivo
+--     del rechazo, cantidades autorizadas) baja al colportor por el pull de la entidad.
 --
 -- ## Para otros repos
 --
 --   · front-coordinadores-web (vista 35; el panel de Reducir y Deshacer es #93): POST /rest/v1/rpc/<nombre>
 --     con los parámetros de arriba. Los errores PE001..PE005 llegan en `code` del cuerpo de PostgREST.
---   · backend-supabase#155 (renombra `estado_cuenta` a `cuenta_colportor`): la deuda se mueve en UNA
---     función, `mover_deuda_casa_editora()`, y las lecturas de `pedido_contexto` leen la tabla por nombre:
---     el renombre cambia esos sitios.
+--   · backend-supabase#155 (0119) ya renombró `estado_cuenta` a `cuenta_colportor`: esta migración usa el
+--     nombre nuevo en `mover_deuda_casa_editora()` y en `pedido_contexto`.
 --   · docs-organizacion: `esquema-datos.md` (columnas nuevas, estados, errores PE) en un issue aparte.
 --
 -- Forward-only: esta migración no se edita una vez aplicada.
@@ -160,7 +162,7 @@ alter table public.pedido_casa_editora
 -- (cargado a mano), se le deja un motivo para que la regla nueva no tire la migración ni se pierda el pedido.
 update public.pedido_casa_editora
    set motivo_rechazo = 'Sin motivo registrado'
- where estado = 'RECHAZADO' and (motivo_rechazo is null or motivo_rechazo !~ '\S');
+ where estado = 'RECHAZADO' and (motivo_rechazo is null or motivo_rechazo !~ '[^\s\u200b-\u200d\ufeff]');
 
 alter table public.pedido_casa_editora
   add constraint pedido_casa_editora_monto_autorizado_check
@@ -170,7 +172,7 @@ alter table public.pedido_casa_editora
   -- Rechazar exige un motivo (HU-STK-003); el motivo solo existe en un pedido rechazado.
   add constraint pedido_casa_editora_motivo_rechazo_check
   check ((estado = 'RECHAZADO'
-            and motivo_rechazo is not null and motivo_rechazo ~ '\S' and length(motivo_rechazo) <= 500)
+            and motivo_rechazo is not null and motivo_rechazo ~ '[^\s\u200b-\u200d\ufeff]' and length(motivo_rechazo) <= 500)
          or (estado <> 'RECHAZADO' and motivo_rechazo is null));
 
 create index pedido_casa_editora_decidido_por_idx on public.pedido_casa_editora (decidido_por)
@@ -236,7 +238,7 @@ volatile
 security definer
 set search_path = ''
 as $$
-  insert into public.estado_cuenta as ec (usuario_id, deuda_total)
+  insert into public.cuenta_colportor as ec (usuario_id, deuda_total)
   values (p_usuario_id, p_delta)
   on conflict (usuario_id) do update
     set deuda_total = ec.deuda_total + excluded.deuda_total,
@@ -244,34 +246,10 @@ as $$
 $$;
 
 comment on function public.mover_deuda_casa_editora(uuid, bigint) is
-  'Suma (o resta, con p_delta negativo) a estado_cuenta.deuda_total del colportor; crea la cuenta si no '
+  'Suma (o resta, con p_delta negativo) a cuenta_colportor.deuda_total del colportor; crea la cuenta si no '
   'existe. La llaman autorizar_pedido() y deshacer_decision_de_pedido() (0112). Interna.';
 
 revoke all on function public.mover_deuda_casa_editora(uuid, bigint)
-  from public, anon, authenticated, service_role;
-
--- ¿Este pedido es de la inscripción? La regla de la decisión del 26/10 (#101): un pedido es de la campaña cuya
--- ventana de inscripción contiene su fecha_pedido: desde el alta (sin recortar a fecha_inicio: el que pide
--- libros antes de que arranque es de la campaña en la que ya está inscripto), antes de la baja si la hubo, fuera
--- de los huecos (tramos_afuera) y hasta el día en que termina la campaña (días de Montevideo, ambos incluidos).
--- Interna.
-create function public.pedido_en_la_ventana(p_alta timestamptz, p_baja timestamptz, p_afuera tstzrange[],
-                                            p_fecha_fin date, p_fecha_pedido timestamptz)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select public.inscripcion_cubre_el_instante(p_alta, p_baja, p_afuera, p_fecha_pedido)
-     and public.hoy_montevideo(p_fecha_pedido) <= coalesce(p_fecha_fin, 'infinity'::date)
-$$;
-
-comment on function public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz) is
-  'true si un pedido hecho en p_fecha_pedido es de esta inscripción: dentro de la ventana de la inscripción '
-  '(alta, baja, tramos_afuera) y hasta el día de fin de la campaña (Montevideo). Sin recortar a fecha_inicio. '
-  'Interna (0112, decisión del 26/10 de #101).';
-
-revoke all on function public.pedido_en_la_ventana(timestamptz, timestamptz, tstzrange[], date, timestamptz)
   from public, anon, authenticated, service_role;
 
 -- ¿El usuario autenticado puede VER el pedido que este colportor hizo en esa fecha? ADMIN, o coordinador de
@@ -286,18 +264,14 @@ as $$
   select public.tiene_rol('ADMIN')
       or (public.tiene_rol('COORDINADOR')
           and exists (select 1
-                        from public.campania_colportor cc
-                        join public.campania c on c.id = cc.campania_id
-                       where cc.usuario_id = p_colportor_id
-                         and c.deleted_at is null
-                         and c.coordinador_id = auth.uid()
-                         and public.pedido_en_la_ventana(cc.created_at, cc.deleted_at, cc.tramos_afuera,
-                                                         c.fecha_fin, p_fecha_pedido)));
+                        from public.campania c
+                       where c.id = public.campania_del_ticket(p_colportor_id, p_fecha_pedido)
+                         and c.coordinador_id = auth.uid()));
 $$;
 
 comment on function public.puede_ver_pedido_de(uuid, timestamptz) is
   'true si el usuario autenticado es ADMIN, o COORDINADOR de la campaña a cuya inscripción de '
-  'p_colportor_id pertenece un pedido hecho en p_fecha_pedido (pedido_en_la_ventana). No ve lo que el '
+  'p_colportor_id pertenece un pedido hecho en p_fecha_pedido (campania_del_ticket). No ve lo que el '
   'colportor pidió en la campaña de otro coordinador. Interna (0112).';
 
 revoke all on function public.puede_ver_pedido_de(uuid, timestamptz)
@@ -322,14 +296,13 @@ as $$
                          and cc.deleted_at is null
                          and c.deleted_at is null
                          and c.coordinador_id = auth.uid()
-                         and public.escritura_dentro_de_plazo(c.fecha_fin)
-                         and public.pedido_en_la_ventana(cc.created_at, cc.deleted_at, cc.tramos_afuera,
-                                                         c.fecha_fin, p_fecha_pedido)));
+                         and c.id = public.campania_del_ticket(p_colportor_id, p_fecha_pedido)
+                         and public.escritura_dentro_de_plazo(c.fecha_fin)));
 $$;
 
 comment on function public.puede_decidir_pedido_de(uuid, timestamptz) is
   'true si el usuario autenticado es ADMIN, o COORDINADOR de la campaña a cuya inscripción (sin baja) de '
-  'p_colportor_id pertenece un pedido hecho en p_fecha_pedido (pedido_en_la_ventana) y cuyo plazo de '
+  'p_colportor_id pertenece un pedido hecho en p_fecha_pedido (campania_del_ticket) y cuyo plazo de '
   'escritura (fin + 15 días, 0020) sigue abierto. Más estricta que puede_ver_pedido_de() a propósito: '
   'ver y decidir no es lo mismo. Interna (0112).';
 
@@ -441,12 +414,11 @@ begin
            case when pe.estado in ('AUTORIZADO', 'RECHAZADO')
                 then pe.decidido_en + public.plazo_para_deshacer_pedido() end
       from public.campania_colportor i
-      join public.campania ca on ca.id = i.campania_id
       join public.pedido_casa_editora pe
         on pe.colportor_id = i.usuario_id
        and pe.deleted_at is null
        and pe.estado in ('PENDIENTE_AUTORIZACION', 'AUTORIZADO', 'DESPACHADO', 'RECIBIDO', 'RECHAZADO')
-       and public.pedido_en_la_ventana(i.created_at, i.deleted_at, i.tramos_afuera, ca.fecha_fin, pe.fecha_pedido)
+       and public.campania_del_ticket(i.usuario_id, pe.fecha_pedido) = i.campania_id
       join public.usuario usr on usr.id = i.usuario_id
       left join public.zona z
              on z.id = i.zona_id and z.deleted_at is null and i.deleted_at is null
@@ -467,8 +439,8 @@ $$;
 
 comment on function public.pedidos_de_campania(uuid) is
   'Vista 35, HU-STK-003 (0112, backend-supabase#104): los pedidos a la casa editora de los colportores de '
-  'la campaña (los que hizo mientras estaba inscripto en ella y hasta que terminó: no los que pidió en la '
-  'campaña de otro coordinador) en los cinco estados de las pestañas (por autorizar, autorizado, '
+  'la campaña (los que hizo dentro de la ventana de su inscripción, hasta 15 días después del fin si no hubo '
+  'baja, y que no son de una inscripción más nueva: no los que pidió en la campaña de otro coordinador) en los cinco estados de las pestañas (por autorizar, autorizado, '
   'despachado, recibido, rechazado; sin borradores ni cancelados), el más reciente primero, con la ciudad de la zona actual del '
   'colportor, lo pedido y lo autorizado, el motivo del rechazo y hasta cuándo se puede deshacer lo '
   'decidido. Errores: 42501 sin permiso; CZ001 campaña inexistente. Una campaña terminada se lee.';
@@ -560,7 +532,7 @@ begin
            dep.fecha,
            dep.monto
       from public.usuario usr
-      left join public.estado_cuenta cu
+      left join public.cuenta_colportor cu
              on cu.usuario_id = usr.id and cu.deleted_at is null
       left join lateral (
         select d.fecha, d.monto
@@ -576,8 +548,8 @@ $$;
 
 comment on function public.pedido_contexto(uuid) is
   'Vista 35, HU-STK-003 (0112): la cuenta del colportor para decidir su pedido: deuda actual '
-  '(estado_cuenta.deuda_total), deuda con el pedido (la actual más el pedido mientras está por autorizar), '
-  'por cobrar (estado_cuenta.dinero_por_cobrar), unidades vendidas por entregar y su último depósito. Solo '
+  '(cuenta_colportor.deuda_total), deuda con el pedido (la actual más el pedido mientras está por autorizar), '
+  'por cobrar (cuenta_colportor.dinero_por_cobrar), unidades vendidas por entregar y su último depósito. Solo '
   'montos y cantidades: ni clientes ni cobros. Errores: 42501 sin permiso; PE001 si el pedido no existe. '
   'El límite de deuda (backend-supabase#156) se suma cuando exista.';
 
@@ -740,7 +712,7 @@ set search_path = ''
 as $$
 declare
   v_pedido  public.pedido_casa_editora;
-  v_motivo  text := regexp_replace(p_motivo, '^\s+|\s+$', '', 'g');
+  v_motivo  text := regexp_replace(p_motivo, '^[\s\u200b-\u200d\ufeff]+|[\s\u200b-\u200d\ufeff]+$', '', 'g');
   v_ahora   timestamptz := clock_timestamp();
 begin
   v_pedido := public.pedido_para(p_pedido_id, true);
@@ -906,12 +878,11 @@ begin
       left join public.campania_ciudad cc
              on cc.id = z.campania_ciudad_id and cc.deleted_at is null
       left join public.ciudad ciu on ciu.id = cc.ciudad_id
-      join public.campania ca on ca.id = i.campania_id
       join public.pedido_casa_editora pe
         on pe.colportor_id = i.usuario_id
        and pe.estado = 'PENDIENTE_AUTORIZACION'
        and pe.deleted_at is null
-       and public.pedido_en_la_ventana(i.created_at, i.deleted_at, i.tramos_afuera, ca.fecha_fin, pe.fecha_pedido)
+       and public.campania_del_ticket(i.usuario_id, pe.fecha_pedido) = i.campania_id
      where i.campania_id = p_campania_id
      group by ciu.id, ciu.nombre, ciu.departamento
      order by ciu.nombre nulls last, ciu.id;
@@ -925,3 +896,19 @@ comment on function public.pedidos_por_autorizar_por_ciudad(uuid) is
   'número. Solo los pedidos de esta campaña (0112, decisión del 26/10: los hechos dentro de la ventana de la '
   'inscripción, no los que el colportor pidió en la campaña de otro coordinador). Errores: 42501 sin permiso; '
   'CZ001 campaña inexistente. Una campaña terminada se lee.';
+
+-- ----------------------------------------------------------------------------
+-- 9. Lo que decide el coordinador no se escribe desde el teléfono (push de 0124)
+-- ----------------------------------------------------------------------------
+
+-- `pedido_casa_editora` y `pedido_item` son entidades del push desde 0124. Las columnas de esta migración son
+-- del servidor (las escriben solo las funciones de arriba, y los grants por columna de 0124 no las abren):
+-- se descartan del payload en vez de rechazar con 42501 un push que trae la fila tal como bajó del pull.
+update sync.entidad
+   set columnas_servidor = columnas_servidor
+       || array['monto_autorizado', 'decidido_por', 'decidido_en', 'motivo_rechazo']
+ where nombre = 'pedido_casa_editora';
+
+update sync.entidad
+   set columnas_servidor = columnas_servidor || array['cantidad_autorizada']
+ where nombre = 'pedido_item';
