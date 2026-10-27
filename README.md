@@ -551,6 +551,16 @@ Desde la migración `0120` (backend-supabase#156, HU-STK-003, vista 35, decisió
 - **Pendiente.** `pedido_contexto` (0112, PR 179 de #104) todavía no está en develop: cuando llegue suma `limite_deuda` y `supera_limite_por` con estas funciones (parámetro opcional `p_campania_id`), en una migración de seguimiento.
 - **Probado** en `supabase/tests/0120_limite_de_deuda_por_campania_test.sql` y en `supabase/tests_migracion/0120_ok` (con datos de antes).
 
+## El depósito de efectivo: sube del teléfono, con los cobros que incluye (0122)
+
+Desde la migración `0122` (backend-supabase#135, HU-CTA-004; decisión de Cristian del 23/10, «Depósito S11») `deposito` (tabla de la `0067`, con `campania_id` desde la `0114`) y `deposito_cobro` son entidades del push (contrato §2, dueño `colportor_id`, sin `alsoPull`). El registro no acredita nada: el depósito pasa a «Depositado» recién cuando el coordinador lo valida (backend-supabase#110).
+
+- **Qué sube.** El depósito: `monto`, `fecha`, `destino` (`BANCO` / `OFICINA` / `RETIRO_COORDINADOR`), `concepto` (`CASA_EDITORA` / `ALQUILER`, este con `campania_id`), `ticket_id` (obligatorio en banco u oficina; el retiro por el coordinador no lleva). Y un vínculo por cada cobro en efectivo que incluye (`deposito_cobro`: `deposito_id` + `cobranza_id`): el cobro que no está en ningún depósito vivo sigue «en mano» y un depósito parcial deja los demás sin vincular. El teléfono sube el depósito antes que sus vínculos (el servidor aplica el lote en el orden en que llega).
+- **Quién.** Solo la colportora crea los suyos (`colportor_id` sale del JWT y se descarta del payload); el ADMIN y quien la coordina los leen por RLS. Sin UPDATE ni DELETE desde el teléfono: corregir un depósito lo hace el servidor.
+- **Qué rechaza el push** (`invalid`, sin tumbar el lote). Del depósito: `23514` si la fecha es futura (día de Montevideo), un retiro por el coordinador lleva ticket o un depósito de banco u oficina no lo lleva (decisión del 27/10, «Paso ticket»: el ticket sube antes por dependencia y el depósito espera en la cola del teléfono); `42501` si la campaña no es una de sus inscripciones, o el ticket es de otra o no es de tipo `DEPOSITO`, o a nombre de otra; `23505` si el ticket ya respalda otro depósito vivo; un ticket que no existe se rechaza igual que uno ajeno (`42501`: la colportora no averigua cuáles existen). Del vínculo: `23514` si el cobro no es en efectivo, está anulado o dado de baja; `42501` si el cobro es de una venta ajena o no existe, el depósito no es suyo o todavía no llegó; `23505` si el cobro ya está en otro depósito vivo.
+- **Lo que no hace.** No valida ni acredita (el estado de validación, también del retiro sin ticket, y el aviso por la diferencia entre el monto y la suma de los cobros son de #110), no rechaza por la suma de los cobros con el monto (los vínculos llegan en otro lote) y no deja desvincular un cobro desde el teléfono.
+- **Los datos.** Solo se suma; ningún depósito existente cambia. Lo prueba `supabase/tests_migracion/0122_ok`.
+
 ## La auditoría: audit_log (0073)
 
 Desde la migración `0073` (backend-supabase#136, decisión de Cristian del 23/10 «Audit log»; RA-SE05, HU-ADM-007, HU-JOR-004) está la tabla `audit_log` de la nube: una fila por operación crítica, con el evento, quién, sobre quién, sobre qué fila y un detalle. **Nunca un correo ni datos de clientes.**
