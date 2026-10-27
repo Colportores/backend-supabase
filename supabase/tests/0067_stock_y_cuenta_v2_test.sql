@@ -159,8 +159,9 @@ select has_trigger('public', t, t || '_auditoria_insert', format('%s tiene audit
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
                     'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
--- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, y el depósito, desde 0122,
--- tienen las de su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql y 0122_deposito_sube_por_push_test.sql).
+-- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, el depósito, desde 0122, y el
+-- pedido con sus líneas, desde 0124, tienen las de su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql,
+-- 0122_deposito_sube_por_push_test.sql y 0124_pedido_del_colportor_test.sql).
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd = 'SELECT'), 1,
           format('%s tiene una política de lectura', t))
@@ -169,7 +170,7 @@ select is((select count(*)::int from pg_policies
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
-  from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
+  from unnest(array['stock','movimiento_stock','transferencia_stock',
                     'transferencia_item','cuenta_colportor']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
@@ -189,9 +190,9 @@ select is((select count(*)::int from information_schema.role_table_grants
                     'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select is((select count(*)::int from sync.entidad
-            where nombre in ('stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
+            where nombre in ('stock','movimiento_stock','transferencia_stock',
                              'transferencia_item','cuenta_colportor')), 0,
-          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122)');
+          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
@@ -341,8 +342,10 @@ select is(pg_temp.error_de($$ update public.transferencia_stock set estado = 'EJ
                               where id = '01920000-0000-7000-8000-0000000067e5' $$),
           '23514: new row for relation "transferencia_stock" violates check constraint "transferencia_stock_estado_check"',
           'el estado EJECUTADA del esquema viejo no existe: es EJECUTADO');
-select is(pg_temp.error_de(format($$ update public.transferencia_stock set estado = %L
-                                    where id = '01920000-0000-7000-8000-0000000067e5' $$, e)), 'ok',
+-- Desde 0126, rechazada exige un motivo y solo ella lo tiene.
+select is(pg_temp.error_de(format($$ update public.transferencia_stock set estado = %L,
+                                           motivo_rechazo = case when %L = 'RECHAZADO' then 'prueba' end
+                                    where id = '01920000-0000-7000-8000-0000000067e5' $$, e, e)), 'ok',
           format('la transferencia admite %s', e))
   from unnest(array['AUTORIZADO','EJECUTADO','RECHAZADO','CANCELADO','PENDIENTE_AUTORIZACION']) e;
 select is(pg_temp.error_de($$ insert into public.transferencia_item (transferencia_id, producto_id, cantidad)
@@ -541,14 +544,13 @@ select is(pg_temp.ve('stock', array['a1']), 'a1', 'la baja lógica sigue a la vi
 select pg_temp.actuar_como_servidor();
 
 -- ============================================================================
--- 7. Escritura: nadie con JWT (el ticket, desde 0113, y el depósito, desde 0122, los crea su dueña)
+-- 7. Escritura: nadie con JWT (el ticket, desde 0113, el depósito, desde 0122, y el pedido, desde 0124, los crea su dueña)
 -- ============================================================================
 select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
           format('ni el ADMIN inserta en %s con su JWT', x.t))
   from (values
     ('stock', $$ insert into public.stock (usuario_id, producto_id) values ('01920000-0000-7000-8000-0000000067b3', '01920000-0000-7000-8000-000000006712') $$),
-    ('pedido_casa_editora', $$ insert into public.pedido_casa_editora (colportor_id, estado, origen) values ('01920000-0000-7000-8000-0000000067b3', 'BORRADOR', 'COORDINADOR') $$),
     ('cuenta_colportor', $$ insert into public.cuenta_colportor (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
   ) x(t, s);
 select pg_temp.actuar_como(pg_temp.u('b1'));
@@ -556,7 +558,6 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
           format('el colportor no actualiza %s', x.t))
   from (values
     ('stock', $$ update public.stock set cantidad_disponible = 99 where id = '01920000-0000-7000-8000-0000000067a1' $$),
-    ('pedido_casa_editora', $$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067b1' $$),
     ('transferencia_stock', $$ update public.transferencia_stock set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067e5' $$),
     ('cuenta_colportor', $$ update public.cuenta_colportor set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
   ) x(t, s);

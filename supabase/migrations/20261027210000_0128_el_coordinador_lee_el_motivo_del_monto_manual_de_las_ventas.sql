@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0125 · El coordinador lee el motivo del monto manual junto al total de la venta
+-- 0128 · El coordinador lee el motivo del monto manual junto al total de la venta
 --        (backend-supabase#154, seguimiento de #138 / 0071, «Monto manual»)
 --
 -- Marta, coordinadora, abre un reporte del panel. Junto al total de una venta que Ana cambió a
@@ -25,8 +25,14 @@
 --                             del cliente). El panel no la necesita para nada más.
 --   colportor_id, nombre,
 --   apellido                  quien hizo la venta (sin email ni nada más de la persona).
---   ciudad_id, ciudad_nombre  la ciudad de la ZONA ACTUAL del colportor en esta campaña (como en
---                             0061); sin zona, ambos null. Es dónde trabaja el colportor, no dónde
+--   ciudad_id, ciudad_nombre  la ciudad de la zona que el colportor tenía en el INSTANTE de la venta,
+--                             según `campania_colportor_zona_historial` (0022; desde <= fecha <
+--                             hasta), como decidió Cristian el 23/10 en «Horas y zona» (#141; R7
+--                             del 25/10: vale también si después se dio de baja; R4 del 26/10: las
+--                             ventas cuentan en la zona de su instante). Sin tramo ese día: ambos
+--                             null («sin zona asignada»). Un reporte de un mes cerrado no cambia
+--                             aunque después lo muevan, ni aunque la zona o la ciudad de la
+--                             campaña se den de baja. Es dónde trabaja el colportor, no dónde
 --                             fue la venta: la venta no dice nada de eso.
 --   fecha                     el instante de la venta (timestamptz); el panel lo formatea en
 --                             America/Montevideo.
@@ -93,7 +99,6 @@ security definer
 set search_path = ''
 as $$
 declare
-  c_sin_ciudad constant uuid := '00000000-0000-0000-0000-000000000000'::uuid;
   v_motivo     text;
   v_campania   public.campania;
 begin
@@ -124,7 +129,7 @@ begin
            v.colportor_id,
            usr.nombre,
            usr.apellido,
-           nullif(coalesce(ci.ciudad_id, c_sin_ciudad), c_sin_ciudad),
+           zd.ciudad_id,
            ciu.nombre,
            v.fecha,
            v.monto_total::bigint,
@@ -136,12 +141,22 @@ begin
       from public.campania_colportor i
       join public.venta v on v.colportor_id = i.usuario_id
       join public.usuario usr on usr.id = i.usuario_id
-      -- La ciudad sale de la zona actual; una zona o una ciudad de campaña dadas de baja no cuentan.
-      left join public.zona z
-             on z.id = i.zona_id and z.deleted_at is null and i.deleted_at is null
-      left join public.campania_ciudad ci
-             on ci.id = z.campania_ciudad_id and ci.deleted_at is null
-      left join public.ciudad ciu on ciu.id = ci.ciudad_id
+      -- La ciudad sale del tramo del historial de zonas que cubre el instante de la venta (como
+      -- 0106: desde <= fecha < hasta, hasta null = vigente). Una zona o una ciudad de campaña dadas
+      -- de baja DESPUÉS no cambian el pasado; sin tramo, sin ciudad.
+      left join lateral (
+        select ci.ciudad_id
+          from public.campania_colportor_zona_historial h
+          join public.zona z on z.id = h.zona_id
+          join public.campania_ciudad ci on ci.id = z.campania_ciudad_id
+         where h.campania_colportor_id = i.id
+           and h.deleted_at is null
+           and h.desde <= v.fecha
+           and (h.hasta is null or v.fecha < h.hasta)
+         order by h.desde desc
+         limit 1
+      ) zd(ciudad_id) on true
+      left join public.ciudad ciu on ciu.id = zd.ciudad_id
      where i.campania_id = p_campania_id
        and (p_colportor_ids is null or i.usuario_id = any (p_colportor_ids))
        and v.deleted_at is null
@@ -150,14 +165,14 @@ begin
        and public.hoy_montevideo(v.fecha) >= v_campania.fecha_inicio
        and public.hoy_montevideo(v.fecha) <= coalesce(v_campania.fecha_fin, 'infinity'::date)
        and public.hoy_montevideo(v.fecha) between p_desde and p_hasta
-       and (p_ciudad_id is null or ci.ciudad_id = p_ciudad_id)
+       and (p_ciudad_id is null or zd.ciudad_id = p_ciudad_id)
      order by v.fecha desc, usr.apellido, usr.nombre, v.id;
 end;
 $$;
 
 comment on function public.ventas_con_motivo_de_campania(uuid, date, date, uuid, uuid[]) is
-  'Reportes del panel (0125, backend-supabase#154): una fila por venta de la campaña CON motivo del monto '
-  'manual (0071): colportor y su ciudad (la de su zona actual), fecha, monto_total y suma de los ítems (centavos) '
+  'Reportes del panel (0128, backend-supabase#154): una fila por venta de la campaña CON motivo del monto '
+  'manual (0071): colportor y su ciudad (la de su zona ese día, por el historial de zonas), fecha, monto_total y suma de los ítems (centavos) '
   'y el motivo, entre p_desde y p_hasta (hasta 366 días). Nada del cliente ni de dónde fue ni el talonario. '
   'Ventana de inscripción de 0100. Errores: 42501 sin permiso; CZ001 campaña inexistente; 22023 fechas o '
   'rango inválidos. Una campaña terminada se lee.';

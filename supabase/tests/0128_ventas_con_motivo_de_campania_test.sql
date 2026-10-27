@@ -1,9 +1,10 @@
--- pgTAP · el coordinador lee el motivo del monto manual (migración 0125, backend-supabase#154)
+-- pgTAP · el coordinador lee el motivo del monto manual (migración 0128, backend-supabase#154)
 -- ventas_con_motivo_de_campania(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña); los errores de campaña y de parámetros; qué ventas salen (solo las con
 -- motivo, las vivas, los bordes de la campaña, la ventana de inscripción: alta con su hora, baja y hueco
 -- de `tramos_afuera`, un colportor no inscripto); los montos (total y suma de los ítems vivos, en
--- centavos); la ciudad de la zona actual; los filtros; el orden; el motivo tal cual (500 caracteres,
+-- centavos); la ciudad de la zona que tenía el colportor en el instante de la venta (historial de zonas: cambio de zona, baja
+-- posterior de la inscripción, zona o ciudad dadas de baja después, días sin zona, tramo borrado); los filtros; el orden; el motivo tal cual (500 caracteres,
 -- con tildes); que la respuesta no trae nada del cliente ni de dónde fue ni el talonario; y que el
 -- coordinador sigue sin poder leer `venta` (sin política nueva).
 begin;
@@ -136,6 +137,31 @@ update public.campania_colportor
    set tramos_afuera = array[tstzrange('2026-09-10 00:00-03'::timestamptz, '2026-09-12 00:00-03'::timestamptz, '[)')]
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b5');
 
+-- El historial de zonas (0022): los triggers lo abren con la hora de ahora; se reemplaza por tramos con fechas de
+-- verdad (desde <= instante < hasta):
+--   b1: Centro (d1) del 01/08 al 20/09 00:00 y después Costa (d2): un cambio de zona a mitad de campaña.
+--   b2: Costa (d2) desde el 03/08 a las 12:00: antes de eso no tenía zona.
+--   b3: un tramo de Centro BORRADO (deleted_at): no cuenta, sigue sin zona.
+--   b4: Centro hasta la baja de la inscripción (15/09 12:00 UTC): la baja es posterior a la venta 40.
+--   b5: Centro hasta el 12/09 10:00 y Costa desde ahí (el instante exacto de la venta 52: el desde cuenta, el hasta no).
+--   b6: Centro desde que se inscribió hasta el 20/09 00:00 (lo quitaron de la zona, sin otra): la venta 63 de ese instante exacto
+--       ya no tiene zona.
+delete from public.campania_colportor_zona_historial
+ where campania_colportor_id in (select id from public.campania_colportor where campania_id = pg_temp.u('e1'));
+insert into public.campania_colportor_zona_historial (campania_colportor_id, zona_id, desde, hasta, deleted_at)
+select cc.id, pg_temp.u(x.zona), x.desde::timestamptz, x.hasta::timestamptz, x.borrado::timestamptz
+  from (values
+    ('b1', 'd1', '2026-08-01 10:00-03', '2026-09-20 00:00-03', null),
+    ('b1', 'd2', '2026-09-20 00:00-03', null,                   null),
+    ('b2', 'd2', '2026-08-03 12:00-03', null,                   null),
+    ('b3', 'd1', '2026-08-01 10:00-03', null,                   '2026-10-01 00:00+00'),
+    ('b4', 'd1', '2026-08-01 10:00-03', '2026-09-15 12:00+00', null),
+    ('b5', 'd1', '2026-08-01 10:00-03', '2026-09-12 10:00-03', null),
+    ('b5', 'd2', '2026-09-12 10:00-03', null,                   null),
+    ('b6', 'd1', '2026-09-09 12:00-03', '2026-09-20 00:00-03', null)
+  ) x(colp, zona, desde, hasta, borrado)
+  join public.campania_colportor cc on cc.campania_id = pg_temp.u('e1') and cc.usuario_id = pg_temp.u(x.colp);
+
 -- Donde cuelgan las ventas (las FK lo piden; la lectura no las mira).
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
 values (pg_temp.u('f1'), 'CASA', 'Calle de prueba', '1', -34.915, -56.18, pg_temp.u('c1'));
@@ -160,7 +186,7 @@ insert into public.producto (id, nombre, tipo) values
 --   b4: 40 jue 10/09 (antes de la baja: sale); 41 dom 20/09 (después de la baja: no).
 --   b5: 50 mié 09/09 (antes del hueco: sale); 51 vie 11/09 (en el hueco: no); 52 sáb 12/09 10:00 (vuelve: sale).
 --   b6 (inscripto el 09/09 a las 12:00): 60 mar 08/09 (antes: no); 61 mié 09/09 08:00 (el mismo día, antes de la
---       hora: no); 62 mié 09/09 16:00 (sale).
+--       hora: no); 62 mié 09/09 16:00 (sale); 63 dom 20/09 00:00 (sale, sin ciudad: ver el historial).
 --   b7 (no inscripto en Cierre): 70 lun 07/09 (no sale).
 --   b8 (de Otra): 80 lun 07/09 (sale de Otra, no de Cierre).
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id,
@@ -188,6 +214,7 @@ select pg_temp.u(x.id), pg_temp.u('f3'), 'M-' || x.id, x.m, x.f::timestamptz, pg
     ('60', 'b6', '2026-09-08 10:00-03', 1000,  'antes de inscribirse',           null),
     ('61', 'b6', '2026-09-09 08:00-03', 1000,  'el mismo día, antes de la hora', null),
     ('62', 'b6', '2026-09-09 16:00-03', 1000,  'después de inscribirse',         null),
+    ('63', 'b6', '2026-09-20 00:00-03', 1000,  'justo cuando terminó su tramo',    null),
     ('70', 'b7', '2026-09-07 09:00-03', 99999, 'no inscripto',                   null),
     ('80', 'b8', '2026-09-07 09:00-03', 4000,  'de otra campaña',                null)
   ) x(id, s, f, m, motivo, baja);
@@ -289,10 +316,10 @@ select pg_temp.actuar_como_servidor();
 -- 4. Qué ventas salen (el coordinador de la campaña, una campaña ya terminada)
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054a1');
--- Más reciente primero. Salen: 21 20 16 (b2) 24 13 10 (b1) 30 (sin zona) 40 (b4) 50 52 (b5) 62 (b6).
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31'), '21,24,16,13,52,40,62,50,30,10,20',
+-- Más reciente primero. Salen: 21 20 16 (b2) 24 13 10 (b1) 30 (sin zona) 40 (b4) 50 52 (b5) 62 63 (b6).
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31'), '21,24,16,63,13,52,40,62,50,30,10,20',
   'salen solo las ventas con motivo, vivas, dentro de la campaña y de la ventana de inscripción, la más reciente primero');
-select is(pg_temp.ids('e1', '2026-08-03', '2026-09-30'), '21,24,16,13,52,40,62,50,30,10,20',
+select is(pg_temp.ids('e1', '2026-08-03', '2026-09-30'), '21,24,16,63,13,52,40,62,50,30,10,20',
   'el período de la campaña entera da lo mismo: el día 03/08 y el 30/09 están incluidos');
 -- Una sin motivo, una dada de baja, dos fuera de las fechas de la campaña.
 select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31') ~ '(^|,)(11|12|14|15|22|23)(,|$)', false,
@@ -308,11 +335,16 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054a1');
 select is(pg_temp.fila('e1', '10'), 'b1|Ciudad uno q154|85000|89000|descuento por pago en efectivo',
   'el caso de uso: total 85000, suma de los ítems 89000 (el ítem dado de baja no suma), el motivo de Ana');
 select is(pg_temp.fila('e1', '13'), 'b1|Ciudad uno q154|1000|0|sin ítems', 'una venta sin ítems: suma 0, no null');
-select is(pg_temp.fila('e1', '20'), 'b2|Ciudad dos q154|1111|0|borde de inicio', 'la ciudad de la zona de b2');
+select is(pg_temp.fila('e1', '20'), 'b2|-|1111|0|borde de inicio', 'un día sin tramo en el historial (b2 tuvo zona desde las 12:00): sin ciudad');
+select is(pg_temp.fila('e1', '16'), 'b2|Ciudad dos q154|3000|0|a la misma hora que la 24', 'la ciudad de la zona de b2 ese día');
+select is(pg_temp.fila('e1', '10'), 'b1|Ciudad uno q154|85000|89000|descuento por pago en efectivo', 'cambio de zona: la venta de antes del cambio es de la ciudad de antes');
+select is(pg_temp.fila('e1', '24'), 'b1|Ciudad dos q154|3000|0|a la misma hora que la 16', 'cambio de zona: la de después, de la ciudad nueva (la zona actual de b1 es Costa)');
+select is(pg_temp.fila('e1', '52'), 'b5|Ciudad dos q154|1000|0|después del hueco', 'el instante exacto del cambio es del tramo nuevo (desde incluido, hasta excluido)');
 select is(pg_temp.fila('e1', '21'), 'b2|Ciudad dos q154|2222|2000|' || repeat('é', 500),
   'un motivo de 500 caracteres con tildes vuelve entero');
 select is(pg_temp.fila('e1', '30'), 'b3|-|7000|0|sin zona', 'sin zona: la ciudad es null');
-select is(pg_temp.fila('e1', '40'), 'b4|-|2000|0|antes de la baja', 'una inscripción dada de baja ya no tiene zona: ciudad null, y la venta de antes de la baja sigue saliendo');
+select is(pg_temp.fila('e1', '63'), 'b6|-|1000|0|justo cuando terminó su tramo', 'el instante en que termina el último tramo ya no es de esa zona (hasta excluido)');
+select is(pg_temp.fila('e1', '40'), 'b4|Ciudad uno q154|2000|0|antes de la baja', 'una inscripción dada de baja después: la venta conserva la ciudad de su día (R7)');
 select is((select r.fecha from public.ventas_con_motivo_de_campania(pg_temp.u('e1'), '2026-09-07', '2026-09-07') r),
           '2026-09-07 09:00-03'::timestamptz, 'la fecha es el instante de la venta');
 select is((select format('%s %s', r.nombre, r.apellido) from public.ventas_con_motivo_de_campania(pg_temp.u('e1'), '2026-09-07', '2026-09-07') r),
@@ -328,20 +360,20 @@ select pg_temp.actuar_como_servidor();
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054a1');
 select is(pg_temp.ids('e1', '2026-09-07', '2026-09-07'), '10', 'un solo día');
 select is(pg_temp.ids('e1', '2026-09-08', '2026-09-10'), '40,62,50,30', 'un período en el medio (los dos bordes incluidos)');
-select is(pg_temp.ids('e1', '2026-09-15', '2026-12-31'), '21,24,16', 'el período de después: lo posterior al 14/09 hasta el último día de la campaña');
+select is(pg_temp.ids('e1', '2026-09-15', '2026-12-31'), '21,24,16,63', 'el período de después: lo posterior al 14/09 hasta el último día de la campaña');
 select is(pg_temp.ids('e1', '2026-01-01', '2026-08-31'), '20', 'el período de antes: solo el primer día de la campaña');
 select is(pg_temp.ids('e1', '2026-09-12', '2026-09-12'), '52', 'un día solo, el de la vuelta del hueco');
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c1'), '24,13,52,62,50,10', 'por ciudad: las de la zona Centro (c1), sin las sin zona ni la de b4 (su baja anuló la zona)');
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c2'), '21,16,20', 'por ciudad: las de Costa (c2)');
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c1'), '13,40,62,50,10', 'por ciudad: las que fueron de Centro (c1) ese día, también la de b4 (dado de baja después) y la de b1 antes de su cambio');
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c2'), '21,24,16,52', 'por ciudad: las que fueron de Costa (c2) ese día, con la de b1 después de su cambio y sin la de b2 de antes de tener zona');
 select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'ee'), '-', 'por una ciudad que no es de la campaña: vacío, no error');
 select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', null, array['b1']), '24,13,10', 'por colportor');
 select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', null, array['b1', 'b3']), '24,13,30,10', 'por dos colportores (uno sin zona)');
 select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', null, array['b7']), '-', 'por un colportor no inscripto: vacío');
 select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', null, array[]::text[]), '-', 'una lista vacía de colportores: vacío');
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c1', array['b1', 'b2']), '24,13,10', 'ciudad y colportores a la vez');
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c1', array['b1', 'b2']), '13,10', 'ciudad y colportores a la vez');
 -- La zona horaria de la sesión no cambia el día de Montevideo (la 21 es del 30/09 a las 23:59 allá, 01/10 en UTC).
 select set_config('TimeZone', 'Pacific/Kiritimati', true);
-select is(pg_temp.ids('e1', '2026-08-03', '2026-09-30'), '21,24,16,13,52,40,62,50,30,10,20',
+select is(pg_temp.ids('e1', '2026-08-03', '2026-09-30'), '21,24,16,63,13,52,40,62,50,30,10,20',
   'con otra zona horaria en la sesión sale lo mismo');
 select set_config('TimeZone', 'UTC', true);
 select pg_temp.actuar_como_servidor();
@@ -355,7 +387,7 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054a1');
 select throws_ok($$ select * from public.ventas_con_motivo_de_campania('01920000-0000-7000-8000-0000000054e2', '2026-09-07', '2026-09-07') $$,
   '42501', null, 'el coordinador de Cierre no lee Otra');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054ad');
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31'), '21,24,16,13,52,40,62,50,30,10,20', 'el ADMIN lee Cierre');
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31'), '21,24,16,63,13,52,40,62,50,30,10,20', 'el ADMIN lee Cierre');
 select is(pg_temp.ids('e2', '2026-01-01', '2026-12-31'), '80', 'el ADMIN lee Otra');
 select pg_temp.actuar_como_servidor();
 
@@ -375,17 +407,15 @@ select is((select count(*) from public.venta_item), 0::bigint, 'ni `venta_item`'
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
--- 9. La zona dada de baja: la ciudad ya no es la de esa zona
+-- 9. La zona o la ciudad de la campaña dadas de baja DESPUÉS no cambian el pasado
 -- ---------------------------------------------------------------------------
 update public.zona set deleted_at = now() where id = pg_temp.u('d2');
-select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054a1');
-select is(pg_temp.fila('e1', '20'), 'b2|-|1111|0|borde de inicio', 'con la zona dada de baja, la ciudad es null (y la venta sigue saliendo)');
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c2'), '-', 'y deja de salir por la ciudad c2');
-select pg_temp.actuar_como_servidor();
 update public.campania_ciudad set deleted_at = now() where id = pg_temp.u('71');
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000054a1');
-select is(pg_temp.fila('e1', '10'), 'b1|-|85000|89000|descuento por pago en efectivo', 'con la ciudad de la campaña dada de baja, la ciudad es null');
-select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c1'), '-', 'y deja de salir por la ciudad c1');
+select is(pg_temp.fila('e1', '21'), 'b2|Ciudad dos q154|2222|2000|' || repeat('é', 500), 'con la zona dada de baja después, la venta sigue en su ciudad');
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c2'), '21,24,16,52', 'y sigue saliendo por la ciudad c2');
+select is(pg_temp.fila('e1', '10'), 'b1|Ciudad uno q154|85000|89000|descuento por pago en efectivo', 'con la ciudad de la campaña dada de baja después, la venta sigue en su ciudad');
+select is(pg_temp.ids('e1', '2026-01-01', '2026-12-31', 'c1'), '13,40,62,50,10', 'y sigue saliendo por la ciudad c1');
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
