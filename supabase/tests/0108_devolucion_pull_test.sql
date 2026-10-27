@@ -35,6 +35,10 @@ $$;
 -- puestas daría 23503 (tg_auditoria_update deshace el ON DELETE SET NULL).
 create or replace function pg_temp.limpiar() returns void language plpgsql as $$
 begin
+  -- Los triggers de auditoría de 0121 se apagan mientras dura el test (abajo) y se reactivan acá: un evento en
+  -- audit_log no se borra (AU001) y tiene FK al actor, así que dejaría los usuarios de prueba sin poder borrarse.
+  alter table public.devolucion enable trigger devolucion_auditar_alta;
+  alter table public.devolucion enable trigger devolucion_auditar_baja;
   delete from public.devolucion where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
   delete from public.venta where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'));
   delete from public.espacio_persona where created_by in (pg_temp.u('b1'), pg_temp.u('b2'));
@@ -104,6 +108,11 @@ insert into public.espacio_persona (id, espacio_id, persona_id, created_by) valu
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by) values
   (pg_temp.u('71'), pg_temp.u('51'), 'T-8271', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-8272', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
+
+-- Sin los eventos de 0121 (ver limpiar()): este archivo prueba el pull, y los eventos de la auditoría tienen su
+-- propio test (0121_devolucion_auditoria_test.sql).
+alter table public.devolucion disable trigger devolucion_auditar_alta;
+alter table public.devolucion disable trigger devolucion_auditar_baja;
 
 -- ---------------------------------------------------------------------------
 -- 1. El teléfono de b1 sube tres devoluciones y el de b2, una
