@@ -643,7 +643,7 @@ select pg_temp.actuar_como_servidor();
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(pg_temp.error_de($$ update public.campania_colportor set meta_libros = 1
                               where campania_id = '01920000-0000-7000-8000-0000000117e1' and usuario_id = '01920000-0000-7000-8000-0000000117b2' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'el coordinador de otra campaña no cambia meta_libros por un UPDATE directo');
 select is(pg_temp.cod($$ update public.campania_colportor set tipo_beca = 'COMPLETA'
                          where campania_id = '01920000-0000-7000-8000-0000000117e1' and usuario_id = '01920000-0000-7000-8000-0000000117b2' $$),

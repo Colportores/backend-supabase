@@ -3,8 +3,9 @@
 --      lectura por tabla, privilegios (authenticated solo SELECT, anon nada, service_role todo) y que
 --      ninguna entra todavía a sync.entidad.
 --   2. Las columnas nuevas de campania (alquiler_monto) y de campania_colportor (tipo_beca,
---      meta_monto_ces, limite_pedido) y sus CHECK; viajan en el pull del colportor.
---   3. Quién cambia la beca y el límite: el ADMIN, el coordinador DE ESA campaña y el servidor; no otro
+--      meta_monto_ces; el limite_pedido salió en la 0120: el límite es de la campaña) y sus CHECK; viajan en el pull
+--      del colportor.
+--   3. Quién cambia la beca y la meta: el ADMIN, el coordinador DE ESA campaña y el servidor; no otro
 --      coordinador ni el propio colportor.
 --   4. Los CHECK de cada tabla: estados, origen, destino, concepto, montos y cantidades.
 --   5. El ticket: rechazar exige motivo; uno resuelto no se edita (TK001) salvo la foto y la baja.
@@ -140,9 +141,9 @@ select has_column('public', 'campania', 'alquiler_monto', 'campania.alquiler_mon
 select col_type_is('public', 'campania', 'alquiler_monto', 'bigint', 'alquiler_monto es bigint (centavos)');
 select col_is_null('public', 'campania', 'alquiler_monto', 'alquiler_monto es opcional');
 select has_column('public', 'campania_colportor', c, format('campania_colportor.%s', c))
-  from unnest(array['tipo_beca','meta_monto_ces','limite_pedido']) c;
+  from unnest(array['tipo_beca','meta_monto_ces']) c;
 select col_is_null('public', 'campania_colportor', c, format('campania_colportor.%s es opcional', c))
-  from unnest(array['tipo_beca','meta_monto_ces','limite_pedido']) c;
+  from unnest(array['tipo_beca','meta_monto_ces']) c;
 select has_column('public', 'pedido_casa_editora', c, format('pedido_casa_editora.%s', c))
   from unnest(array['origen','excede_limite','estado','monto_total','colportor_id','coordinador_id','fecha_pedido']) c;
 select has_column('public', 'cuenta_colportor', 'deuda_alquiler', 'cuenta_colportor.deuda_alquiler');
@@ -217,72 +218,69 @@ select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = '
 select is(pg_temp.error_de($$ update public.campania_colportor set meta_monto_ces = -5 where id = '01920000-0000-7000-8000-0000000067c1' $$),
           '23514: new row for relation "campania_colportor" violates check constraint "campania_colportor_meta_monto_ces_check"',
           'una meta de monto negativa se rechaza');
-select is(pg_temp.error_de($$ update public.campania_colportor set limite_pedido = -5 where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          '23514: new row for relation "campania_colportor" violates check constraint "campania_colportor_limite_pedido_check"',
-          'un límite negativo se rechaza');
 select is(pg_temp.error_de($$ update public.campania_colportor
-                                 set tipo_beca = 'COMPLETA', meta_monto_ces = 6000000, limite_pedido = 2000000
+                                 set tipo_beca = 'COMPLETA', meta_monto_ces = 6000000
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          'ok', 'el servidor carga beca completa, meta y límite');
-select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = null, limite_pedido = null
+          'ok', 'el servidor carga beca completa y meta');
+select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = null, meta_monto_ces = null
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          'ok', 'y los vuelve a null (sin beca, sin límite)');
+          'ok', 'y los vuelve a null (sin beca, sin meta)');
 
 -- ============================================================================
--- 3. Quién cambia la beca y el límite
+-- 3. Quién cambia la beca y la meta
 -- ============================================================================
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = 2000000
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = 2000000
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 1,
-          'el coordinador de la campaña fija el límite de su colportor');
+          'el coordinador de la campaña fija la meta de monto de su colportor');
 select is(pg_temp.filas($$ update public.campania_colportor set tipo_beca = 'MEDIA', meta_monto_ces = 3000000
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 1,
           'y la beca con su meta de monto');
-select is(pg_temp.error_de($$ update public.campania_colportor set limite_pedido = 1
+select is(pg_temp.error_de($$ update public.campania_colportor set meta_monto_ces = 1
                                where id = '01920000-0000-7000-8000-0000000067c2' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'pero no el de otra campaña (b2 está en e2)');
 select is(pg_temp.filas($$ update public.campania_colportor set meta_libros = 10
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 1,
-          'lo que no es beca ni límite sigue como estaba (meta_libros)');
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = limite_pedido
+          'lo que no es beca ni meta de monto sigue como estaba (meta_libros)');
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = meta_monto_ces
                             where id = '01920000-0000-7000-8000-0000000067c2' $$), 1,
           'y un UPDATE que nombra la columna sin cambiarla no se rechaza');
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(pg_temp.error_de($$ update public.campania_colportor set tipo_beca = 'COMPLETA'
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'el coordinador de e2 no le da beca a un colportor de e1');
 select pg_temp.actuar_como(pg_temp.u('a5'));
-select is(pg_temp.error_de($$ update public.campania_colportor set limite_pedido = 5
+select is(pg_temp.error_de($$ update public.campania_colportor set meta_monto_ces = 5
                                where id = '01920000-0000-7000-8000-0000000067c1' $$),
-          '42501: La beca, la meta y el límite de pedido los fija el coordinador de la campaña',
+          '42501: La beca y la meta las fija el coordinador de la campaña',
           'ni un coordinador sin campañas');
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = 3000000
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = 3000000
                             where id = '01920000-0000-7000-8000-0000000067c2' $$), 1,
           'el ADMIN lo cambia en cualquier campaña');
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas($$ update public.campania_colportor set limite_pedido = null, tipo_beca = 'COMPLETA'
+select is(pg_temp.filas($$ update public.campania_colportor set meta_monto_ces = null, tipo_beca = 'COMPLETA'
                             where id = '01920000-0000-7000-8000-0000000067c1' $$), 0,
-          'el colportor no toca su propia beca ni su límite (no ve la fila para escribirla)');
-select is((select limite_pedido from public.campania_colportor where id = pg_temp.u('c1')), 2000000::bigint,
-          'su límite sigue siendo el que fijó el coordinador y él lo lee');
+          'el colportor no toca su propia beca ni su meta (no ve la fila para escribirla)');
+select is((select meta_monto_ces from public.campania_colportor where id = pg_temp.u('c1')), 3000000::bigint,
+          'su meta sigue siendo la que fijó el coordinador y él la lee');
 select is((select tipo_beca from public.campania_colportor where id = pg_temp.u('c1')), 'MEDIA',
           'y su tipo de beca también');
 select pg_temp.actuar_como_servidor();
 
 -- Viaja en el pull: el motor serializa las columnas de la tabla (sync.expresion_json), sin lista aparte, así que
--- la inscripción trae la beca y el límite, y la campaña el alquiler. (El delta solo sirve filas commiteadas:
+-- la inscripción trae la beca y la meta, y la campaña el alquiler. (El delta solo sirve filas commiteadas:
 -- este test va en una transacción, por eso se mira la expresión y no un pull.)
 select ok(sync.expresion_json('public.campania_colportor'::regclass) ~ 'tipo_beca'
           and sync.expresion_json('public.campania_colportor'::regclass) ~ 'meta_monto_ces'
-          and sync.expresion_json('public.campania_colportor'::regclass) ~ 'limite_pedido',
-          'el pull de campania_colportor serializa tipo_beca, meta_monto_ces y limite_pedido');
+          and sync.expresion_json('public.campania_colportor'::regclass) !~ 'limite_pedido',
+          'el pull de campania_colportor serializa tipo_beca y meta_monto_ces (limite_pedido ya no existe: 0120)');
 select ok(sync.expresion_json('public.campania'::regclass) ~ 'alquiler_monto',
           'el pull de campania serializa alquiler_monto');
 select is((select permite_push from sync.entidad where nombre = 'campania_colportor'), false,
-          'campania_colportor sigue siendo solo de lectura para el teléfono: la app no escribe su beca ni su límite');
+          'campania_colportor sigue siendo solo de lectura para el teléfono: la app no escribe su beca ni su meta');
 
 -- ============================================================================
 -- 4. Los CHECK de cada tabla
