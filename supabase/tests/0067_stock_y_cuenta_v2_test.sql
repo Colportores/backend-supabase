@@ -92,11 +92,12 @@ select pg_temp.u(x.s), r.id
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 stock67', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'e2 stock67', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a2'));
-insert into public.campania_colportor (id, campania_id, usuario_id, zona_id) values
-  (pg_temp.u('c1'), pg_temp.u('e1'), pg_temp.u('b1'), null),
-  (pg_temp.u('c2'), pg_temp.u('e2'), pg_temp.u('b2'), null);
-insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, deleted_at) values
-  (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now());
+-- `created_at` explícito: desde 0113 el coordinador lee un ticket solo dentro de la ventana de la inscripción.
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('c1'), pg_temp.u('e1'), pg_temp.u('b1'), null, now() - interval '5 days'),
+  (pg_temp.u('c2'), pg_temp.u('e2'), pg_temp.u('b2'), null, now() - interval '5 days');
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at, deleted_at) values
+  (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now() - interval '5 days', now());
 
 insert into public.producto (id, nombre, tipo, precio_base_compra) values
   (pg_temp.u('11'), 'Libro p1 stock67', 'LIBRO', 1500),
@@ -114,8 +115,8 @@ select pg_temp.u('d' || right(s, 1)), pg_temp.u('b' || right(s, 1)), pg_temp.u('
 insert into public.movimiento_stock (id, usuario_id, producto_id, tipo, cantidad, pedido_id)
 select pg_temp.u('f' || right(s, 1)), pg_temp.u(s), pg_temp.u('11'), 'ENTRADA_PEDIDO', 1, pg_temp.u('b' || right(s, 1))
   from unnest(array['b1','b2','b3','b4']) s;
-insert into public.ticket (id, usuario_id, tipo, monto)
-select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000 from unnest(array['b1','b2','b3','b4']) s;
+insert into public.ticket (id, usuario_id, tipo, monto, subido_en)
+select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000, now() - interval '1 day' from unnest(array['b1','b2','b3','b4']) s;
 insert into public.deposito (id, colportor_id, monto, destino, concepto)
 select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA' from unnest(array['b1','b2','b3','b4']) s;
 insert into public.estado_cuenta (id, usuario_id, deuda_total)
@@ -157,7 +158,8 @@ select has_trigger('public', t, t || '_auditoria_insert', format('%s tiene audit
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
                     'transferencia_item','deposito','ticket','estado_cuenta']) t;
 
--- Una política de lectura y ninguna de escritura en cada una.
+-- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, tiene las de su dueña:
+-- supabase/tests/0113_ticket_sube_por_push_test.sql).
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd = 'SELECT'), 1,
           format('%s tiene una política de lectura', t))
@@ -167,13 +169,13 @@ select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','estado_cuenta']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'authenticated'), 'SELECT',
           format('authenticated solo tiene SELECT sobre %s', t))
   from unnest(array['stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                    'transferencia_item','deposito','ticket','estado_cuenta']) t;
+                    'transferencia_item','deposito','estado_cuenta']) t;
 select is((select count(*)::int from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'anon'), 0,
           format('anon no tiene privilegios sobre %s', t))
@@ -187,8 +189,8 @@ select is((select count(*)::int from information_schema.role_table_grants
 
 select is((select count(*)::int from sync.entidad
             where nombre in ('stock','pedido_casa_editora','pedido_item','movimiento_stock','transferencia_stock',
-                             'transferencia_item','deposito','ticket','estado_cuenta')), 0,
-          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs');
+                             'transferencia_item','deposito','estado_cuenta')), 0,
+          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
@@ -540,7 +542,7 @@ select is(pg_temp.ve('stock', array['a1']), 'a1', 'la baja lógica sigue a la vi
 select pg_temp.actuar_como_servidor();
 
 -- ============================================================================
--- 7. Escritura: nadie con JWT
+-- 7. Escritura: nadie con JWT (el ticket, desde 0113, lo crea su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql)
 -- ============================================================================
 select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
@@ -549,7 +551,6 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
     ('stock', $$ insert into public.stock (usuario_id, producto_id) values ('01920000-0000-7000-8000-0000000067b3', '01920000-0000-7000-8000-000000006712') $$),
     ('pedido_casa_editora', $$ insert into public.pedido_casa_editora (colportor_id, estado, origen) values ('01920000-0000-7000-8000-0000000067b3', 'BORRADOR', 'COORDINADOR') $$),
     ('deposito', $$ insert into public.deposito (colportor_id, monto, destino, concepto) values ('01920000-0000-7000-8000-0000000067b3', 1, 'BANCO', 'ALQUILER') $$),
-    ('ticket', $$ insert into public.ticket (usuario_id, tipo) values ('01920000-0000-7000-8000-0000000067b3', 'OTRO') $$),
     ('estado_cuenta', $$ insert into public.estado_cuenta (usuario_id) values ('01920000-0000-7000-8000-0000000067b3') $$)
   ) x(t, s);
 select pg_temp.actuar_como(pg_temp.u('b1'));
@@ -559,7 +560,6 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
     ('stock', $$ update public.stock set cantidad_disponible = 99 where id = '01920000-0000-7000-8000-0000000067a1' $$),
     ('pedido_casa_editora', $$ update public.pedido_casa_editora set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067b1' $$),
     ('transferencia_stock', $$ update public.transferencia_stock set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067e5' $$),
-    ('ticket', $$ update public.ticket set estado = 'VALIDADO' where id = '01920000-0000-7000-8000-000000006771' $$),
     ('estado_cuenta', $$ update public.estado_cuenta set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
   ) x(t, s);
 select is(pg_temp.error_de($$ delete from public.stock where id = '01920000-0000-7000-8000-0000000067a1' $$),
