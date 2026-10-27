@@ -187,6 +187,8 @@ select has_table('public', 'meta_beca', 'existe meta_beca');
 select has_column('public', 'usuario', 'carrera_id', 'usuario.carrera_id existe');
 select col_is_fk('public', 'usuario', 'carrera_id', 'usuario.carrera_id es FK a carrera');
 select col_is_null('public', 'usuario', 'carrera_id', 'usuario.carrera_id es opcional');
+select has_column('public', 'usuario', 'carrera_elegida_en', 'usuario.carrera_elegida_en existe');
+select col_is_null('public', 'usuario', 'carrera_elegida_en', 'usuario.carrera_elegida_en es opcional');
 select col_is_fk('public', 'meta_beca', 'carrera_id', 'meta_beca.carrera_id es FK a carrera');
 select is((select relrowsecurity from pg_class where oid = 'public.carrera'::regclass), true, 'carrera tiene RLS');
 select is((select relrowsecurity from pg_class where oid = 'public.meta_beca'::regclass), true, 'meta_beca tiene RLS');
@@ -306,6 +308,8 @@ select is(pg_temp.cod($$ update public.usuario set carrera_id = '01920000-0000-7
           'el ADMIN corrige la carrera de cualquiera');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.carrera_de('b7'), 'c1', 'y quedó');
+select is((select carrera_elegida_en from public.usuario where id = pg_temp.u('b7')), now(),
+          'y la fecha de la elección quedó estampada');
 select is(pg_temp.eventos('carrera_del_colportor_cambiada', 'b7',
                           jsonb_build_object('carrera_nueva', pg_temp.u('c1'))), 1,
           'el cambio del ADMIN queda en audit_log');
@@ -314,9 +318,25 @@ select is(pg_temp.actor_del_ultimo('carrera_del_colportor_cambiada', 'b7'), pg_t
 select is(pg_temp.cod($$ update public.usuario set carrera_id = null where id = '01920000-0000-7000-8000-0000000117b7' $$), 'ok',
           'el servidor la cambia sin restricción');
 select is(pg_temp.carrera_de('b7'), '-', 'b7 sin carrera otra vez');
+select is((select carrera_elegida_en is null from public.usuario where id = pg_temp.u('b7')), true,
+          'quitar la carrera borra también su fecha');
 select is(pg_temp.cod($$ update public.usuario set carrera_id = '01920000-0000-7000-8000-0000000117fe'
                          where id = '01920000-0000-7000-8000-0000000117b7' $$), '23503',
           'una carrera que no existe se rechaza');
+-- La fecha de la elección: un cliente no la escribe, y con la carrera nunca viaja una a mano.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.cod($$ update public.usuario set carrera_elegida_en = '2020-01-01 00:00+00'
+                         where id = '01920000-0000-7000-8000-0000000117b1' $$), '42501',
+          'el colportor no se pone la fecha de su carrera');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is(pg_temp.cod($$ update public.usuario set carrera_id = '01920000-0000-7000-8000-0000000117c1',
+                                carrera_elegida_en = '2020-01-01 00:00+00'
+                         where id = '01920000-0000-7000-8000-0000000117b7' $$), 'ok',
+          'el ADMIN cambia la carrera mandando también una fecha');
+select pg_temp.actuar_como_servidor();
+select is((select carrera_elegida_en from public.usuario where id = pg_temp.u('b7')), now(),
+          'la fecha mandada a mano se pisa con la de ahora');
+update public.usuario set carrera_id = null where id = pg_temp.u('b7');
 
 -- ---------------------------------------------------------------------------
 -- 3. elegir_carrera
@@ -372,11 +392,18 @@ select is(pg_temp.eventos('carrera_del_colportor_cambiada', 'b1',
           'queda en audit_log, de la carrera anterior (ninguna) a la nueva');
 select is(pg_temp.actor_del_ultimo('carrera_del_colportor_cambiada', 'b1'), pg_temp.u('a1'),
           'con la coordinadora como actor');
+select is((select r.carrera_elegida_en from public.becas_de_campania(pg_temp.u('e1')) r where r.usuario_id = pg_temp.u('b1')),
+          now(), 'la coordinadora lee en Becas cuándo se eligió la carrera');
+select pg_temp.actuar_como_servidor();
+update public.usuario set carrera_elegida_en = '2026-09-01 10:00-03' where id = pg_temp.u('b1');
+select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.eleg('e1', 'b1', 'c1'), 'b1:c1:N', 'elegir: el reintento (doble toque) no cambia nada');
 select is(pg_temp.eventos('carrera_del_colportor_cambiada', 'b1'), 1, 'y no suma un segundo registro');
 select is(pg_temp.cod($$ select * from public.elegir_carrera('01920000-0000-7000-8000-0000000117e1', '01920000-0000-7000-8000-0000000117b1', '01920000-0000-7000-8000-0000000117c2') $$),
           'BC005', 'elegir: la coordinadora no la cambia una vez elegida');
 select is(pg_temp.carrera_de('b1'), 'c1', 'y la carrera sigue siendo la elegida');
+select is((select r.carrera_elegida_en from public.becas_de_campania(pg_temp.u('e1')) r where r.usuario_id = pg_temp.u('b1')),
+          '2026-09-01 10:00-03'::timestamptz, 'el reintento y el intento rechazado no tocan la fecha');
 select is(pg_temp.error_de($$ select * from public.elegir_carrera('01920000-0000-7000-8000-0000000117e1', '01920000-0000-7000-8000-0000000117b2', '01920000-0000-7000-8000-0000000117c2') $$) like 'BC005: La carrera de este colportor ya está elegida%Si fue un error, pedile a un administrador que la corrija.',
           true, 'el aviso dice qué pasó y a quién pedirle que la corrija');
 
@@ -385,6 +412,8 @@ select is(pg_temp.eleg('e1', 'b1', 'c2'), 'b1:c2:S', 'elegir: el ADMIN la corrig
 select is(pg_temp.eleg('e1', 'b1', 'c1'), 'b1:c1:S', 'y la vuelve a cambiar');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('carrera_del_colportor_cambiada', 'b1'), 3, 'cada cambio queda en audit_log');
+select is((select carrera_elegida_en from public.usuario where id = pg_temp.u('b1')), now(),
+          'y cada corrección del ADMIN estampa la fecha otra vez');
 
 -- La carrera sigue a la persona: en la otra campaña ya está elegida.
 select pg_temp.actuar_como(pg_temp.u('a2'));
@@ -565,7 +594,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.becas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          (select array(select k from unnest(array['apellido','carrera_id','carrera_nombre','meta_configurada','meta_libros',
+          (select array(select k from unnest(array['apellido','carrera_elegida_en','carrera_id','carrera_nombre','meta_configurada','meta_libros',
                 'meta_monto_ces','nombre','tipo_beca','usuario_id']) k order by k collate "C")),
           'becas_de_campania: la forma de la respuesta, sin emails ni clientes');
 select is((select count(*)::int from public.becas_de_campania(pg_temp.u('e1'))), 4,
@@ -583,6 +612,10 @@ select is((select format('%s|%s', r.carrera_nombre, r.meta_configurada)
 select is((select format('%s|%s|%s', coalesce(r.carrera_nombre, '-'), r.meta_configurada, coalesce(r.tipo_beca, '-'))
              from public.becas_de_campania(pg_temp.u('e1')) r where r.usuario_id = pg_temp.u('b5')),
           '-|f|-', 'becas: b5 sin carrera, sin beca');
+select is((select r.carrera_elegida_en from public.becas_de_campania(pg_temp.u('e1')) r where r.usuario_id = pg_temp.u('b2')),
+          now(), 'becas: b2 con la fecha en que se eligio su carrera (para elegida el 01/09)');
+select is((select r.carrera_elegida_en is null from public.becas_de_campania(pg_temp.u('e1')) r where r.usuario_id = pg_temp.u('b5')),
+          true, 'becas: b5, sin carrera, sin fecha');
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is((select format('%s|%s|%s|%s', r.carrera_nombre, r.meta_configurada, r.tipo_beca, r.meta_libros)
              from public.becas_de_campania(pg_temp.u('e2')) r where r.usuario_id = pg_temp.u('b1')),

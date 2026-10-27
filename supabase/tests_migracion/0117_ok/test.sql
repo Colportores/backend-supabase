@@ -9,10 +9,10 @@ select * from no_plan();
 select is((select count(*)::int from public.usuario), (select count(*)::int from public.prueba_0117_usuario),
           'los usuarios siguen');
 select is((select count(*)::int from public.usuario u join public.prueba_0117_usuario s using (id)
-            where to_jsonb(u) - 'carrera_id' is distinct from to_jsonb(s)), 0,
+            where to_jsonb(u) - 'carrera_id' - 'carrera_elegida_en' is distinct from to_jsonb(s)), 0,
           'los usuarios quedaron idénticos (versión de sync, updated_at y xmin_w incluidos) salvo la columna nueva');
-select is((select count(*)::int from public.usuario where carrera_id is not null), 0,
-          'ninguno trae carrera: no se inventa');
+select is((select count(*)::int from public.usuario where carrera_id is not null or carrera_elegida_en is not null), 0,
+          'ninguno trae carrera ni fecha de elección: no se inventan');
 select is((select count(*)::int from public.campania_colportor c join public.prueba_0117_inscripcion s using (id)
             where to_jsonb(c) is distinct from to_jsonb(s)), 0,
           'las inscripciones quedaron idénticas (tipo, metas, versión de sync, updated_at y xmin_w incluidos)');
@@ -54,6 +54,9 @@ select is((select format('%s|%s', r.carrera_nombre, r.meta_libros)
              from public.becas_de_campania('01920000-0000-7000-8000-0000000117e1') r
             where r.usuario_id = '01920000-0000-7000-8000-0000000117b1'),
           'Teología|120', 'la tabla de Becas lo muestra');
+select is((select r.carrera_elegida_en from public.becas_de_campania('01920000-0000-7000-8000-0000000117e1') r
+            where r.usuario_id = '01920000-0000-7000-8000-0000000117b1'), now(),
+          'y desde cuándo: la fecha de la elección');
 
 select * from finish();
 rollback;

@@ -166,7 +166,8 @@ create policy meta_beca_select on public.meta_beca
 -- ----------------------------------------------------------------------------
 
 alter table public.usuario
-  add column carrera_id uuid references public.carrera(id);
+  add column carrera_id uuid references public.carrera(id),
+  add column carrera_elegida_en timestamptz;
 
 create index usuario_carrera_idx on public.usuario (carrera_id) where carrera_id is not null;
 
@@ -174,6 +175,11 @@ comment on column public.usuario.carrera_id is
   'La carrera del colportor (decisión de Cristian, 25/10, «Carrera»): la elige UNA vez el coordinador de su '
   'campaña desde Becas (elegir_carrera) y solo el ADMIN la corrige. Opcional; sigue a la persona de una '
   'campaña a la siguiente. Un cliente con JWT no la cambia con un UPDATE directo (42501).';
+
+comment on column public.usuario.carrera_elegida_en is
+  'Cuándo se eligió (o se corrigió) la carrera: lo pone el trigger usuario_carrera_servidor cada vez que cambia '
+  'carrera_id (null si se la quita). La vista 33 lo muestra como «elegida el 01/09» (becas_de_campania). Un '
+  'cliente con JWT no la escribe (42501).';
 
 -- Quién la cambia: el servidor, las RPC SECURITY DEFINER (corren como su dueño) y el ADMIN. Un cliente
 -- (authenticated / anon) que no es ADMIN, incluido el propio colportor o un coordinador que quiera saltearse
@@ -185,7 +191,8 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  if new.carrera_id is not distinct from old.carrera_id then
+  if new.carrera_id is not distinct from old.carrera_id
+     and new.carrera_elegida_en is not distinct from old.carrera_elegida_en then
     return new;
   end if;
 
@@ -194,18 +201,25 @@ begin
       using errcode = '42501';
   end if;
 
+  -- La fecha sigue a la carrera: se estampa en cada elección o corrección, venga de la RPC, del ADMIN o del
+  -- servidor, y no se puede mandar a mano junto con el cambio de carrera.
+  if new.carrera_id is distinct from old.carrera_id then
+    new.carrera_elegida_en := case when new.carrera_id is null then null else now() end;
+  end if;
+
   return new;
 end;
 $$;
 
 comment on function public.tg_usuario_carrera_servidor() is
-  'BEFORE UPDATE OF carrera_id en usuario (0117, backend-supabase#112): un cliente con JWT que no es ADMIN no '
-  'cambia la carrera (42501); sí el servidor, las RPC elegir_carrera() y el ADMIN.';
+  'BEFORE UPDATE OF carrera_id, carrera_elegida_en en usuario (0117, backend-supabase#112): un cliente con JWT '
+  'que no es ADMIN no cambia la carrera ni su fecha (42501); sí el servidor, las RPC elegir_carrera() y el '
+  'ADMIN. Al cambiar la carrera estampa carrera_elegida_en = now().';
 
 revoke all on function public.tg_usuario_carrera_servidor() from public, anon, authenticated;
 
 create trigger usuario_carrera_servidor
-  before update of carrera_id on public.usuario
+  before update of carrera_id, carrera_elegida_en on public.usuario
   for each row execute function public.tg_usuario_carrera_servidor();
 
 -- La carrera elegida o corregida queda en audit_log, venga de la RPC o del UPDATE del ADMIN. El detalle lleva
@@ -545,7 +559,7 @@ grant execute on function public.asignar_beca(uuid, uuid[], text) to authenticat
 
 create function public.becas_de_campania(p_campania_id uuid)
 returns table (usuario_id uuid, nombre text, apellido text, carrera_id uuid, carrera_nombre text,
-               tipo_beca text, meta_libros integer, meta_monto_ces bigint, meta_configurada boolean)
+               carrera_elegida_en timestamptz, tipo_beca text, meta_libros integer, meta_monto_ces bigint, meta_configurada boolean)
 language plpgsql
 volatile
 security definer
@@ -559,7 +573,7 @@ begin
   select c.tipo into v_tipo_campania from public.campania c where c.id = p_campania_id;
 
   return query
-    select u.id, u.nombre, u.apellido, ca.id, ca.nombre,
+    select u.id, u.nombre, u.apellido, ca.id, ca.nombre, u.carrera_elegida_en,
            cc.tipo_beca, cc.meta_libros, cc.meta_monto_ces,
            exists (select 1 from public.meta_beca mb
                     where mb.carrera_id = u.carrera_id and mb.tipo_campania = v_tipo_campania
@@ -574,8 +588,8 @@ end;
 $$;
 
 comment on function public.becas_de_campania(uuid) is
-  'Vista 33, HU-BEC-004/006 (0117, backend-supabase#112): los inscriptos vivos de p_campania_id con su carrera, '
-  'el tipo de beca asignado, las dos metas copiadas (libros y monto en centavos) y si la carrera tiene meta '
+  'Vista 33, HU-BEC-004/006 (0117, backend-supabase#112): los inscriptos vivos de p_campania_id con su carrera '
+  'y cuándo se eligió (carrera_elegida_en, para «elegida el 01/09»), el tipo de beca asignado, las dos metas copiadas (libros y monto en centavos) y si la carrera tiene meta '
   'cargada para el tipo de la campaña (meta_configurada). No trae el avance (HU-BEC-002, #145). Errores: 42501 '
   'sin permiso; CZ001 inexistente; BC001 terminada.';
 
