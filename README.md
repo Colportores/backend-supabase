@@ -572,6 +572,21 @@ Desde la migración `0124` (backend-supabase#102, HU-STK-009) `pedido_casa_edito
 - **Cancelar.** Es lo único que se cambia desde el teléfono: `estado = CANCELADO` mientras el pedido siga por autorizar (`42501` con el aviso que guía si ya lo autorizó el coordinador). Un pedido no se borra. Los privilegios son por columna (`id`, `estado`, `created_at`, `deleted_at`): una columna que sume la autorización no queda abierta al teléfono.
 - **Los datos.** Solo se suma; los pedidos y líneas existentes quedan idénticos salvo `pedido_item.colportor_id`, que se completa desde el pedido. Lo prueba `supabase/tests_migracion/0124_ok`.
 
+## Validar el ticket acredita el depósito y baja la deuda (0129)
+
+Desde la migración `0129` (backend-supabase#110, HU-COB-008 y HU-CTA-004; decisiones de Cristian del 23/10 «Acredita V1» y del 25/10 «Pago de más») el depósito tiene su propio estado de validación y el coordinador lo resuelve con cinco funciones (SECURITY DEFINER, solo `authenticated`; la lista de tickets es `tickets_de_campania`, de la `0113`).
+
+- **El estado.** `deposito.validado_en` y `validado_por` (null = por validar). Lo escribe solo el servidor: son columnas del servidor del push (se descartan del payload) y un cliente con la API directa que las mande recibe `42501`. Un depósito validado no se edita (`DP001`: ni monto, fecha, dueña, ticket, destino, concepto, campaña ni baja). También vale para el retiro sin ticket.
+- **Vista previa.** `validacion_de_ticket(ticket_id)` y `validacion_de_retiro(deposito_id)`: monto, cobros vinculados (`deposito_cobro`, sin anulados ni bajas), `diferencia`, deuda antes y después, `supera_deuda` y `a_favor_despues`. Solo avisa: el panel muestra la diferencia como advertencia y no bloquea.
+- **`validar_ticket(ticket_id)`.** Pasa el ticket a `VALIDADO` y valida su depósito. Un depósito acredita `Depositado` y, si es de casa editora, baja la deuda; el cobro con tarjeta se acredita como casa editora; el ticket «Otro» se valida sin acreditar. El alquiler no tiene saldo guardado: `cuentas_de_campania` lo deriva de los depósitos validados. Un reintento del mismo coordinador devuelve `ya_estaba`.
+- **Pago de más.** No se rechaza: la deuda queda negativa («a favor $U X») y se descuenta de la próxima deuda del mismo concepto. En el alquiler, el saldo a favor es lo pagado menos el monto de la campaña.
+- **`confirmar_retiro(deposito_id)`.** El retiro sin ticket («Retiro coord.») se valida y acredita igual, por el coordinador de la campaña o un ADMIN.
+- **`rechazar_ticket(ticket_id, motivo)`.** Motivo obligatorio (hasta 500 caracteres, sin espacios de más). Libera los cobros del depósito rechazado para que la colportora corrija y suba de nuevo. Un vínculo que llega después del rechazo (otro lote del push) nace dado de baja (trigger `deposito_cobro_de_ticket_rechazado`), así el cobro no queda atrapado.
+- **Errores con aviso que guía.** `TV001` (el ticket no existe o no es de sus campañas), `TV002` (ya lo resolvió otra persona), `TV003` (motivo vacío o largo), `TV004` (falta el monto), `TV005` (el depósito todavía no llegó), `DP001` (validado: no se edita), `DP002` (retiro inexistente o de otra campaña), `DP003` (el depósito tiene ticket: se valida desde su ticket), `DP004` (otra persona ya lo confirmó). Nadie valida lo propio (`42501`).
+- **Auditoría.** `ticket_validado`, `retiro_confirmado` y `ticket_rechazado`, solo con ids, montos y estados.
+- **`cuentas_de_campania`.** El alquiler cuenta como pagado solo lo validado (`deposito.validado_en`); lo no validado queda en `alquiler_por_validar`. La firma no cambia.
+- **Los datos.** Solo se suma. Los depósitos cuyo ticket ya estaba `VALIDADO` quedan validados (con la fecha y el revisor del ticket) para que el alquiler pagado siga pagado; el resto queda por validar. Lo prueba `supabase/tests_migracion/0129_ok`.
+
 ## La auditoría: audit_log (0073)
 
 Desde la migración `0073` (backend-supabase#136, decisión de Cristian del 23/10 «Audit log»; RA-SE05, HU-ADM-007, HU-JOR-004) está la tabla `audit_log` de la nube: una fila por operación crítica, con el evento, quién, sobre quién, sobre qué fila y un detalle. **Nunca un correo ni datos de clientes.**
