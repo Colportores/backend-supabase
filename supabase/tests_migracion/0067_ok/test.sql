@@ -31,7 +31,7 @@ select is((select count(*)::int from public.stock) + (select count(*)::int from 
         + (select count(*)::int from public.pedido_item) + (select count(*)::int from public.movimiento_stock)
         + (select count(*)::int from public.transferencia_stock) + (select count(*)::int from public.transferencia_item)
         + (select count(*)::int from public.deposito) + (select count(*)::int from public.ticket)
-        + (select count(*)::int from public.estado_cuenta), 0,
+        + (select count(*)::int from public.cuenta_colportor), 0,
           'las nueve tablas nuevas arrancan vacías: no se inventa ningún saldo ni ningún stock');
 
 -- Lo nuevo anda sobre los datos de antes: el servidor fija la beca y el coordinador de esa campaña el límite.
