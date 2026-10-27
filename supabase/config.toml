@@ -398,6 +398,14 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
+# Informe PDF de Reportes (backend-supabase#144, HU-REP-005). Lee las RPC con el JWT de la coordinadora, así que
+# la puerta de Supabase exige un JWT de usuario (verify_jwt); la autorización de verdad la hace la RLS de las RPC.
+[functions.informe-reportes]
+enabled = true
+verify_jwt = true
+import_map = "./functions/informe-reportes/deno.json"
+entrypoint = "./functions/informe-reportes/index.ts"
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

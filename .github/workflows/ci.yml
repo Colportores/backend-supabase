@@ -34,6 +34,27 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # Pruebas de la Edge Function del informe PDF (supabase/functions/informe-reportes, backend-supabase#144):
+  # tipos, lint, formato y sus pruebas con Deno, contra un `fetch` falso y contra las migraciones (el contrato de
+  # las RPC que lee). No necesita Docker, base ni credenciales. Deno es la misma versión con la que se probó y se
+  # generó deno.lock.
+  funciones:
+    name: funciones · informe PDF (Deno)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: supabase/functions/informe-reportes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.8.3
+      - run: deno task check
+      - run: deno task test
+
   # Un solo pull por run (y casi nunca): deja en la caché de Actions las imágenes que bajan `migraciones` y
   # `storage` (scripts/ci-imagenes.txt) y los dos jobs las restauran de ahí con `docker load`, sin tocar
   # ghcr.io. Con la caché ya hecha (la clave lleva el hash de la tabla y el mes) este job solo la comprueba, sin
