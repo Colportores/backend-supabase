@@ -28,7 +28,9 @@ exception when others then
 end $$;
 
 -- --- los datos de antes siguen ---------------------------------------------------------------
-select is((select count(*)::int from public.deposito), 1, 'el depósito sigue');
+select is((select count(*)::int from public.deposito), 2, 'los dos depósitos siguen (también el que no tiene ticket)');
+select is((select convalidated from pg_constraint where conname = 'deposito_ticket_obligatorio'), false,
+          'el ticket obligatorio rige para lo nuevo; la fila de antes sin ticket lo deja sin validar y no se borra');
 select is((select count(*)::int from public.deposito d join public.prueba_0122_deposito s using (id)
             where to_jsonb(d) is distinct from to_jsonb(s)), 0,
           'quedó idéntico en todas sus columnas, sync_version y xmin_w incluidos: ni se enteran los teléfonos');
@@ -69,6 +71,9 @@ select lives_ok($$ insert into public.deposito (id, monto, fecha, destino, conce
 select lives_ok($$ insert into public.deposito_cobro (deposito_id, cobranza_id)
                    values ('01920000-0000-7000-8000-0000000122f6', '01920000-0000-7000-8000-000000012232') $$,
                 'con el otro cobro en efectivo de antes');
+select is(pg_temp.error_de($$ insert into public.deposito (id, monto, fecha, destino, concepto)
+                              values ('01920000-0000-7000-8000-0000000122f8', 100, now(), 'BANCO', 'CASA_EDITORA') $$),
+          '23514', 'un depósito nuevo de banco sin ticket se rechaza');
 select is(pg_temp.error_de($$ insert into public.deposito_cobro (deposito_id, cobranza_id)
                               values ('01920000-0000-7000-8000-0000000122f6', '01920000-0000-7000-8000-000000012233') $$),
           '23514', 'y el cobro con tarjeta de antes no entra a un depósito de efectivo');

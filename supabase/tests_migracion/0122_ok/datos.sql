@@ -35,6 +35,10 @@ insert into public.ticket (id, usuario_id, tipo, subido_en, monto, fecha, estado
 insert into public.deposito (id, colportor_id, monto, destino, concepto, ticket_id, campania_id) values
   ('01920000-0000-7000-8000-0000000122f1', '01920000-0000-7000-8000-0000000122b1', 950000, 'BANCO', 'ALQUILER',
    '01920000-0000-7000-8000-0000000122a1', '01920000-0000-7000-8000-0000000122e1');
+-- Un depósito de antes SIN ticket (como los de prueba de la demo): 0122 exige ticket a los nuevos, pero este
+-- no se borra ni se toca.
+insert into public.deposito (id, colportor_id, monto, destino, concepto) values
+  ('01920000-0000-7000-8000-0000000122f7', '01920000-0000-7000-8000-0000000122b1', 3000, 'OFICINA', 'CASA_EDITORA');
 
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by) values
   ('01920000-0000-7000-8000-0000000122f2', 'CASA', 'Av. Italia', '100', -34.9000, -56.2000,

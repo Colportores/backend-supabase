@@ -142,7 +142,12 @@ insert into public.ticket (id, usuario_id, tipo, estado, motivo_rechazo) values
   (pg_temp.u('56'), pg_temp.u('b1'), 'DEPOSITO', 'VALIDADO',  null),
   (pg_temp.u('57'), pg_temp.u('b1'), 'DEPOSITO', 'VALIDADO',  null),
   (pg_temp.u('58'), pg_temp.u('b4'), 'DEPOSITO', 'VALIDADO',  null),
-  (pg_temp.u('59'), pg_temp.u('b6'), 'DEPOSITO', 'VALIDADO',  null);
+  (pg_temp.u('59'), pg_temp.u('b6'), 'DEPOSITO', 'VALIDADO',  null),
+  -- Comprobantes de los depósitos de casa editora y de los de prueba (0122: banco u oficina llevan ticket).
+  (pg_temp.u('5a'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null),
+  (pg_temp.u('5b'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null),
+  (pg_temp.u('5c'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null),
+  (pg_temp.u('5d'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null);
 
 -- b1 en Cuentas (e1): 50000 validado (01/09) + 25000 validado (08/09) = 75000 pagado; 30000 con el ticket
 --   pendiente y 20000 sin ticket (un retiro) = 50000 por validar; el de 99999 con el ticket rechazado, el de
@@ -157,11 +162,11 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
   (pg_temp.u('f5'), pg_temp.u('b1'), 70000, '2026-09-09 10:00+00', pg_temp.u('54'), 'BANCO',              'ALQUILER',     pg_temp.u('e2'), null),
   (pg_temp.u('f6'), pg_temp.u('b1'), 10000, '2026-09-10 10:00+00', pg_temp.u('55'), 'BANCO',              'CASA_EDITORA', null,            null),
   (pg_temp.u('f7'), pg_temp.u('b1'), 5000,  '2026-09-02 10:00+00', pg_temp.u('56'), 'BANCO',              'CASA_EDITORA', pg_temp.u('e1'), null),
-  (pg_temp.u('f8'), pg_temp.u('b1'), 99,    '2026-09-20 10:00+00', null,            'OFICINA',            'CASA_EDITORA', null,            now()),
+  (pg_temp.u('f8'), pg_temp.u('b1'), 99,    '2026-09-20 10:00+00', pg_temp.u('5c'), 'OFICINA',            'CASA_EDITORA', null,            now()),
   (pg_temp.u('f9'), pg_temp.u('b1'), 40000, '2026-09-11 10:00+00', pg_temp.u('57'), 'BANCO',              'ALQUILER',     pg_temp.u('e1'), now()),
   (pg_temp.u('fa'), pg_temp.u('b1'), 25000, '2026-09-08 10:00+00', pg_temp.u('57'), 'BANCO',              'ALQUILER',     pg_temp.u('e1'), null),
   (pg_temp.u('fb'), pg_temp.u('b4'), 200000, '2026-09-03 10:00+00', pg_temp.u('58'), 'BANCO',             'ALQUILER',     pg_temp.u('e1'), null),
-  (pg_temp.u('fd'), pg_temp.u('b1'), 3000,  '2026-09-15 10:00+00', null,            'OFICINA',            'CASA_EDITORA', pg_temp.u('e2'), null),
+  (pg_temp.u('fd'), pg_temp.u('b1'), 3000,  '2026-09-15 10:00+00', pg_temp.u('5d'), 'OFICINA',            'CASA_EDITORA', pg_temp.u('e2'), null),
   (pg_temp.u('fc'), pg_temp.u('b6'), 15000, '2026-09-04 10:00+00', pg_temp.u('59'), 'BANCO',              'ALQUILER',     pg_temp.u('e3'), null);
 
 -- Donde cuelga una venta (para probar que el alquiler no bloquea vender).
@@ -197,15 +202,18 @@ select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, 
             values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER') $$),
           '23514: new row for relation "deposito" violates check constraint "deposito_pago_de_alquiler_con_campania_check"',
           'un depósito de ALQUILER sin campaña se rechaza');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id)
-            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114fe') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id, ticket_id)
+            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114fe',
+                    '01920000-0000-7000-8000-00000001145a') $$),
           '23503: insert or update on table "deposito" violates foreign key constraint "deposito_campania_id_fkey"',
           'un depósito de ALQUILER con una campaña que no existe se rechaza');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id)
-            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114e1') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id, ticket_id)
+            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114e1',
+                    '01920000-0000-7000-8000-00000001145a') $$),
           'ok', 'un depósito de ALQUILER con su campaña entra');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto)
-            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'CASA_EDITORA') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, ticket_id)
+            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'CASA_EDITORA',
+                    '01920000-0000-7000-8000-00000001145b') $$),
           'ok', 'uno de casa editora no necesita campaña');
 rollback to s_deposito;
 

@@ -118,8 +118,8 @@ select pg_temp.u('f' || right(s, 1)), pg_temp.u(s), pg_temp.u('11'), 'ENTRADA_PE
   from unnest(array['b1','b2','b3','b4']) s;
 insert into public.ticket (id, usuario_id, tipo, monto, subido_en)
 select pg_temp.u('7' || right(s, 1)), pg_temp.u(s), 'DEPOSITO', 1000, now() - interval '1 day' from unnest(array['b1','b2','b3','b4']) s;
-insert into public.deposito (id, colportor_id, monto, destino, concepto)
-select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA' from unnest(array['b1','b2','b3','b4']) s;
+insert into public.deposito (id, colportor_id, monto, destino, concepto, ticket_id)
+select pg_temp.u('8' || right(s, 1)), pg_temp.u(s), 1000, 'BANCO', 'CASA_EDITORA', pg_temp.u('7' || right(s, 1)) from unnest(array['b1','b2','b3','b4']) s;
 insert into public.cuenta_colportor (id, usuario_id, deuda_total)
 select pg_temp.u('9' || right(s, 1)), pg_temp.u(s), 1500 from unnest(array['b1','b2','b3','b4']) s;
 -- Una transferencia de b1 a b2 (e1 -> e2) y otra de b3 a b4.

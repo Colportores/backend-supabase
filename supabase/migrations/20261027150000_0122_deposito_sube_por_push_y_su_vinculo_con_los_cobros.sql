@@ -34,6 +34,10 @@
 --          23503 si no existe: lo dice la FK);
 --        · un retiro por el coordinador no lleva ticket (el comprobante es del banco): 23514, CHECK
 --          `deposito_retiro_sin_ticket` (vale para todos, también para el servidor);
+--        · un depósito de BANCO u OFICINA lleva ticket (decisión del 27/10, regla R7 y «Paso ticket»: el
+--          depósito se registra al cargar el ticket, un solo paso): 23514, CHECK `deposito_ticket_obligatorio`
+--          (vale para todos). El ticket sube antes por dependencia y el depósito espera en la cola del
+--          teléfono: nada se rechaza ni se pierde;
 --        · un ticket respalda un solo depósito vivo (índice único parcial, 23505): el diagrama del esquema
 --          dice «Deposito 0..1 — 1 Ticket».
 --      Monto positivo, destino y concepto de la lista y el ALQUILER con campaña ya los cuidan los CHECK de
@@ -48,9 +52,6 @@
 --     queda «por validar» mientras su ticket está PENDIENTE; cómo se valida un retiro por el coordinador
 --     (que no tiene ticket) lo decide #110. El registro NO baja la deuda ni suma a «Depositado»: lo hace la
 --     validación.
---   · No exige que un depósito de BANCO u OFICINA lleve ticket: el ticket llega en el mismo lote del push
---     («Paso ticket») pero el teléfono puede registrar el depósito primero. Sin ticket el depósito no tiene
---     qué validar el coordinador: pendiente de decisión (archivo de pendientes del carril).
 --   · No cruza la suma de los cobros vinculados con el monto del depósito: el monto es lo que se depositó
 --     (puede incluir parte de un cobro o más que los cobros en mano) y los vínculos llegan en otro lote del
 --     push. Un rechazo por el orden de llegada dejaría el lote atascado en el teléfono.
@@ -99,6 +100,22 @@ alter table public.deposito
 alter table public.deposito
   add constraint deposito_retiro_sin_ticket
   check (destino <> 'RETIRO_COORDINADOR' or ticket_id is null);
+
+-- Un depósito de banco u oficina lleva ticket. NOT VALID: las filas que ya hubiera (la base de la demo tiene
+-- depósitos de prueba) no se tocan ni se borran; rige para toda fila nueva o que se actualice. Se valida
+-- sola al final si ninguna fila existente la incumple.
+alter table public.deposito
+  add constraint deposito_ticket_obligatorio
+  check (destino = 'RETIRO_COORDINADOR' or ticket_id is not null) not valid;
+
+do $$
+begin
+  if not exists (select 1 from public.deposito
+                  where destino <> 'RETIRO_COORDINADOR' and ticket_id is null) then
+    alter table public.deposito validate constraint deposito_ticket_obligatorio;
+  end if;
+end
+$$;
 
 -- Un ticket respalda un solo depósito vivo.
 create unique index deposito_ticket_unico on public.deposito (ticket_id)
@@ -149,34 +166,38 @@ create trigger deposito_cobro_auditoria_update before update on public.deposito_
 -- 3. Qué decide el servidor sobre un depósito que llega del teléfono
 -- ----------------------------------------------------------------------------
 
--- ¿Por qué un ticket no sirve de comprobante para este depósito? null si sirve (o si no existe: ahí habla la
--- FK, 23503). SECURITY DEFINER: la colportora no lee los tickets ajenos por RLS, y con RLS un ticket ajeno se
--- vería igual que uno inexistente.
-create function public.ticket_no_sirve_de_deposito(p_ticket_id uuid, p_colportor_id uuid)
+-- ¿Por qué un ticket no sirve de comprobante para un depósito de QUIEN LLAMA? null si sirve; AJENO si es de otro
+-- usuario o no existe (la colportora no distingue uno ajeno de uno inexistente); TIPO si es suyo pero no es de
+-- tipo DEPOSITO. SECURITY DEFINER para leer el ticket ajeno sin que la RLS lo esconda, pero NO recibe el
+-- usuario: usa auth.uid(). Con un usuario como parámetro, cualquiera averiguaría los tickets de otro.
+create function public.ticket_no_sirve_de_deposito(p_ticket_id uuid)
 returns text
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select case
-           when t.usuario_id <> p_colportor_id then 'AJENO'
-           when t.tipo <> 'DEPOSITO' then 'TIPO'
-         end
-    from public.ticket t
-   where t.id = p_ticket_id;
+  select coalesce(
+    (select case
+              when t.usuario_id <> (select auth.uid()) then 'AJENO'
+              when t.tipo <> 'DEPOSITO' then 'TIPO'
+            end
+       from public.ticket t
+      where t.id = p_ticket_id),
+    case when exists (select 1 from public.ticket t where t.id = p_ticket_id) then null else 'AJENO' end);
 $$;
 
-comment on function public.ticket_no_sirve_de_deposito(uuid, uuid) is
-  'null si el ticket sirve de comprobante de un depósito de esa colportora o no existe; AJENO si es de otro '
-  'usuario; TIPO si no es de tipo DEPOSITO (0122). Interna: la llama el trigger de deposito.';
+comment on function public.ticket_no_sirve_de_deposito(uuid) is
+  'null si el ticket sirve de comprobante de un depósito de quien llama (auth.uid()); AJENO si es de otro '
+  'usuario o no existe; TIPO si no es de tipo DEPOSITO (0122). Interna: la llama el trigger de deposito.';
 
-revoke all on function public.ticket_no_sirve_de_deposito(uuid, uuid) from public, anon, authenticated, service_role;
-grant execute on function public.ticket_no_sirve_de_deposito(uuid, uuid) to authenticated;
+revoke all on function public.ticket_no_sirve_de_deposito(uuid) from public, anon, authenticated, service_role;
+grant execute on function public.ticket_no_sirve_de_deposito(uuid) to authenticated;
 
--- ¿Estuvo la colportora inscripta en esa campaña (con la inscripción viva o de baja)? SECURITY DEFINER: las
--- bajas no las lee por RLS.
-create function public.estuvo_inscripta_en_campania(p_usuario_id uuid, p_campania_id uuid)
+-- ¿Estuvo QUIEN LLAMA inscripta en esa campaña (con la inscripción viva o de baja)? SECURITY DEFINER: las bajas
+-- no las lee por RLS. No recibe el usuario: usa auth.uid() (con un usuario como parámetro se averiguarían las
+-- inscripciones y bajas ajenas).
+create function public.estuvo_inscripta_en_campania(p_campania_id uuid)
 returns boolean
 language sql
 stable
@@ -186,16 +207,16 @@ as $$
   select exists (
     select 1
       from public.campania_colportor cc
-     where cc.usuario_id = p_usuario_id
+     where cc.usuario_id = (select auth.uid())
        and cc.campania_id = p_campania_id
   );
 $$;
 
-comment on function public.estuvo_inscripta_en_campania(uuid, uuid) is
-  'true si el usuario tiene o tuvo una inscripción (viva o de baja) en la campaña (0122). Interna.';
+comment on function public.estuvo_inscripta_en_campania(uuid) is
+  'true si quien llama (auth.uid()) tiene o tuvo una inscripción (viva o de baja) en la campaña (0122). Interna.';
 
-revoke all on function public.estuvo_inscripta_en_campania(uuid, uuid) from public, anon, authenticated, service_role;
-grant execute on function public.estuvo_inscripta_en_campania(uuid, uuid) to authenticated;
+revoke all on function public.estuvo_inscripta_en_campania(uuid) from public, anon, authenticated, service_role;
+grant execute on function public.estuvo_inscripta_en_campania(uuid) to authenticated;
 
 create function public.tg_deposito_del_cliente()
 returns trigger
@@ -217,13 +238,19 @@ begin
   end if;
 
   if new.campania_id is not null
-     and not public.estuvo_inscripta_en_campania(new.colportor_id, new.campania_id) then
+     and not public.estuvo_inscripta_en_campania(new.campania_id) then
     raise exception 'No estás inscripto en esa campaña. Elegí una campaña tuya.'
       using errcode = '42501';
   end if;
 
+  -- Antes del CHECK: el aviso le dice qué hacer (los BEFORE corren antes que los CHECK).
+  if new.ticket_id is null and new.destino in ('BANCO', 'OFICINA') then
+    raise exception 'Cargá el ticket del banco o de la oficina para registrar el depósito.'
+      using errcode = '23514', constraint = 'deposito_ticket_obligatorio';
+  end if;
+
   if new.ticket_id is not null then
-    v_motivo := public.ticket_no_sirve_de_deposito(new.ticket_id, new.colportor_id);
+    v_motivo := public.ticket_no_sirve_de_deposito(new.ticket_id);
     if v_motivo = 'AJENO' then
       raise exception 'Ese ticket no es tuyo. Cargá el ticket de tu depósito desde tu teléfono.'
         using errcode = '42501';
@@ -238,7 +265,7 @@ $$;
 
 comment on function public.tg_deposito_del_cliente() is
   'BEFORE INSERT de deposito, solo para authenticated (0122): la fecha no es futura (23514); la campaña, si '
-  'viene, es de una inscripción suya y el ticket es suyo y de tipo DEPOSITO (42501). El servidor no pasa por acá.';
+  'viene, es de una inscripción suya, el ticket es suyo y de tipo DEPOSITO (42501) y un depósito de banco u oficina lleva ticket (23514). El servidor no pasa por acá.';
 
 revoke all on function public.tg_deposito_del_cliente() from public, anon, authenticated, service_role;
 
@@ -250,32 +277,38 @@ create trigger deposito_del_cliente
 -- 4. Qué decide el servidor sobre un vínculo
 -- ----------------------------------------------------------------------------
 
--- ¿Por qué un cobro no puede entrar a un depósito de esta colportora? null si puede o si no existe (ahí habla
--- la FK, 23503). SECURITY DEFINER: lee la venta y el cobro ajenos sin que la RLS los esconda.
-create function public.cobro_no_entra_en_deposito(p_cobranza_id uuid, p_colportor_id uuid)
+-- ¿Por qué un cobro no puede entrar a un depósito de QUIEN LLAMA? null si puede; AJENO si la venta es de otra o
+-- el cobro no existe (no se distingue uno ajeno de uno inexistente); BAJA, ANULADO o MEDIO si es suyo y no
+-- sirve. SECURITY DEFINER para leer la venta y el cobro sin que la RLS los esconda, pero NO recibe el usuario:
+-- usa auth.uid(); el estado de un cobro ajeno no se averigua.
+create function public.cobro_no_entra_en_deposito(p_cobranza_id uuid)
 returns text
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select case
-           when v.colportor_id <> p_colportor_id then 'AJENO'
-           when c.deleted_at is not null then 'BAJA'
-           when c.anulado_at is not null then 'ANULADO'
-           when c.medio <> 'EFECTIVO' then 'MEDIO'
-         end
-    from public.cobranza c
-    join public.venta v on v.id = c.venta_id
-   where c.id = p_cobranza_id;
+  select coalesce(
+    (select case
+              when v.colportor_id <> (select auth.uid()) then 'AJENO'
+              when c.deleted_at is not null then 'BAJA'
+              when c.anulado_at is not null then 'ANULADO'
+              when c.medio <> 'EFECTIVO' then 'MEDIO'
+            end
+       from public.cobranza c
+       join public.venta v on v.id = c.venta_id
+      where c.id = p_cobranza_id),
+    case when exists (select 1 from public.cobranza c join public.venta v on v.id = c.venta_id
+                       where c.id = p_cobranza_id) then null else 'AJENO' end);
 $$;
 
-comment on function public.cobro_no_entra_en_deposito(uuid, uuid) is
-  'null si el cobro puede entrar a un depósito de esa colportora o no existe; AJENO (venta de otra), BAJA, '
-  'ANULADO o MEDIO (no es EFECTIVO) si no (0122). Interna: la llama el trigger de deposito_cobro.';
+comment on function public.cobro_no_entra_en_deposito(uuid) is
+  'null si el cobro puede entrar a un depósito de quien llama (auth.uid()); AJENO (venta de otra o cobro '
+  'inexistente), BAJA, ANULADO o MEDIO (no es EFECTIVO) si no (0122). Interna: la llama el trigger de '
+  'deposito_cobro.';
 
-revoke all on function public.cobro_no_entra_en_deposito(uuid, uuid) from public, anon, authenticated, service_role;
-grant execute on function public.cobro_no_entra_en_deposito(uuid, uuid) to authenticated;
+revoke all on function public.cobro_no_entra_en_deposito(uuid) from public, anon, authenticated, service_role;
+grant execute on function public.cobro_no_entra_en_deposito(uuid) to authenticated;
 
 create function public.tg_deposito_cobro_del_cliente()
 returns trigger
@@ -289,7 +322,7 @@ begin
     return new;
   end if;
 
-  v_motivo := public.cobro_no_entra_en_deposito(new.cobranza_id, new.colportor_id);
+  v_motivo := public.cobro_no_entra_en_deposito(new.cobranza_id);
   if v_motivo = 'AJENO' then
     raise exception 'Ese cobro no es de una venta tuya. Incluí en el depósito solo tus cobros.'
       using errcode = '42501';
