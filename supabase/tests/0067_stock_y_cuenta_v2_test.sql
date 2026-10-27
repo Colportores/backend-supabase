@@ -382,8 +382,9 @@ select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, 
                               values ('01920000-0000-7000-8000-0000000067b1', 0, 'BANCO', 'ALQUILER') $$),
           '23514: new row for relation "deposito" violates check constraint "deposito_monto_check"',
           'un depósito de cero se rechaza');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto)
-                              values ('01920000-0000-7000-8000-0000000067b4', 500, 'RETIRO_COORDINADOR', 'ALQUILER') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id)
+                              values ('01920000-0000-7000-8000-0000000067b4', 500, 'RETIRO_COORDINADOR', 'ALQUILER',
+                                      '01920000-0000-7000-8000-0000000067e1') $$),
           'ok', 'un retiro por el coordinador no lleva ticket');
 select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino)
                               values ('01920000-0000-7000-8000-0000000067b1', 500, 'BANCO') $$),
