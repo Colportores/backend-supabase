@@ -127,13 +127,9 @@ public = true
 file_size_limit = "50MiB"
 allowed_mime_types = ["application/json", "application/octet-stream", "application/x-protobuf", "image/png", "text/plain"]
 
-# `tickets`: la foto del ticket de tarjeta o de depósito (0113, ADR-012). PRIVADO: se mira con una URL firmada de corta
-# duración; la colportora sube a su carpeta `<usuario_id>/<ticket_id>.jpg` y el coordinador de sus colportores la ve
-# (las políticas las crea la migración 0113). Tope de 2 MiB, solo imágenes.
-[storage.buckets.tickets]
-public = false
-file_size_limit = "2MiB"
-allowed_mime_types = ["image/jpeg", "image/png", "image/webp"]
+# `tickets` (0113) ya no se declara: desde la 0134 (backend-supabase#182) la foto del ticket vive en un bucket privado de
+# Cloudflare R2 y se pide con la Edge Function `foto-ticket`. La migración 0113 todavía inserta la fila del bucket (vacía,
+# privada, sin políticas); acá no se vuelve a crear.
 
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
@@ -405,6 +401,15 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/informe-reportes/deno.json"
 entrypoint = "./functions/informe-reportes/index.ts"
+
+# Foto del ticket en Cloudflare R2 (backend-supabase#182, HU-COB-007 y HU-COB-009). Devuelve enlaces firmados de R2 para subir o ver
+# la foto; el permiso lo da la base con el JWT de quien pide (verify_jwt: la puerta de Supabase exige un usuario). Los secretos
+# R2_CUENTA, R2_CLAVE_DE_ACCESO, R2_CLAVE_SECRETA y R2_BUCKET se cargan con `supabase secrets set` (README de la función).
+[functions.foto-ticket]
+enabled = true
+verify_jwt = true
+import_map = "./functions/foto-ticket/deno.json"
+entrypoint = "./functions/foto-ticket/index.ts"
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
