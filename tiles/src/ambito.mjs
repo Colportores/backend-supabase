@@ -28,12 +28,33 @@ export function slugDe(nombre) {
 
 const COLUMNAS = 'id,nombre,lat_centro,lon_centro,bbox_oeste,bbox_sur,bbox_este,bbox_norte';
 
+/** El país que se publica cuando nadie elige otro: el dominio es Uruguay. */
+export const PAIS_POR_DEFECTO = 'UY';
+
 /**
- * Las ciudades (no borradas) del país `pais` (ISO 3166-1 alpha-2) en public.ciudad, con su rectángulo si lo
- * tienen: [{ id, nombre, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte }].
+ * El código de país (ISO 3166-1 alpha-2) que llegó por `--pais`: dos letras, y `ar` se lee como `AR`.
+ * Cualquier otra cosa (`A`, `ARG`, `1R`, vacío) lanza con el valor recibido, así que se puede llamar ANTES
+ * de leer la base o de escribir en el bucket. Lo que sale de acá es seguro para ir dentro de una consulta.
  */
-export async function leerCiudades({ url, clave, pais = 'UY', fetchImpl = fetch }) {
-  const consulta = `select=${COLUMNAS},pais!inner(iso_code)&pais.iso_code=eq.${pais}&deleted_at=is.null&order=nombre.asc&limit=1000`;
+export function normalizarPais(valor) {
+  const codigo = typeof valor === 'string' ? valor.toUpperCase() : valor;
+  if (typeof codigo !== 'string' || !/^[A-Z]{2}$/.test(codigo)) {
+    throw new Error(`--pais tiene que ser un código de país de dos letras (ISO 3166-1, p. ej. UY o AR); llegó ${JSON.stringify(valor ?? null)}. No se leyó ni se subió nada.`);
+  }
+  return codigo;
+}
+
+/**
+ * Las ciudades (no borradas) del país `pais` (ISO 3166-1 alpha-2, `UY` si no se dice) en public.ciudad, con su
+ * rectángulo si lo tienen: [{ id, nombre, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte }].
+ * Con `pais: null` son las de **todos** los países (para avisar de lo ya publicado y detectar choques de
+ * paquetes entre países; lo que se publica siempre es de un solo país por corrida).
+ */
+export async function leerCiudades({ url, clave, pais = PAIS_POR_DEFECTO, fetchImpl = fetch }) {
+  const consulta =
+    pais === null
+      ? `select=${COLUMNAS}&deleted_at=is.null&order=nombre.asc&limit=1000`
+      : `select=${COLUMNAS},pais!inner(iso_code)&pais.iso_code=eq.${normalizarPais(pais)}&deleted_at=is.null&order=nombre.asc&limit=1000`;
   let respuesta;
   try {
     respuesta = await fetchImpl(`${url.replace(/\/+$/, '')}/rest/v1/ciudad?${consulta}`, {

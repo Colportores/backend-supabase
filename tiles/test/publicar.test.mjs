@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -583,3 +584,274 @@ test('listarArchivos devuelve rutas con barras, ordenadas', async () => {
     ['estilo/sprites/grayscale.json', 'estilo/sprites/grayscale.png', 'estilo/sprites/grayscale@2x.json', 'estilo/sprites/grayscale@2x.png'],
   );
 });
+
+// ---- Más de un país en el catálogo (backend-supabase#217) ----
+
+const SAN_JOSE_UY = '09990000-0000-7000-8003-0000000000a1';
+const SAN_JOSE_AR = '09990000-0000-7000-8003-0000000000a2';
+const SAN_JOSE_AR_PUBLICABLE = { slug: 'san-jose', nombre: 'San José', ciudad_id: SAN_JOSE_AR, bbox: [-60.1, -31.5, -59.9, -31.3] };
+const fila = (id, nombre) => ({ id, nombre, bbox_oeste: -1, bbox_sur: -1, bbox_este: 1, bbox_norte: 1 });
+
+test('el catálogo con ciudades de dos países conserva cada ambito_id, y publicar las de un país no avisa de las del otro', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const salto = { slug: 'salto', nombre: 'Salto', ciudad_id: '09990000-0000-7000-8003-000000000009', bbox: [-58.1, -31.5, -57.9, -31.3] };
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [MONTEVIDEO, salto] }));
+
+    const mensajes = [];
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [SAN_JOSE_AR_PUBLICABLE],
+        // public.ciudad entera: las de Uruguay (ya publicadas) y la de Argentina.
+        ciudadesEnBase: [fila(AMBITO, 'Montevideo'), fila(salto.ciudad_id, 'Salto'), fila(SAN_JOSE_AR, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+        log: (m) => mensajes.push(m),
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]), [
+      ['ciudad-montevideo', AMBITO],
+      ['ciudad-salto', salto.ciudad_id],
+      ['ciudad-san-jose', SAN_JOSE_AR],
+    ]);
+    assert.deepEqual(mensajes.filter((m) => m.startsWith('aviso:')), [], 'las de Uruguay siguen vivas en public.ciudad: nada que avisar');
+  }));
+
+test('dos ciudades vivas de países distintos con el mismo nombre no se pisan: el publicador corta antes de subir nada', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const sanJoseUy = { slug: 'san-jose', nombre: 'San José', ciudad_id: SAN_JOSE_UY, bbox: [-57.1, -34.4, -56.9, -34.2] };
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [sanJoseUy] }));
+    const antes = new Map(storage.objetos);
+    const subidasAntes = storage.subidas.length;
+
+    const base = [fila(SAN_JOSE_UY, 'San José'), fila(SAN_JOSE_AR, 'San José')];
+    for (const parcial of [false, true]) {
+      await assert.rejects(
+        publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [SAN_JOSE_AR_PUBLICABLE], ciudadesEnBase: base, avisar: !parcial })),
+        (error) => {
+          assert.match(error.message, new RegExp(`«ciudad-san-jose».*${SAN_JOSE_UY}.*sigue viva.*${SAN_JOSE_AR}.*«San José».*mismo paquete.*Cambiá el nombre de una de las dos.*No se subió nada\\.$`));
+          return true;
+        },
+        parcial ? 'también con --ciudad (corrida parcial)' : 'corrida completa',
+      );
+    }
+    assert.equal(storage.subidas.length, subidasAntes, 'ni un archivo ni el catálogo');
+    assert.deepEqual([...storage.objetos.keys()], [...antes.keys()]);
+    assert.equal(storage.objetos.get(RUTA_CATALOGO).toString(), antes.get(RUTA_CATALOGO).toString(), 'el paquete de Uruguay sigue intacto');
+  }));
+
+test('si la dueña del paquete ya no está viva, el mismo nombre de otro país no es un choque: reemplaza al paquete, como un renombre', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const sanJoseUy = { slug: 'san-jose', nombre: 'San José', ciudad_id: SAN_JOSE_UY, bbox: [-57.1, -34.4, -56.9, -34.2] };
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [sanJoseUy] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, { ciudades: [SAN_JOSE_AR_PUBLICABLE], ciudadesEnBase: [fila(SAN_JOSE_AR, 'San José')], ahora: '2026-10-08T12:00:00Z' }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]), [['ciudad-san-jose', SAN_JOSE_AR]]);
+  }));
+
+test('republicar la propia ciudad (mismo id, mismo slug) no es un choque aunque haya otra homónima en otro país', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [SAN_JOSE_AR_PUBLICABLE] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [SAN_JOSE_AR_PUBLICABLE],
+        ciudadesEnBase: [fila(SAN_JOSE_UY, 'San José'), fila(SAN_JOSE_AR, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]), [['ciudad-san-jose', SAN_JOSE_AR]]);
+  }));
+
+// ---- El CLI y --pais ----
+
+const CLI = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
+const correrCli = (args, env = {}) =>
+  new Promise((resolver) => {
+    execFile(process.execPath, [CLI, ...args], { env: { ...process.env, SUPABASE_URL: 'http://127.0.0.1:9', SUPABASE_SERVICE_ROLE_KEY: 'x', ...env }, timeout: 30_000 }, (error, stdout, stderr) => {
+      resolver({ codigo: error ? (error.code ?? 1) : 0, salida: `${stdout}\n${stderr}` });
+    });
+  });
+
+for (const valor of ['A', 'ARG', '1R', '']) {
+  test(`el CLI rechaza --pais ${JSON.stringify(valor)} nombrando el valor, antes de leer la base (no hay nada escuchando en la URL)`, async () => {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'ciudades', '--dry-run', '--pais', valor]);
+    assert.equal(codigo, 1, salida);
+    assert.ok(salida.includes(`llegó ${JSON.stringify(valor)}`), salida);
+    assert.match(salida, /--pais tiene que ser un código de país de dos letras/);
+    assert.doesNotMatch(salida, /ECONNREFUSED|public\.ciudad falló/, 'no llegó a conectarse');
+  });
+}
+
+test('el CLI rechaza un --pais inválido aunque falten las variables de entorno (se valida primero)', async () => {
+  const { codigo, salida } = await correrCli(['publicar', '--pais', 'ARG'], { SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '' });
+  assert.equal(codigo, 1, salida);
+  assert.match(salida, /llegó "ARG"/);
+});
+
+for (const solo of ['departamentos', 'uruguay']) {
+  test(`el CLI rechaza --pais AR con --solo ${solo} (son del catálogo de Uruguay), sin conectarse a nada`, async () => {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', solo, '--dry-run', '--pais', 'ar']);
+    assert.equal(codigo, 1, salida);
+    assert.match(salida, new RegExp(`--pais AR no va con --solo ${solo}.*solo de UY`));
+    assert.doesNotMatch(salida, /ECONNREFUSED/);
+  });
+}
+
+/**
+ * Un PostgREST de mentira que anota qué se pidió: contesta `ciudades(url)` para public.ciudad (por defecto, una
+ * lista vacía) y [] para lo demás. El bucket tiene `catalogo` (o nada).
+ */
+async function servidorVacio({ ciudades = () => [], catalogo } = {}) {
+  const pedidos = [];
+  const servidor = createServer((req, res) => {
+    pedidos.push(req.url);
+    if (req.url.startsWith('/rest/v1/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(req.url.startsWith('/rest/v1/ciudad?') ? ciudades(new URL(req.url, 'http://x').searchParams) : []));
+    } else if (catalogo && req.url.includes('catalogo.json')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(catalogo));
+    } else {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{"error":"not_found"}');
+    }
+  });
+  await new Promise((resolver) => servidor.listen(0, '127.0.0.1', resolver));
+  return { url: `http://127.0.0.1:${servidor.address().port}`, pedidos, cerrar: () => servidor.close() };
+}
+
+test('el CLI con --pais AR pide a la base las ciudades de AR (y las de todos los países para avisar) y dice el país si no hay ninguna', async () => {
+  const servidor = await servidorVacio();
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run', '--pais', 'ar'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    const ciudades = servidor.pedidos.filter((p) => p.startsWith('/rest/v1/ciudad?')).map((p) => new URL(p, 'http://x').searchParams);
+    assert.equal(ciudades.length, 2);
+    assert.equal(ciudades[0].get('pais.iso_code'), 'eq.AR');
+    assert.equal(ciudades[1].get('pais.iso_code'), null, 'la segunda mira todos los países');
+    assert.match(salida, /no hay ciudades de AR en public\.ciudad/);
+    assert.doesNotMatch(salida, /no hay ciudades con rectángulo/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('el CLI sin --pais sigue pidiendo las ciudades de UY, como antes', async () => {
+  const servidor = await servidorVacio();
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    const primera = servidor.pedidos.find((p) => p.startsWith('/rest/v1/ciudad?'));
+    assert.equal(new URL(primera, 'http://x').searchParams.get('pais.iso_code'), 'eq.UY');
+    assert.match(salida, /no hay ciudades de UY en public\.ciudad/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('el CLI con --pais y --solo zonas lo avisa: el país solo elige ciudades', async () => {
+  const servidor = await servidorVacio();
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'zonas', '--dry-run', '--pais', 'AR'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    assert.match(salida, /aviso: --pais AR no cambia nada con --solo zonas/);
+    assert.ok(!servidor.pedidos.some((p) => p.startsWith('/rest/v1/ciudad')), 'no lee ciudades');
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+const PAQUETE_DE_MONTEVIDEO = {
+  id: 'ciudad-montevideo',
+  nivel: 'ciudad',
+  ambito_id: AMBITO,
+  nombre: 'Montevideo',
+  zoom_min: 0,
+  zoom_max: 15,
+  tamano_bytes: 5,
+  version: 'a'.repeat(64),
+  partes: [{ archivo: 'paquetes/ciudad/montevideo.aaaaaaaaaaaa.pmtiles', tamano_bytes: 5, sha256: 'a'.repeat(64) }],
+  fuente_build: '20261001',
+  actualizado_en: '2026-10-01T00:00:00Z',
+};
+const CATALOGO_CON_MONTEVIDEO = {
+  version: 1,
+  generado_en: '2026-10-01T00:00:00Z',
+  estilo: { url: RUTA_ESTILO, fuente_de_tiles: 'protomaps' },
+  paquetes: [PAQUETE_DE_MONTEVIDEO],
+};
+
+test('el CLI con --pais AR no avisa que el mapa de Montevideo sobra: mira public.ciudad entera, no solo el país elegido', async () => {
+  const servidor = await servidorVacio({
+    catalogo: CATALOGO_CON_MONTEVIDEO,
+    ciudades: (q) => (q.get('pais.iso_code') === null ? [fila(AMBITO, 'Montevideo')] : []),
+  });
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run', '--pais', 'AR'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    assert.match(salida, /no hay ciudades de AR en public\.ciudad/);
+    assert.doesNotMatch(salida, /aviso: ciudad-montevideo/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('el CLI avisa del paquete cuya ciudad ya no está en public.ciudad en ningún país', async () => {
+  const servidor = await servidorVacio({ catalogo: CATALOGO_CON_MONTEVIDEO });
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run', '--pais', 'AR'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    assert.match(salida, /aviso: ciudad-montevideo sigue en el catálogo.*ya no está en public\.ciudad/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('una corrida parcial (avisar: false) no da los avisos de la completa', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    const mensajes = [];
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [], ciudadesEnBase: [], avisar: false, ahora: '2026-10-08T12:00:00Z', log: (m) => mensajes.push(m) }));
+    assert.deepEqual(mensajes.filter((m) => m.startsWith('aviso:')), []);
+  }));
+
+test('un renombre no es un choque: la ciudad que cambió de nombre se publica en la misma corrida y otra toma su nombre viejo', () =>
+  conTmp(async (tmp) => {
+    const A = '09990000-0000-7000-8003-0000000000b1';
+    const C = '09990000-0000-7000-8003-0000000000b2';
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [{ slug: 'rivera', nombre: 'Rivera', ciudad_id: A, bbox: [-55.6, -31.0, -55.4, -30.8] }] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        // A pasó a llamarse «Tranqueras» y se creó C «Rivera».
+        ciudades: [
+          { slug: 'rivera', nombre: 'Rivera', ciudad_id: C, bbox: [-55.7, -31.1, -55.3, -30.7] },
+          { slug: 'tranqueras', nombre: 'Tranqueras', ciudad_id: A, bbox: [-55.6, -31.0, -55.4, -30.8] },
+        ],
+        ciudadesEnBase: [fila(A, 'Tranqueras'), fila(C, 'Rivera')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-rivera', C], ['ciudad-tranqueras', A]]);
+  }));
+
+test('dos ciudades que se intercambian los nombres tampoco chocan: los dos paquetes pasan a su ambito_id nuevo', () =>
+  conTmp(async (tmp) => {
+    const A = '09990000-0000-7000-8003-0000000000b3';
+    const B = '09990000-0000-7000-8003-0000000000b4';
+    const storage = bucketFalso();
+    const de = (slug, nombre, id) => ({ slug, nombre, ciudad_id: id, bbox: [-57.1, -34.4, -56.9, -34.2] });
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [de('san-jose', 'San José', A), de('libertad', 'Libertad', B)] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [de('san-jose', 'San José', B), de('libertad', 'Libertad', A)],
+        ciudadesEnBase: [fila(A, 'Libertad'), fila(B, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-libertad', A], ['ciudad-san-jose', B]]);
+  }));

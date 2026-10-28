@@ -175,9 +175,12 @@ async function publicarUnPaquete({ storage, previo, nivel, clave, ambitoId, nomb
  * que se acaba de subir; si no viene, se conserva la del catálogo publicado (y si no hay, no se publica:
  * antes va el estilo). `dryRun`: hace todo menos escribir en el bucket.
  *
- * `ciudadesEnBase`: todas las filas de public.ciudad (opcional). Con ellas se avisa de los paquetes que el
- * catálogo ya tenía y esta corrida no publica (la ciudad se dio de baja o perdió su rectángulo): se
- * conservan, retirarlos es una decisión de producto.
+ * `ciudadesEnBase`: todas las filas de public.ciudad, **de todos los países** (opcional; `leerCiudades({ pais: null })`).
+ * Con ellas se avisa de los paquetes que el catálogo ya tenía y esta corrida no publica (la ciudad se dio de
+ * baja o perdió su rectángulo): se conservan, retirarlos es una decisión de producto. Y se detecta el choque
+ * entre países: si una ciudad que se publica daría el mismo paquete (`ciudad-<slug>`) que el de OTRA ciudad
+ * viva del catálogo (p. ej. un «San José» de otro país), se corta antes de subir nada. `avisar: false` apaga
+ * solo los avisos (una corrida parcial, `--ciudad`, no los da); el choque se mira siempre.
  *
  * `quitarIds`: ids de paquete (`ciudad-<slug>`) que se sacan del catálogo a propósito (`--quitar`); sus archivos
  * quedan en `retirados` y se borran a los 7 días. Solo se puede quitar un paquete que el catálogo ya tiene y
@@ -195,6 +198,7 @@ export async function publicarCiudades({
   log = () => {},
   limites,
   ciudadesEnBase,
+  avisar = true,
   quitarIds = [],
 }) {
   // Todo lo que puede impedir publicar se mira ANTES de subir un solo archivo.
@@ -224,6 +228,28 @@ export async function publicarCiudades({
     );
   }
   if (ciudadesEnBase) {
+    const vivas = new Set(ciudadesEnBase.map((f) => f.id));
+    const choques = ciudades.flatMap((c) => {
+      const del = (previo?.paquetes ?? []).find((p) => p.nivel === 'ciudad' && p.id === `ciudad-${c.slug}` && p.ambito_id !== c.ciudad_id);
+      // Si la dueña del paquete ya no está viva, el paquete es de la ciudad nueva (como un renombre): no hay choque.
+      // Tampoco si la dueña se publica en esta misma corrida con otro slug (se renombró): su paquete viejo se
+      // retira por `renombrados` y el nombre queda libre para la otra ciudad (o para el intercambio de nombres).
+      const sePublicaConOtroSlug = del && ciudades.some((o) => o.ciudad_id === del.ambito_id);
+      return del && !sePublicaConOtroSlug && vivas.has(del.ambito_id) ? [{ paquete: del, ciudad: c }] : [];
+    });
+    if (choques.length > 0) {
+      throw new Error(
+        choques
+          .map(
+            ({ paquete, ciudad }) =>
+              `El paquete «${paquete.id}» del catálogo es de la ciudad ${paquete.ambito_id}, que sigue viva, y la ciudad ${ciudad.ciudad_id} («${ciudad.nombre}») daría el mismo paquete: una pisaría a la otra. ` +
+              'Cambiá el nombre de una de las dos en public.ciudad para que el paquete sea distinto. ',
+          )
+          .join('') + 'No se subió nada.',
+      );
+    }
+  }
+  if (ciudadesEnBase && avisar) {
     // Las ciudades que se publican solo en parte (--ciudad) no se avisan: el aviso es de la corrida completa.
     // Los paquetes que esta corrida saca a propósito no se avisan: ya no están.
     const sinLosQuitados = previo && { ...previo, paquetes: previo.paquetes.filter((p) => !aQuitar.includes(p.id)) };
