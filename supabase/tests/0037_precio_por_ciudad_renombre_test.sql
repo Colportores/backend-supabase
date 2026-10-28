@@ -65,8 +65,8 @@ select results_eq(
        from sync.entidad where nombre = 'precio_por_ciudad' $$,
   $$ values ('precio_por_ciudad'::text, 'precio_por_ciudad'::text, 'id'::text, false, true) $$,
   'la entidad de sync: precio_por_ciudad, de solo bajada y siguiendo las campañas del usuario');
--- Sin ubicacion_par_decidido, parametro_global, devolucion, ticket, deposito, deposito_cobro, pedido_casa_editora, pedido_item, transferencia_stock ni transferencia_item, que suman 0032, 0070, 0108, 0113, 0122, 0124 y 0139 (después del renombre).
-select is((select count(*)::int from sync.entidad where nombre not in ('ubicacion_par_decidido', 'parametro_global', 'devolucion', 'ticket', 'deposito', 'deposito_cobro', 'pedido_casa_editora', 'pedido_item', 'transferencia_stock', 'transferencia_item')), 22,
+-- Sin ubicacion_par_decidido, parametro_global, devolucion, ticket, deposito, deposito_cobro, pedido_casa_editora, pedido_item, transferencia_stock, transferencia_item ni precio_general, que suman 0032, 0070, 0108, 0113, 0122, 0124, 0139 y 0144 (después del renombre).
+select is((select count(*)::int from sync.entidad where nombre not in ('ubicacion_par_decidido', 'parametro_global', 'devolucion', 'ticket', 'deposito', 'deposito_cobro', 'pedido_casa_editora', 'pedido_item', 'transferencia_stock', 'transferencia_item', 'precio_general')), 22,
           'el renombre no sumó ni sacó entidades (siguen 22)');
 
 -- --- realtime ---------------------------------------------------------------------------------

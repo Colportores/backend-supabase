@@ -203,7 +203,7 @@ select bag_eq(
 -- ---------------------------------------------------------------------------
 select bag_eq(
   $$ select tablename::text from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' $$,
-  array['producto','coleccion','producto_coleccion','precio_por_ciudad'],
+  array['producto','coleccion','producto_coleccion','precio_por_ciudad','precio_general'],
   'supabase_realtime publica solo el catálogo'
 );
 
