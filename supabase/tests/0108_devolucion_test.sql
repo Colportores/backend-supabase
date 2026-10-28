@@ -132,13 +132,14 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
   (pg_temp.u('71'), pg_temp.u('51'), 'T-8171', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-8172', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
 
+-- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
-  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 3, 100000, 300000),
-  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 3, 50000, 150000),
-  (pg_temp.u('83'), pg_temp.u('71'), pg_temp.u('13'), 5, 20000, 100000),
-  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 3, 100000, 300000),
-  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 3, 50000, 150000),
-  (pg_temp.u('86'), pg_temp.u('72'), pg_temp.u('13'), 5, 20000, 100000);
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 30, 50000, 1500000),
+  (pg_temp.u('83'), pg_temp.u('71'), pg_temp.u('13'), 30, 20000, 600000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 30, 50000, 1500000),
+  (pg_temp.u('86'), pg_temp.u('72'), pg_temp.u('13'), 30, 20000, 600000);
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma

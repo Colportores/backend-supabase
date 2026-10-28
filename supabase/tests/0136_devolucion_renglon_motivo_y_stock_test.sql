@@ -3,7 +3,7 @@
 --   2. El trigger BEFORE: el renglón existe, es de la venta y el libro es el suyo o un componente del combo.
 --   3. El motivo: opcional, acotado a 500, sin espacios en los bordes; viaja por el push y NO se copia a audit_log.
 --   4. Los libros devueltos vuelven al stock del colportor (un movimiento ENTRADA_DEVOLUCION por libro), una sola
---      vez; la devolución que llega anulada no suma; anularla después no resta (pendiente de decisión).
+--      vez; la devolución que llega anulada no suma; anularla después SÍ resta (0142).
 --   5. Por sync.push: la forma vieja (dos claves) es invalid, el reintento no suma dos veces.
 begin;
 select * from no_plan();
@@ -188,7 +188,7 @@ select is((select data_type from information_schema.columns where table_name = '
 select is((select is_nullable from information_schema.columns where table_name = 'devolucion' and column_name = 'motivo'),
           'YES', 'y opcional');
 select is(pg_temp.ins('e1', '71', jsonb_build_array(pg_temp.el('12', 1, '82')), 'Se rompió el lomo'), 'ok', 'con motivo: ok');
-select is(pg_temp.ins('e2', '71', jsonb_build_array(pg_temp.el('12', 1, '82')), repeat('x', 500)), 'ok', 'de 500 caracteres: ok');
+select is(pg_temp.ins('e2', '71', jsonb_build_array(pg_temp.el('11', 1, '85')), repeat('x', 500)), 'ok', 'de 500 caracteres: ok');
 select is(pg_temp.ins('e3', '71', jsonb_build_array(pg_temp.el('12', 1, '82')), repeat('x', 501)), '23514 devolucion_motivo_forma',
           'de 501: 23514');
 select is(pg_temp.ins('e3', '71', jsonb_build_array(pg_temp.el('12', 1, '82')), '   '), '23514 devolucion_motivo_forma',
@@ -239,14 +239,14 @@ update public.devolucion set dinero_retenido = 100 where id = pg_temp.u('f1');
 update public.devolucion set productos_devueltos = jsonb_build_array(pg_temp.el('11', 1, '81')) where id = pg_temp.u('f1');
 select is(pg_temp.stock('11') || '/' || pg_temp.stock('12') || '/' || pg_temp.movs('f1'), '15/1/2',
           'modificarla después no mueve el stock (ni suma ni resta)');
--- Anularla: no resta (pendiente de decisión).
+-- Anularla resta lo que sumó (0142).
 update public.devolucion set deleted_at = now() where id = pg_temp.u('f2');
-select is(pg_temp.stock('11') || '/' || pg_temp.entradas('f2'), '15/3', 'anularla no resta el stock (queda como pendiente de decisión)');
+select is(pg_temp.stock('11') || '/' || pg_temp.entradas('f2'), '12/3', 'anularla resta el stock que sumó (0142)');
 
 -- Llega anulada: no suma.
 insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id, deleted_at)
 values (pg_temp.u('f4'), pg_temp.u('71'), jsonb_build_array(pg_temp.el('11', 1, '81')), now(), pg_temp.u('b1'), now());
-select is(pg_temp.stock('11') || '/' || pg_temp.movs('f4'), '15/0', 'una devolución que llega anulada no suma');
+select is(pg_temp.stock('11') || '/' || pg_temp.movs('f4'), '12/0', 'una devolución que llega anulada no suma');
 
 -- Un stock dado de baja se reactiva.
 update public.stock set deleted_at = now() where usuario_id = pg_temp.u('b1') and producto_id = pg_temp.u('12');
@@ -293,6 +293,67 @@ select is((select count(*)::int from auditoria.audit_log a
             where a.event_type = 'stock_devuelto_por_devolucion' and a.fila_id = pg_temp.u('91')), 1, 'con un solo evento');
 select is((select count(*)::int from public.devolucion where id in (pg_temp.u('92'), pg_temp.u('93'), pg_temp.u('94'), pg_temp.u('95'))), 0,
           'lo rechazado no deja devolución ni stock');
+
+-- ---------------------------------------------------------------------------
+-- 6. Anular resta el stock (0142) y no se devuelve más de lo vendido (0142)
+-- ---------------------------------------------------------------------------
+-- Estado: la devolución 91 (11 × 2 del renglón 81, que vendió 3) está viva y el stock del 11 está en 12.
+select is(pg_temp.ins('c1', '71', jsonb_build_array(pg_temp.el('11', 2, '81'))), '23514 devolucion_cantidad_del_renglon',
+          'devolver 2 más cuando ya devolvió 2 de 3: 23514');
+select is(pg_temp.ins('c1', '71', jsonb_build_array(pg_temp.el('11', 1, '81'))), 'ok', 'devolver el que falta: ok (3 de 3)');
+select is(pg_temp.ins('c2', '71', jsonb_build_array(pg_temp.el('11', 1, '81'))), '23514 devolucion_cantidad_del_renglon',
+          'y uno más ya no');
+select is(pg_temp.error_de(format($$ update public.devolucion set productos_devueltos = %L::jsonb where id = %L $$,
+                                  jsonb_build_array(pg_temp.el('11', 1, '81'))::text, pg_temp.u('c1'))), 'ok',
+          'cambiarle la cantidad a una existente no se cuenta a sí misma');
+select is(pg_temp.error_de(format($$ update public.devolucion set productos_devueltos = %L::jsonb where id = %L $$,
+                                  jsonb_build_array(pg_temp.el('11', 2, '81'))::text, pg_temp.u('c1'))), '23514 devolucion_cantidad_del_renglon',
+          'pero sí lo que ya devolvieron las otras');
+select is(pg_temp.ins('c3', '71', jsonb_build_array(pg_temp.el('11', 2, '85'))), 'ok', 'otro renglón del mismo libro tiene su propio tope (2)');
+select is(pg_temp.ins('c4', '71', jsonb_build_array(pg_temp.el('11', 1, '85'))), '23514 devolucion_cantidad_del_renglon', 'y se agota');
+-- Combo: 2 combos con 13 × 2 cada uno: hasta 4 de la revista y 2 del libro 11.
+select is(pg_temp.ins('c5', '71', jsonb_build_array(pg_temp.el('13', 5, '83'))), '23514 devolucion_cantidad_del_renglon',
+          'el combo: 5 de un componente que tiene 2 × 2 = 4: 23514');
+select is(pg_temp.ins('c5', '71', jsonb_build_array(pg_temp.el('13', 4, '83'), pg_temp.el('11', 2, '83'))), 'ok',
+          'el combo entero (4 y 2): ok');
+select is(pg_temp.ins('c6', '71', jsonb_build_array(pg_temp.el('11', 1, '83'))), '23514 devolucion_cantidad_del_renglon',
+          'y un libro más del combo ya no');
+-- Una devolución anulada libera lo que ocupaba; una que llega anulada no cuenta.
+update public.devolucion set deleted_at = now() where id = pg_temp.u('c3');
+select is(pg_temp.ins('c4', '71', jsonb_build_array(pg_temp.el('11', 2, '85'))), 'ok', 'anulada la de 85, se puede devolver de nuevo');
+select is(pg_temp.error_de(format($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id, deleted_at)
+                                    values (%L, %L, %L::jsonb, now(), %L, now()) $$,
+                                    pg_temp.u('c7'), pg_temp.u('71'), jsonb_build_array(pg_temp.el('11', 3, '81'))::text, pg_temp.u('b1'))),
+          'ok', 'una que llega anulada no se mide contra el tope');
+
+-- Anular resta lo que la devolución sumó.
+delete from public.movimiento_stock where devolucion_id is not null;
+delete from public.devolucion;
+update public.stock set cantidad_disponible = 10 where usuario_id = pg_temp.u('b1') and producto_id = pg_temp.u('11');
+select is(pg_temp.ins('d1', '71', jsonb_build_array(pg_temp.el('11', 2, '81'), pg_temp.el('12', 1, '82'))), 'ok', 'una devolución de 2 y 1');
+select is(pg_temp.stock('11') || '/' || pg_temp.stock('12'), '12/1', 'sube el stock');
+update public.devolucion set dinero_retenido = 5 where id = pg_temp.u('d1');
+select is(pg_temp.stock('11') || '/' || pg_temp.stock('12'), '12/1', 'cambiarle otra cosa no lo mueve');
+update public.devolucion set deleted_at = now() where id = pg_temp.u('d1');
+select is(pg_temp.stock('11') || '/' || pg_temp.stock('12'), '10/0', 'anularla devuelve el stock a como estaba');
+select is((select string_agg(m.tipo || ' ' || m.cantidad, ',' order by m.tipo, m.cantidad) from public.movimiento_stock m
+            where m.devolucion_id = pg_temp.u('d1')),
+          'ENTRADA_DEVOLUCION 1,ENTRADA_DEVOLUCION 2,SALIDA_DEVOLUCION_ANULADA 1,SALIDA_DEVOLUCION_ANULADA 2',
+          'con una salida por libro, además de las entradas (el historial no se borra)');
+select is((select count(*)::int from auditoria.audit_log a
+            where a.event_type = 'stock_revertido_por_devolucion_anulada' and a.fila_id = pg_temp.u('d1')), 2, 'y un evento por libro');
+select is((select array(select k from jsonb_object_keys(a.metadata) k order by k) from auditoria.audit_log a
+            where a.event_type = 'stock_revertido_por_devolucion_anulada' and a.fila_id = pg_temp.u('d1') limit 1),
+          array['cantidad','producto_id','stock_antes','stock_despues'], 'solo con ids y números');
+-- Idempotente: anularla otra vez, o tocar una anulada, no resta de nuevo.
+update public.devolucion set deleted_at = now() + interval '1 minute' where id = pg_temp.u('d1');
+update public.devolucion set dinero_retenido = 7 where id = pg_temp.u('d1');
+select is(pg_temp.stock('11') || '/' || pg_temp.stock('12') || '/' || pg_temp.movs('d1'), '10/0/4', 'no resta dos veces');
+-- El stock puede quedar en negativo (S46) si el colportor ya lo usó.
+select is(pg_temp.ins('d2', '71', jsonb_build_array(pg_temp.el('11', 3, '81'))), 'ok', 'otra devolución (3)');
+update public.stock set cantidad_disponible = 1 where usuario_id = pg_temp.u('b1') and producto_id = pg_temp.u('11');
+update public.devolucion set deleted_at = now() where id = pg_temp.u('d2');
+select is(pg_temp.stock('11'), '-2', 'si ya entregó esos libros, queda en negativo (S46)');
 
 select * from finish();
 rollback;

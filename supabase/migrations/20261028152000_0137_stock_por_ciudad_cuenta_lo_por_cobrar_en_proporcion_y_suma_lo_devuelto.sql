@@ -97,14 +97,26 @@ begin
     ),
     ventas_de_la_campania as materialized (
       -- Las ventas que cuentan (las de Reportes, 0061) con lo que falta cobrar de cada una. El saldo no cuenta
-      -- los cobros anulados (0072).
+      -- los cobros anulados (0072) y resta lo que el cliente devolvió, a precio del renglón (ADR-002 efecto 3;
+      -- el renglón de un combo, repartido entre sus unidades), sin bajar de cero.
       select ins.usuario_id as u_id, v.id as venta_id, v.monto_total::bigint as total, sd.saldo
         from inscripcion ins
         join public.venta v on v.colportor_id = ins.usuario_id and v.deleted_at is null
        cross join lateral (
-         select v.monto_total::bigint - coalesce(sum(co.monto), 0)::bigint as saldo
-           from public.cobranza co
-          where co.venta_id = v.id and co.deleted_at is null and co.anulado_at is null
+         select greatest(
+                  v.monto_total::bigint
+                  - coalesce((select sum(co.monto) from public.cobranza co
+                               where co.venta_id = v.id and co.deleted_at is null and co.anulado_at is null), 0)::bigint
+                  - coalesce((select sum(((x ->> 'cantidad')::bigint * i.precio_unitario::bigint)
+                                         / case when i.producto_id is null
+                                                then greatest((select sum((c ->> 'cantidad')::bigint)
+                                                                from jsonb_array_elements(coalesce(i.componentes, '[]'::jsonb)) c), 1)
+                                                else 1 end)
+                                from public.devolucion d
+                               cross join lateral jsonb_array_elements(d.productos_devueltos) x
+                                join public.venta_item i on i.id = (x ->> 'venta_item_id')::uuid
+                               where d.venta_id = v.id and d.deleted_at is null), 0)::bigint,
+                  0) as saldo
        ) sd
        where public.hoy_montevideo(v.fecha) >= v_campania.fecha_inicio
          and public.hoy_montevideo(v.fecha) <= coalesce(v_campania.fecha_fin, 'infinity'::date)

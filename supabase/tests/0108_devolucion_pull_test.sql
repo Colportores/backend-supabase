@@ -120,11 +120,12 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
   (pg_temp.u('71'), pg_temp.u('51'), 'T-8271', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-8272', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
 
+-- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
-  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 3, 100000, 300000),
-  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 3, 50000, 150000),
-  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 3, 100000, 300000),
-  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 3, 50000, 150000);
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 30, 50000, 1500000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 30, 50000, 1500000);
 
 -- Sin los eventos de 0121 (ver limpiar()): este archivo prueba el pull, y los eventos de la auditoría tienen su
 -- propio test (0121_devolucion_auditoria_test.sql).

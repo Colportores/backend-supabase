@@ -134,11 +134,12 @@ insert into public.espacio_persona (id, espacio_id, persona_id, created_by) valu
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by) values
   (pg_temp.u('71'), pg_temp.u('51'), 'T-9171', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-9172', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
+-- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
-  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 3, 100000, 300000),
-  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 3, 50000, 150000),
-  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 3, 100000, 300000),
-  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 3, 50000, 150000);
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 30, 50000, 1500000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 30, 50000, 1500000);
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma
@@ -176,7 +177,7 @@ select ok((select pg_get_triggerdef(t.oid) ~ 'AFTER UPDATE OF deleted_at ON publ
           'el de la baja mira solo deleted_at y solo cuando pasa de null a una fecha');
 select is((select count(*)::int from pg_trigger t
             where t.tgrelid = 'public.devolucion'::regclass and not t.tgisinternal),
-          6, 'devolucion tiene 6 triggers: los 2 de auditoría de siempre, el de los productos, estos 2 y el que devuelve el stock (0136)');
+          7, 'devolucion tiene 7 triggers: los 2 de auditoría de siempre, el de los productos, estos 2, el que devuelve el stock (0136) y el del tope por renglón (0142)');
 
 -- ---------------------------------------------------------------------------
 -- 2. El alta deja devolucion_registrada
