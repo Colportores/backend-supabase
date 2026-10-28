@@ -14,13 +14,16 @@
 --        · sube dentro de los 15 días de gracia de las ventas: si la campaña de la venta (la que contiene la fecha de
 --          la venta, `campania_del_ticket`, 0113) terminó hace más de 15 días, `escritura_dentro_de_plazo` (0020) dice
 --          que no (CB009). La venta no lleva campaña: si su fecha no cae en ninguna inscripción, no hay gracia que medir.
+--      CB008 y CB009 son de la colportora, que anula con su teléfono: el coordinador y el ADMIN (`anular_cobro`) usan la
+--      hora del servidor y solo tienen la ventana de 72 h (CB001); una cuota cobrada tras la gracia la anulan ellos.
 --      El caso: Ana cobra el lunes 14:10 y anula sin señal el miércoles 13:00 (71 h); la anulación sube el jueves (80 h
 --      del cobro): vale. Siguen igual CB002 (la colportora no anula con el ticket validado), CB003 (un cobro anulado no
 --      se reabre), CB005 y CB006. La anulación del coordinador (`anular_cobro`) pone `anulado_at = now()`: el reloj
 --      del servidor, como siempre.
 --   2. «Cobro fijo» · dentro de las 72 h desde el cobro, y mientras su ticket no esté VALIDADO, la dueña corrige el
 --      monto o el medio sin pedir motivo. Pasado el plazo, o con el ticket validado, el cobro queda fijo: no cambian
---      monto, fecha ni medio y no se da de baja ni se reactiva (`deleted_at`); la única corrección es la anulación
+--      monto, fecha ni medio, ni los datos de la tarjeta o la transferencia ni el número de cuota, y no se da de baja
+--      ni se reactiva (`deleted_at`); la única corrección es la anulación
 --      dentro del plazo. Siguen permitidos el reenvío idéntico (el teléfono sube la fila entera, también cuando falló
 --      la señal) y atarle su ticket (`ticket_id`, con la guarda de CB005). El rechazo es CB007, con un texto que guía.
 --      Mientras corre el plazo, la `fecha` no cambia (CB006, sin cambios). Como todos los controles de este trigger,
@@ -76,6 +79,7 @@ set search_path = ''
 as $$
 declare
   v_dueno          uuid;
+  v_es_duena       boolean;
   v_fecha_cobro    timestamptz;
   v_ticket_viejo   uuid;
   v_venta_fecha    timestamptz;
@@ -84,10 +88,15 @@ declare
 begin
   if tg_op = 'UPDATE' and auth.uid() is not null then
     -- El cobro fijo (CB007): pasado el plazo de 72 h desde el cobro, o con su ticket validado, no cambian monto,
-    -- fecha ni medio, y no se da de baja ni se reactiva. El reenvío idéntico no cambia nada y pasa; atarle el ticket
+    -- fecha ni medio, ni la venta, ni los datos de la tarjeta o de la transferencia ni el número de cuota (decisión del mapa sobre
+    -- P2 de #200: todo el cobro queda fijo), y no se da de baja ni se reactiva. El reenvío idéntico no cambia nada y pasa; atarle el ticket
     -- (ticket_id) y anular tampoco tocan estas cuatro columnas. Dentro del plazo y sin ticket validado, la dueña
-    -- corrige monto y medio sin más (la fecha, no: CB006).
-    if (new.monto, new.medio, new.fecha, new.deleted_at) is distinct from (old.monto, old.medio, old.fecha, old.deleted_at)
+    -- corrige monto, medio y esos datos sin más (la fecha, no: CB006).
+    if (new.venta_id, new.monto, new.medio, new.fecha, new.deleted_at, new.numero_cuota, new.tarjeta_tipo, new.tarjeta_marca,
+        new.numero_aprobacion, new.referencia_transferencia, new.banco_origen)
+       is distinct from
+       (old.venta_id, old.monto, old.medio, old.fecha, old.deleted_at, old.numero_cuota, old.tarjeta_tipo, old.tarjeta_marca,
+        old.numero_aprobacion, old.referencia_transferencia, old.banco_origen)
        and (now() > old.fecha + interval '72 hours'
             or exists (select 1 from public.ticket t
                         where t.id = old.ticket_id and t.estado = 'VALIDADO' and t.deleted_at is null)) then
@@ -151,9 +160,13 @@ begin
     v_fecha_cobro := new.fecha;
   end if;
 
+  select v.colportor_id, v.fecha into v_dueno, v_venta_fecha from public.venta v where v.id = new.venta_id;
+  v_es_duena := v_dueno is not distinct from auth.uid();
+
   -- «Anular offline»: la hora que cuenta es la del teléfono en que se anuló. Una hora del futuro, o anterior al
-  -- cobro, no es de fiar (reloj mal puesto): se rechaza con un aviso que lo dice.
-  if new.anulado_at > now() or new.anulado_at < v_fecha_cobro then
+  -- cobro, no es de fiar (reloj mal puesto): se rechaza con un aviso que lo dice. Solo a la colportora: el coordinador
+  -- y el ADMIN anulan con la hora del servidor (`anular_cobro`), no con la de un teléfono.
+  if v_es_duena and (new.anulado_at > now() or new.anulado_at < v_fecha_cobro) then
     raise exception using
       errcode = 'CB008',
       message = 'La hora de la anulación no es válida: no puede ser del futuro ni anterior al cobro. Revisá la fecha y la hora de tu teléfono.';
@@ -164,11 +177,12 @@ begin
       message = 'Pasaron más de 72 horas desde el cobro: ya no se puede anular.';
   end if;
 
-  select v.colportor_id, v.fecha into v_dueno, v_venta_fecha from public.venta v where v.id = new.venta_id;
-
-  -- Los 15 días de gracia de las ventas: la anulación tiene que subir mientras la campaña de la venta todavía admite
-  -- escrituras. Sin campaña para esa fecha de venta, no hay gracia que medir.
-  v_campania := public.campania_del_ticket(v_dueno, v_venta_fecha);
+  -- Los 15 días de gracia de las ventas: la anulación de la colportora tiene que subir mientras la campaña de la venta
+  -- todavía admite escrituras. Sin campaña para esa fecha de venta, no hay gracia que medir. El coordinador y el ADMIN
+  -- no tienen esa gracia: una cuota cobrada tras ella la anulan ellos (dentro de las 72 h).
+  if v_es_duena then
+    v_campania := public.campania_del_ticket(v_dueno, v_venta_fecha);
+  end if;
   if v_campania is not null then
     select c.fecha_fin into v_fin from public.campania c where c.id = v_campania;
     if not public.escritura_dentro_de_plazo(v_fin) then
@@ -178,7 +192,7 @@ begin
     end if;
   end if;
 
-  if v_dueno is not distinct from auth.uid() then
+  if v_es_duena then
     -- La colportora: con el ticket validado ya no anula sola.
     if exists (
          select 1
@@ -204,7 +218,7 @@ comment on function public.tg_cobranza_anulacion() is
   'BEFORE INSERT / UPDATE de cobranza (0072, 0131): cobro fijo pasadas 72 h o con el ticket validado: no cambian monto, '
   'fecha ni medio ni se da de baja (CB007); la fecha del cobro y un ticket validado no se mueven (CB006, CB005). Al '
   'anular: la hora de la anulación es la del teléfono, ni futura ni anterior al cobro (CB008), dentro de las 72 h '
-  'desde el cobro (CB001) y mientras la campaña de la venta admite escrituras, 15 días de gracia (CB009); la colportora '
+  'desde el cobro (CB001) y mientras la campaña de la venta admite escrituras, 15 días de gracia (CB009; CB008 y CB009 solo para la colportora, no para el coordinador ni el ADMIN); la colportora '
   'no anula con el ticket validado (CB002); un cobro anulado no se reabre ni cambia (CB003). Sin sesión (service_role, '
   'migraciones) no controla nada. Un alta que ya existe se deja pasar (replay idempotente).';
 

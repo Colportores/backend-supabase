@@ -148,7 +148,8 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
 select pg_temp.u(x.v), pg_temp.u('f4'), 'T-131-' || x.v, 1000000, now() - x.hace, pg_temp.u(x.quien), pg_temp.u(x.quien)
   from (values ('71', interval '0 days', 'b1'), ('72', interval '30 days', 'b2'), ('73', interval '30 days', 'b3'),
                ('74', interval '30 days', 'b4'), ('75', interval '5 days', 'b5'), ('76', interval '90 days', 'b6'),
-               ('77', interval '200 days', 'b7'), ('78', interval '1 hour', 'b6')) x(v, hace, quien);
+               ('77', interval '200 days', 'b7'), ('78', interval '1 hour', 'b6'),
+               ('79', interval '0 days', 'b1')) x(v, hace, quien);
 -- Tickets de tarjeta de b1: e1 validado, e2 pendiente, e3 rechazado.
 insert into public.ticket (id, usuario_id, tipo, monto, fecha, estado, revisado_por, revisado_en, motivo_rechazo) values
   (pg_temp.u('e1'), pg_temp.u('b1'), 'COBRO_TARJETA', 1000, now(), 'VALIDADO', pg_temp.u('d1'), now(), null),
@@ -194,6 +195,16 @@ begin
   perform pg_temp.cb(35, '71', now() - interval '73 hours');
   perform pg_temp.cb(36, '71', now() - interval '73 hours');
   update public.cobranza set deleted_at = now() where id = pg_temp.uc(36);
+  -- los datos de la tarjeta, de la transferencia y la cuota
+  perform pg_temp.cb(42, '71', now() - interval '73 hours', 'TARJETA');
+  perform pg_temp.cb(43, '71', now() - interval '73 hours', 'TRANSFERENCIA');
+  perform pg_temp.cb(44, '71', now() - interval '73 hours');
+  perform pg_temp.cb(45, '71', now() - interval '10 hours', 'TARJETA');
+  perform pg_temp.cb(46, '71', now() - interval '10 hours', 'TARJETA', 'e1');
+  update public.cobranza set tarjeta_tipo = 'DEBITO', tarjeta_marca = 'Visa', numero_aprobacion = '123456'
+   where id in (pg_temp.uc(42), pg_temp.uc(45), pg_temp.uc(46));
+  update public.cobranza set referencia_transferencia = '88213', banco_origen = 'BROU' where id = pg_temp.uc(43);
+  update public.cobranza set numero_cuota = 1 where id = pg_temp.uc(44);
   -- el borde
   perform pg_temp.cb(40, '71', now() - interval '72 hours');
   perform pg_temp.cb(41, '71', now() - interval '72 hours 1 second');
@@ -312,10 +323,20 @@ select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro')
 select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(6), 'Otro') $$), 'ok', 'el de hace 5 h sí');
 select pg_temp.actuar_como(pg_temp.u('d2'));
 select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(14), 'Otro') $$), 'ok', 'el coordinador de c3 (en gracia) anula');
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(15), 'Otro') $$), 'CB009',
-          'y el de c2, terminada hace 20 días, no: ya pasó la gracia');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(15), 'Otro') $$), 'ok',
+          'y el de c2, terminada hace 20 días, también: la gracia es de la colportora, no del coordinador');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.anulado(15), false, 'el cobro de c2 sigue vivo');
+select is(pg_temp.anulado(15), true, 'el cobro de c2 queda anulado');
+-- El ADMIN igual; y un cobro con fecha en el futuro del servidor (reloj adelantado del teléfono) lo anula el coordinador.
+select pg_temp.cb(16, '72', now() - interval '2 hours');
+select pg_temp.cb(17, '71', now() + interval '1 hour');
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(16), 'Otro') $$), 'ok', 'el ADMIN anula tras la gracia');
+select pg_temp.actuar_como(pg_temp.u('d1'));
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(17), 'Otro') $$), 'ok',
+          'y el coordinador anula un cobro con fecha adelantada: CB008 no es suyo');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.anulado(16) and pg_temp.anulado(17), true, 'los dos quedan anulados');
 
 -- ---------------------------------------------------------------------------
 -- 3. «Cobro fijo»
@@ -358,6 +379,23 @@ select is(pg_temp.error_de($$ update public.cobranza set monto = monto, anulado_
                                      motivo_anulacion = 'Monto equivocado' where id = pg_temp.uc(35) $$), 'ok',
           'un cobro de hace 73 h anulado en el teléfono a la hora 71 se anula, con la fila entera');
 select is(pg_temp.anulado(35), true, 'y queda anulado');
+select is(pg_temp.error_de($$ update public.cobranza set venta_id = pg_temp.u('79') where id = pg_temp.uc(30) $$), 'CB007',
+          'pasado el plazo el cobro no se pasa a otra venta');
+select is(pg_temp.error_de($$ update public.cobranza set venta_id = pg_temp.u('79') where id = pg_temp.uc(25) $$), 'CB007',
+          'ni con el ticket validado');
+-- Fijo es todo el cobro: también los datos de la tarjeta, de la transferencia y el número de cuota (decisión del mapa, P2 de #200).
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_tipo = 'CREDITO' where id = pg_temp.uc(42) $$), 'CB007', 'pasado el plazo no cambia el tipo de tarjeta');
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA' where id = pg_temp.uc(42) $$), 'CB007', 'ni la marca');
+select is(pg_temp.error_de($$ update public.cobranza set numero_aprobacion = '999999' where id = pg_temp.uc(42) $$), 'CB007', 'ni la aprobación');
+select is(pg_temp.error_de($$ update public.cobranza set referencia_transferencia = '1' where id = pg_temp.uc(43) $$), 'CB007', 'ni la referencia de la transferencia');
+select is(pg_temp.error_de($$ update public.cobranza set banco_origen = 'Itaú' where id = pg_temp.uc(43) $$), 'CB007', 'ni el banco');
+select is(pg_temp.error_de($$ update public.cobranza set numero_cuota = 2 where id = pg_temp.uc(44) $$), 'CB007', 'ni el número de cuota');
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_tipo = tarjeta_tipo, tarjeta_marca = tarjeta_marca, numero_aprobacion = numero_aprobacion,
+                                     referencia_transferencia = referencia_transferencia, banco_origen = banco_origen, numero_cuota = numero_cuota
+                              where id = pg_temp.uc(42) $$), 'ok', 'el reenvío idéntico con esos datos pasa');
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA', numero_aprobacion = '999999', numero_cuota = 2 where id = pg_temp.uc(45) $$), 'ok',
+          'dentro del plazo se corrigen junto con el monto y el medio');
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA' where id = pg_temp.uc(46) $$), 'CB007', 'con el ticket validado, la marca tampoco');
 -- El borde: 72 h inclusive.
 select is(pg_temp.error_de($$ update public.cobranza set monto = 1500 where id = pg_temp.uc(40) $$), 'ok', 'a las 72 h justas todavía corrige');
 select is(pg_temp.error_de($$ update public.cobranza set monto = 1500 where id = pg_temp.uc(41) $$), 'CB007', 'a las 72 h y un segundo no');
