@@ -19,7 +19,8 @@
 --
 -- ## 2. «Carrera corr»: corregir la carrera recalcula la meta (#187)
 --
---   · Cuando la carrera de un colportor pasa de una a otra (la corrige el ADMIN: 0117), las inscripciones VIVAS
+--   · Cuando cambia la carrera de un colportor (de una a otra, o de ninguna a una: quitarla y elegir otra es
+--     corregirla, ronda 1 de la revisión), las inscripciones VIVAS
 --     que tienen tipo de beca y están en una campaña que no terminó toman las metas de la carrera nueva (libros
 --     y monto, del mismo tipo de beca y del tipo de la campaña). Las campañas terminadas quedan como estaban,
 --     igual que en `asignar_beca()` (BC001: «sus becas quedan como estaban»).
@@ -37,7 +38,7 @@
 -- ## 3. «Logro beca»: lo alcanzado no se pierde (front-coordinadores-web#95)
 --
 --   La decisión vale «si la lectura de Becas calcula el estado». `becas_de_campania()` todavía no calcula el
---   avance ni el estado de la meta (HU-BEC-002, #145): no hay nada que cambiar acá. Cuando ese cálculo exista,
+--   avance ni el estado de la meta (HU-BEC-002, sin issue todavía): no hay nada que cambiar acá. Cuando ese cálculo exista,
 --   tiene que devolver la meta alcanzada aunque el tipo pase a «Sin beca» (hoy «Sin beca» deja el tipo y las
 --   metas en null, R-BC06: ese cálculo tendrá que guardar lo alcanzado antes de eso).
 --
@@ -243,8 +244,11 @@ comment on function public.asignar_beca(uuid, uuid[], text) is
 -- 2. Corregir la carrera recalcula la meta de las inscripciones con beca
 -- ----------------------------------------------------------------------------
 
--- AFTER UPDATE OF carrera_id en usuario, solo cuando la carrera pasa de una a otra (elegirla por primera vez no
--- recalcula nada: sin carrera no se puede tener beca). La corrige el ADMIN (0117); el servidor también puede.
+-- AFTER UPDATE OF carrera_id en usuario, cuando la carrera pasa a otra o de ninguna a una (quitarla y elegir otra
+-- es corregirla). La corrige el ADMIN (0117); `elegir_carrera()` la fija por primera vez; el servidor también
+-- puede. Sin inscripción viva con beca no hace nada (la primera elección de quien no tiene beca no recalcula).
+-- Recalcula TODAS las campañas de la persona, no solo las que coordina quien dispara el cambio (por eso es
+-- DEFINER y avisa al guard de la beca con `colportores.recalculo_de_metas`).
 create function public.tg_usuario_carrera_recalcula_metas()
 returns trigger
 language plpgsql
@@ -254,6 +258,7 @@ set search_path = ''
 as $$
 declare
   v_sin_meta integer;
+  v_antes    text;
   r          record;
 begin
   -- Las inscripciones vivas con beca, en campañas que no terminaron, con candado y en orden de id: una
@@ -278,9 +283,18 @@ begin
      and (c.fecha_fin is null or c.fecha_fin >= public.hoy_montevideo())
      and mb.id is null;
   if v_sin_meta > 0 then
+    -- El coordinador que elige la carrera no la carga: el aviso es el de asignar_beca() y lo manda al ADMIN.
+    if auth.uid() is not null and not public.tiene_rol('ADMIN') then
+      raise exception 'Falta configurar la meta de esta carrera. Avisale al administrador para que la cargue y volvé a asignar la beca.'
+        using errcode = 'BC004';
+    end if;
     raise exception 'La carrera nueva no tiene la meta cargada para la campaña de este colportor. Cargala primero y volvé a corregir la carrera.'
       using errcode = 'BC004';
   end if;
+
+  -- El guard de la beca (0117/0120) deja pasar este cambio aunque lo dispare un coordinador de otra campaña.
+  v_antes := current_setting('colportores.recalculo_de_metas', true);
+  perform set_config('colportores.recalculo_de_metas', 'on', true);
 
   -- Solo se toca lo que cambia; por cada inscripción cambiada queda el evento que dice por qué.
   for r in
@@ -318,12 +332,13 @@ begin
                          'meta_monto_ces_anterior', r.monto_antes, 'meta_monto_ces', r.monto));
   end loop;
 
+  perform set_config('colportores.recalculo_de_metas', coalesce(v_antes, 'off'), true);
   return null;
 end;
 $$;
 
 comment on function public.tg_usuario_carrera_recalcula_metas() is
-  'AFTER UPDATE OF carrera_id en usuario, cuando pasa de una carrera a otra (0132, backend-supabase#202, '
+  'AFTER UPDATE OF carrera_id en usuario, cuando pasa a otra carrera o de ninguna a una (0132, backend-supabase#202, '
   '«Carrera corr»): las inscripciones vivas con tipo de beca en campañas que no terminaron toman las metas de la '
   'carrera nueva. Sin esa meta cargada para alguna: BC004 y no cambia nada. Lo que no cambia no se toca. Cada '
   'inscripción cambiada deja meta_de_beca_recalculada en audit_log.';
@@ -334,9 +349,49 @@ revoke all on function public.tg_usuario_carrera_recalcula_metas()
 create trigger usuario_carrera_recalcula_metas
   after update of carrera_id on public.usuario
   for each row
-  when (old.carrera_id is not null and new.carrera_id is not null
-        and old.carrera_id is distinct from new.carrera_id)
+  when (new.carrera_id is not null and old.carrera_id is distinct from new.carrera_id)
   execute function public.tg_usuario_carrera_recalcula_metas();
+
+-- El guard de la beca (0120) deja pasar el recálculo de metas: igual que en 0120 salvo la primera guarda. La
+-- corrección de carrera puede dispararla un coordinador (elegir_carrera) y tiene que tocar también las inscripciones
+-- de campañas que no coordina. La bandera es de la transacción y solo la pone tg_usuario_carrera_recalcula_metas().
+create or replace function public.tg_campania_colportor_beca_y_limite()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  if new.tipo_beca is not distinct from old.tipo_beca
+     and new.meta_libros is not distinct from old.meta_libros
+     and new.meta_monto_ces is not distinct from old.meta_monto_ces then
+    return new;
+  end if;
+
+  if current_setting('colportores.recalculo_de_metas', true) = 'on' then
+    return new;
+  end if;
+
+  if public.tiene_rol('ADMIN')
+     or (public.tiene_rol('COORDINADOR')
+         and exists (select 1 from public.campania c
+                      where c.id = new.campania_id and c.coordinador_id = auth.uid())) then
+    return new;
+  end if;
+
+  raise exception 'La beca y la meta las fija el coordinador de la campaña'
+    using errcode = '42501';
+end;
+$$;
+
+comment on function public.tg_campania_colportor_beca_y_limite() is
+  'BEFORE UPDATE OF tipo_beca, meta_libros, meta_monto_ces en campania_colportor (0067, 0117, 0120, 0132): solo '
+  'el ADMIN o el coordinador de esa campaña los cambian con un JWT (42501); el servidor, sin restricción; y el '
+  'recálculo de metas por corrección de carrera (colportores.recalculo_de_metas, lo pone solo ese trigger).';
 
 -- becas_de_campania: igual que en 0117 más `meta_recalculada_en` (la marca del aviso «Carrera corregida: meta de
 -- <carrera>»). Sumar una columna de salida pide drop + create + los mismos privilegios.
@@ -387,7 +442,7 @@ comment on function public.becas_de_campania(uuid) is
   'dos metas copiadas (libros y monto en centavos), si la carrera tiene meta cargada para el tipo de la campaña '
   '(meta_configurada) y meta_recalculada_en: cuándo una corrección de carrera dejó a la inscripción con la meta '
   'que tiene (null si nunca, o si la meta cambió después): el aviso «Carrera corregida: meta de <carrera>». No '
-  'trae el avance (HU-BEC-002, #145). Errores: 42501 sin permiso; CZ001 inexistente; BC001 terminada.';
+  'trae el avance (HU-BEC-002, sin issue todavía). Errores: 42501 sin permiso; CZ001 inexistente; BC001 terminada.';
 
 revoke all on function public.becas_de_campania(uuid) from public, anon, authenticated, service_role;
 grant execute on function public.becas_de_campania(uuid) to authenticated;

@@ -346,9 +346,32 @@ select is(pg_temp.beca('e1', 'b7') || '/' || pg_temp.beca('e2', 'b7'), 'COMPLETA
 select is(pg_temp.n_ev('meta_de_beca_recalculada', 'e1', 'b7') + pg_temp.n_ev('meta_de_beca_recalculada', 'e2', 'b7'), 0,
           'sin eventos de recálculo');
 
--- b8: una beca de antes SIN carrera: elegirla por primera vez no recalcula.
+-- b8: una beca de antes SIN carrera: al elegirla por primera vez toma la meta de la carrera (de ninguna a una).
 select is((select r.cambio from public.elegir_carrera(pg_temp.u('e1'), pg_temp.u('b8'), pg_temp.u('c1')) r), true, 'b8: elige carrera por primera vez');
-select is(pg_temp.beca('e1', 'b8'), 'MEDIA|1|1', 'b8: la meta de antes no se toca');
+select is(pg_temp.beca('e1', 'b8'), 'MEDIA|60|3000000', 'b8: la meta de antes (1|1) pasa a la de su carrera');
+select is(pg_temp.n_ev('meta_de_beca_recalculada', 'e1', 'b8'), 1, 'b8: con su evento');
+select is((pg_temp.meta_ev('e1', 'b8') ->> 'carrera_anterior') is null and (pg_temp.meta_ev('e1', 'b8') ->> 'carrera_nueva') = pg_temp.u('c1')::text, true,
+          'b8: el evento dice que antes no tenía carrera');
+
+-- Corregir en dos pasos (S1 de la revisión): el ADMIN la quita y el coordinador elige otra. b7 tiene COMPLETA en
+-- Verano (e1, de a1) y MEDIA en Invierno (e2, de a2): las dos toman la meta de la carrera nueva.
+select pg_temp.actuar_como(pg_temp.u('ad'));
+update public.usuario set carrera_id = null where id = pg_temp.u('b7');
+select is(pg_temp.beca('e1', 'b7') || '/' || pg_temp.beca('e2', 'b7'), 'COMPLETA|120|6000000/MEDIA|50|2500000', 'quitar la carrera no toca nada');
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(pg_temp.error_de($$ select * from public.elegir_carrera('01920000-0000-7000-8000-0000000132e1', '01920000-0000-7000-8000-0000000132b7', '01920000-0000-7000-8000-0000000132c4') $$),
+          'BC004: Falta configurar la meta de esta carrera. Avisale al administrador para que la cargue y volvé a asignar la beca.',
+          'S1: si la carrera nueva no tiene la meta, el coordinador recibe el aviso de asignar_beca (BC004)');
+select is(pg_temp.carrera_de('b7') || '/' || pg_temp.beca('e1', 'b7'), '-/COMPLETA|120|6000000', 'y no cambia nada: ni la carrera ni la beca');
+select is((select r.cambio from public.elegir_carrera(pg_temp.u('e1'), pg_temp.u('b7'), pg_temp.u('c2')) r), true, 'S1: a1 elige Sistemas');
+select is(pg_temp.carrera_de('b7'), 'c2', 'b7 queda con Sistemas');
+select is(pg_temp.beca('e1', 'b7') || '/' || pg_temp.beca('e2', 'b7'), 'COMPLETA|20|1000000/MEDIA|5|250000',
+          'S1: Verano y también Invierno, que a1 no coordina, toman la meta de Sistemas');
+select is(pg_temp.n_ev('meta_de_beca_recalculada', 'e1', 'b7') || '/' || pg_temp.n_ev('meta_de_beca_recalculada', 'e2', 'b7'), '1/1',
+          'S1: un evento por inscripción');
+select is(pg_temp.marca('e1', 'b7'), 'true', 'S1: Becas devuelve la marca del aviso');
+select is(current_setting('colportores.recalculo_de_metas', true), 'off', 'la bandera del recálculo no queda puesta');
+select pg_temp.actuar_como_servidor();
 
 -- La corrección directa (el servidor, el editor SQL) hace lo mismo: b1 vuelve a Teología.
 select pg_temp.actuar_como_servidor();
@@ -361,6 +384,10 @@ select is(pg_temp.n_actor('e2', 'b1', null), 1, 'sin sesión, el actor del segun
 -- Dejar la carrera sin valor no recalcula (no hay meta que tomar).
 update public.usuario set carrera_id = null where id = pg_temp.u('b2');
 select is(pg_temp.beca('e1', 'b2'), '-|-|-', 'quitar la carrera no inventa ninguna meta');
+-- La primera elección de quien no tiene beca viva (b2: la de e6 está en una permanente) no recalcula nada.
+update public.usuario set carrera_id = pg_temp.u('c2') where id = pg_temp.u('b2');
+select is((select count(*)::int from auditoria.audit_log where event_type = 'meta_de_beca_recalculada'
+              and target_user_id = pg_temp.u('b2')), 0, 'elegir la carrera por primera vez sin beca viva no deja ningún evento');
 select ok(not has_function_privilege('authenticated', 'public.tg_usuario_carrera_recalcula_metas()', 'execute'),
           'la función del trigger no la ejecuta nadie con JWT');
 
