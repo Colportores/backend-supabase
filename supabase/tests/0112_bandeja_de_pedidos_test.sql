@@ -361,7 +361,7 @@ select is((select proargnames from pg_proc where oid = 'public.rechazar_pedido(u
 select is((select proargnames from pg_proc where oid = 'public.deshacer_decision_de_pedido(uuid)'::regprocedure),
           array['p_pedido_id','pedido_id','estado','ya_estaba'], 'deshacer_decision_de_pedido: parámetros y columnas');
 select is((select proargnames from pg_proc where oid = 'public.pedidos_de_campania(uuid)'::regprocedure),
-          array['p_campania_id','pedido_id','colportor_id','nombre','apellido','ciudad_id','ciudad_nombre',
+          array['p_campania_id','pedido_id','numero','colportor_id','nombre','apellido','ciudad_id','ciudad_nombre',
                 'departamento','de_baja','estado','origen','fecha_pedido','productos','unidades',
                 'unidades_autorizadas','monto_total','monto_autorizado','excede_limite','decidido_en',
                 'motivo_rechazo','deshacer_hasta'], 'pedidos_de_campania: parámetros y columnas');
@@ -369,7 +369,7 @@ select is((select proargnames from pg_proc where oid = 'public.pedido_lineas(uui
           array['p_pedido_id','producto_id','producto_nombre','producto_tipo','cantidad','cantidad_autorizada',
                 'precio_unitario','subtotal','subtotal_autorizado','stock'], 'pedido_lineas: parámetros y columnas');
 select is((select proargnames from pg_proc where oid = 'public.pedido_contexto(uuid)'::regprocedure),
-          array['p_pedido_id','colportor_id','nombre','apellido','estado','monto_total','monto_autorizado',
+          array['p_pedido_id','numero','colportor_id','nombre','apellido','estado','monto_total','monto_autorizado',
                 'deuda_actual','deuda_con_pedido','por_cobrar','libros_por_entregar',
                 'ultimo_deposito_fecha','ultimo_deposito_monto'], 'pedido_contexto: parámetros y columnas');
 
@@ -478,7 +478,7 @@ select is(pg_temp.lista(pg_temp.u('a1'), 'e1') -> 15 ->> 'pedido_id', pg_temp.u(
 create or replace function pg_temp.fila(p_ped text) returns jsonb language sql as $$
   select e from jsonb_array_elements(pg_temp.lista(pg_temp.u('a1'), 'e1')) e where e ->> 'pedido_id' = pg_temp.u(p_ped)::text
 $$;
-select is(pg_temp.fila('c1') - 'pedido_id' - 'colportor_id' - 'fecha_pedido' - 'ciudad_id',
+select is(pg_temp.fila('c1') - 'pedido_id' - 'numero' - 'colportor_id' - 'fecha_pedido' - 'ciudad_id',
           jsonb_build_object('nombre','Ana','apellido','Alfa','ciudad_nombre','Ciudad uno q104',
                              'departamento','Departamento de prueba uno','de_baja',false,
                              'estado','PENDIENTE_AUTORIZACION','origen','COLPORTOR','productos',3,'unidades',16,
@@ -525,7 +525,7 @@ select is((pg_temp.lineas(pg_temp.u('a1'), 'c4') -> 0 ->> 'stock'), '0', 'un col
 -- ============================================================================
 -- 5. El contexto de la cuenta
 -- ============================================================================
-select is((pg_temp.contexto(pg_temp.u('a1'), 'c1') -> 0) - 'colportor_id',
+select is((pg_temp.contexto(pg_temp.u('a1'), 'c1') -> 0) - 'colportor_id' - 'numero',
           jsonb_build_object('nombre','Ana','apellido','Alfa','estado','PENDIENTE_AUTORIZACION','monto_total',13000,
                              'monto_autorizado',null,'deuda_actual',20000,'deuda_con_pedido',33000,'por_cobrar',7000,
                              'libros_por_entregar',4,'ultimo_deposito_fecha','2026-10-17T12:00:00+00:00',
@@ -536,7 +536,7 @@ select is(pg_temp.contexto(pg_temp.u('a1'), 'c2') -> 0 ->> 'deuda_con_pedido', '
           'un pedido ya autorizado ya está en la deuda: no se suma otra vez');
 select is(pg_temp.contexto(pg_temp.u('a1'), 'c3') -> 0 ->> 'deuda_con_pedido', '20000', 'un rechazado tampoco');
 select is(pg_temp.contexto(pg_temp.u('a1'), 'c2') -> 0 ->> 'monto_autorizado', '1500', 'trae lo autorizado');
-select is(pg_temp.contexto(pg_temp.u('a1'), 'c4') -> 0,
+select is((pg_temp.contexto(pg_temp.u('a1'), 'c4') -> 0) - 'numero',
           jsonb_build_array(jsonb_build_object('colportor_id', pg_temp.u('b2'), 'nombre', 'Beto', 'apellido', 'Bravo',
                 'estado', 'PENDIENTE_AUTORIZACION', 'monto_total', 1500, 'monto_autorizado', null, 'deuda_actual', 0,
                 'deuda_con_pedido', 1500, 'por_cobrar', 0, 'libros_por_entregar', 9, 'ultimo_deposito_fecha', null,
@@ -797,7 +797,7 @@ select is(pg_temp.aut(pg_temp.u('a1'), 'd5') -> 0 ->> 'estado', 'AUTORIZADO', 'd
 select is(pg_temp.deuda('b1'), 34500::bigint + 7000 + 1500 + 2500 + 1500, 'y suma su deuda');
 select is(pg_temp.des(pg_temp.u('a1'), 'd5') -> 0 ->> 'estado', 'PENDIENTE_AUTORIZACION', 'deshacer lo autorizado lo vuelve a esperar');
 select is(pg_temp.deuda('b1'), 34500::bigint + 7000 + 1500 + 2500, 'resta de la deuda lo mismo que sumó');
-select is(pg_temp.pedido('d5') - 'created_at' - 'updated_at' - 'sync_version' - 'xmin_w' - 'id' - 'fecha_pedido',
+select is(pg_temp.pedido('d5') - 'created_at' - 'updated_at' - 'sync_version' - 'xmin_w' - 'id' - 'fecha_pedido' - 'numero',
           jsonb_build_object('colportor_id', pg_temp.u('b1'), 'coordinador_id', null, 'estado', 'PENDIENTE_AUTORIZACION',
                              'monto_total', 1500, 'origen', 'COLPORTOR', 'excede_limite', false, 'created_by', null,
                              'deleted_at', null, 'monto_autorizado', null, 'decidido_por', null, 'decidido_en', null,
