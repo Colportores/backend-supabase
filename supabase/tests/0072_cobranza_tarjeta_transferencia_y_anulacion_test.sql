@@ -327,13 +327,15 @@ select is(pg_temp.ins(80, p_fecha => now() - interval '71 hours', p_anulado => n
 select is(pg_temp.ins(81, p_fecha => now() - interval '73 hours', p_anulado => now(), p_motivo => 'Otro'), 'CB001',
           'uno que llega anulado a la hora 73 no');
 select is((select count(*)::int from public.cobranza where id = pg_temp.uc(81)), 0, 'y no se guardó');
-select is(pg_temp.error_de($$ update public.cobranza set monto = 1500 where id = pg_temp.uc(3) $$), 'ok',
-          'cambiar otra cosa de un cobro viejo (sin anularlo) no mira la ventana');
+select is(pg_temp.error_de($$ update public.cobranza set monto = 1500 where id = pg_temp.uc(3) $$), 'CB007',
+          'cambiar el monto de un cobro pasadas las 72 h ya no se puede: el cobro quedó fijo (0131)');
+select is(pg_temp.error_de($$ update public.cobranza set monto = monto where id = pg_temp.uc(3) $$), 'ok',
+          'pero el reenvío idéntico de un cobro viejo pasa');
 select is(pg_temp.anular(19), 'ok', 'otro cobro de la hora 1 (el 19)');
--- El reloj es el del servidor: una fecha de anulación vieja o futura que manda el teléfono no corre el plazo.
-select is(pg_temp.error_de($$ update public.cobranza set anulado_at = now() - interval '48 hours', motivo_anulacion = 'Otro'
+-- Desde 0131 el reloj que cuenta es la hora del teléfono (anulado_at): una hora fuera de las 72 h desde el cobro no vale.
+select is(pg_temp.error_de($$ update public.cobranza set anulado_at = now() - interval '30 minutes', motivo_anulacion = 'Otro'
                                where id = pg_temp.uc(20) $$), 'CB001',
-          'mandar una fecha de anulación de hace 48 h para un cobro de hace 73 h no esquiva la ventana');
+          'una hora de anulación a las 72 h y 30 min del cobro (cobro de hace 73 h) no vale');
 select is(pg_temp.anulado(20), false, 'y el cobro sigue vivo');
 -- Otra colportora no toca el cobro de b1: la RLS lo esconde.
 select pg_temp.actuar_como(pg_temp.u('b2'));
@@ -366,10 +368,11 @@ select is(pg_temp.ins(82, 'TARJETA', now() - interval '1 hour', p_ticket => 'e1'
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
 -- La fecha: correrla para adelante y después anular no esquiva las 72 h.
-select is(pg_temp.error_de($$ update public.cobranza set fecha = now() where id = pg_temp.uc(25) $$), 'CB006',
-          'mover la fecha de un cobro de la hora 73 a hoy no se puede');
-select is(pg_temp.mensaje_de($$ update public.cobranza set fecha = now() where id = pg_temp.uc(25) $$),
-          'CB006: La fecha de un cobro no se puede cambiar. Si te equivocaste, anulalo y cargalo de nuevo.', 'y el mensaje dice qué hacer');
+select is(pg_temp.error_de($$ update public.cobranza set fecha = now() where id = pg_temp.uc(25) $$), 'CB007',
+          'mover la fecha de un cobro de la hora 73 a hoy no se puede (desde 0131 el cobro pasado el plazo está fijo: CB007)');
+select is(pg_temp.mensaje_de($$ update public.cobranza set fecha = now() where id = pg_temp.uc(29) $$),
+          'CB006: La fecha de un cobro no se puede cambiar. Si te equivocaste, anulalo y cargalo de nuevo.',
+          'y dentro del plazo el mensaje dice qué hacer (CB006)');
 select is(pg_temp.anular(25), 'CB001', 'y anular después sigue siendo CB001: la fecha no se movió');
 select is((select fecha from public.cobranza where id = pg_temp.uc(25)) < now() - interval '72 hours', true, 'el cobro conserva su fecha');
 select is(pg_temp.error_de($$ update public.cobranza set fecha = now() - interval '1 hour' where id = pg_temp.uc(29) $$), 'CB006',
@@ -386,8 +389,10 @@ select is(pg_temp.error_de($$ update public.cobranza set ticket_id = pg_temp.u('
           'ni cambiarlo por otro');
 select is(pg_temp.anular(26), 'CB002', 'y anular después sigue siendo CB002');
 select is((select ticket_id from public.cobranza where id = pg_temp.uc(26)), pg_temp.u('e1'), 'el cobro sigue con su ticket validado');
-select is(pg_temp.error_de($$ update public.cobranza set ticket_id = ticket_id, monto = 1100 where id = pg_temp.uc(26) $$), 'ok',
+select is(pg_temp.error_de($$ update public.cobranza set ticket_id = ticket_id where id = pg_temp.uc(26) $$), 'ok',
           'mandar el mismo ticket (fila entera) no falla');
+select is(pg_temp.error_de($$ update public.cobranza set ticket_id = ticket_id, monto = 1100 where id = pg_temp.uc(26) $$), 'CB007',
+          'pero con el ticket validado el monto ya no cambia (cobro fijo, 0131)');
 select is(pg_temp.error_de($$ update public.cobranza set ticket_id = null where id = pg_temp.uc(27) $$), 'ok',
           'un ticket rechazado sí se suelta (para cargar otro)');
 select is(pg_temp.error_de($$ update public.cobranza set ticket_id = pg_temp.u('e2') where id = pg_temp.uc(27) $$), 'ok',
@@ -414,8 +419,8 @@ select pg_temp.push(jsonb_build_array(
                      'payload', jsonb_build_object('id', pg_temp.uc(95), 'ticket_id', null)),
   pg_temp.job_anular('cd', 95)
 )) as r;
-select is(pg_temp.codigos((select r from lote2)), array['CB006', 'CB001', 'CB005', 'CB002'],
-          'por el push: mover la fecha o soltar el ticket valida CB006 / CB005 y anular después sigue siendo CB001 / CB002');
+select is(pg_temp.codigos((select r from lote2)), array['CB007', 'CB001', 'CB005', 'CB002'],
+          'por el push: mover la fecha (CB007, el cobro pasó el plazo) o soltar el ticket (CB005) y anular después sigue siendo CB001 / CB002');
 select is(pg_temp.resultados((select r from lote2)), array['invalid', 'invalid', 'invalid', 'invalid'], 'los cuatro vuelven invalid sin tumbar el lote');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.anulado(25) or pg_temp.anulado(95), false, 'y ninguno de los dos cobros quedó anulado');
