@@ -68,7 +68,7 @@ Cuerpo de error: `{ "error": { "codigo", "mensaje" } }`. Los `mensaje` dicen qu�
 mostrarse tal cual. Los códigos de la base (`FT001`, `FT002`, `FT003`) se traducen a los de la tabla; ver la migración
 `0134`. CORS: `Access-Control-Allow-Origin: *` (la autenticación va en el JWT, no en cookies).
 
-## Puesta en marcha (lo hace Cristian; la función no se publica sola hasta que exista el paso «Publicar fn», #203)
+## Puesta en marcha (los pasos 1 a 4 los hace Cristian, una vez por ambiente; la publicación la hace `deploy.yml`)
 
 1. **Bucket privado en R2** (Cloudflare → R2): sin acceso público ni dominio público. Un bucket por ambiente (develop,
    staging, production).
@@ -85,8 +85,9 @@ mostrarse tal cual. Los códigos de la base (`FT001`, `FT002`, `FT003`) se tradu
      R2_CUENTA=<account id> R2_CLAVE_DE_ACCESO=<access key id> R2_CLAVE_SECRETA=<secret access key> R2_BUCKET=<nombre del bucket>
    ```
 
-5. **Publicar la función**: `supabase functions deploy foto-ticket --project-ref <ref>` (a mano hasta que `deploy.yml`
-   lo haga: backend-supabase#203).
+5. **Publicar la función**: no hay que hacerlo a mano. `deploy.yml` corre `supabase functions deploy --use-api` después
+   de `db push` en cada ambiente (backend-supabase#203). Para publicarla a mano, igual sirve
+   `supabase functions deploy foto-ticket --project-ref <ref>`.
 6. **CORS del bucket**, solo si el panel baja la foto con `fetch`/blob en vez de mostrarla en una etiqueta `<img>` o
    abrirla: permitir `GET` desde el origen del panel. El teléfono sube desde código nativo y no lo necesita.
 
