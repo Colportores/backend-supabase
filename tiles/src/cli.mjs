@@ -3,7 +3,7 @@
 //
 //   node src/cli.mjs estilo    [--url-base URL] [--salida DIR]
 //   node src/cli.mjs publicar  [--solo estilo|ciudades|zonas|departamentos|uruguay] [--ciudad SLUG]... [--zona ID]...
-//                              [--regenerar] [--quitar ID]... [--build AAAAMMDD] [--dry-run]
+//                              [--pais ISO] [--regenerar] [--quitar ID]... [--build AAAAMMDD] [--dry-run]
 //   node src/cli.mjs catalogo-uruguay [--salida ARCHIVO] [--funcion-sql ARCHIVO] [--overpass URL]
 //   node src/cli.mjs verificar [--url URL]
 //
@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { ciudadesPublicables, leerCiudades } from './ambito.mjs';
+import { PAIS_POR_DEFECTO, ciudadesPublicables, leerCiudades, normalizarPais } from './ambito.mjs';
 import { BUCKET } from './bucket.mjs';
 import { armarEstilo, leerPaleta } from './estilo.mjs';
 import {
@@ -108,9 +108,19 @@ async function comandoPublicar(opciones) {
   if (!['todo', 'estilo', 'ciudades', 'zonas', 'departamentos', 'uruguay'].includes(solo)) {
     throw new Error('--solo es estilo, ciudades, zonas, departamentos o uruguay');
   }
+  // El país se valida acá, antes de leer la base y de escribir en el bucket (y antes de pedir las variables de entorno).
+  const pais = opciones.pais === undefined ? PAIS_POR_DEFECTO : normalizarPais(opciones.pais);
   const nivelAmplio = solo === 'departamentos' ? 'departamento' : solo === 'uruguay' ? 'uruguay' : null;
+  if (nivelAmplio && pais !== PAIS_POR_DEFECTO) {
+    throw new Error(
+      `--pais ${pais} no va con --solo ${solo}: los departamentos y «uruguay» salen del catálogo de Uruguay (datos/uruguay-osm.json) y son solo de ${PAIS_POR_DEFECTO}. No se leyó ni se subió nada.`,
+    );
+  }
   const conCiudades = solo === 'todo' || solo === 'ciudades';
   const conZonas = solo === 'todo' || solo === 'zonas';
+  if (opciones.pais !== undefined && !conCiudades && !nivelAmplio) {
+    log(`aviso: --pais ${pais} no cambia nada con --solo ${solo}: el país solo elige las ciudades que se publican`);
+  }
   const quitarIds = opciones.quitar ?? [];
   if (quitarIds.length > 0 && !conCiudades) throw new Error('--quitar saca un paquete de ciudad del catálogo: va con --solo ciudades (o sin --solo)');
   if (quitarIds.length > 0 && opciones.ciudad?.length) throw new Error('--quitar no se combina con --ciudad: una publica una ciudad, la otra saca otra');
@@ -124,9 +134,13 @@ async function comandoPublicar(opciones) {
   // `ambito_id` en el catálogo).
   let elegidas = [];
   let ciudadesEnBase;
+  let ciudadesDeTodos;
   if (conCiudades) {
     if (clave) {
-      ciudadesEnBase = await leerCiudades({ url: supabaseUrl, clave });
+      ciudadesEnBase = await leerCiudades({ url: supabaseUrl, clave, pais });
+      // El catálogo puede nombrar ciudades de más de un país: para avisar de lo ya publicado y detectar choques
+      // de paquetes se mira public.ciudad entera, no solo el país de esta corrida.
+      ciudadesDeTodos = await leerCiudades({ url: supabaseUrl, clave, pais: null });
       const { publicables, sinRectangulo } = ciudadesPublicables(ciudadesEnBase);
       if (sinRectangulo.length > 0) {
         log(
@@ -137,7 +151,8 @@ async function comandoPublicar(opciones) {
       if (opciones.ciudad?.length && elegidas.length === 0) {
         throw new Error(`Ninguna ciudad con rectángulo coincide con ${opciones.ciudad.join(', ')} (las que hay: ${publicables.map((c) => c.slug).join(', ') || 'ninguna'})`);
       }
-      if (elegidas.length === 0) log('no hay ciudades con rectángulo en public.ciudad: no hay mapas de ciudad para publicar');
+      if (ciudadesEnBase.length === 0) log(`no hay ciudades de ${pais} en public.ciudad: no hay mapas de ciudad para publicar`);
+      else if (elegidas.length === 0) log(`no hay ciudades de ${pais} con rectángulo en public.ciudad: no hay mapas de ciudad para publicar`);
     } else {
       log('[dry-run] sin clave de servicio no puedo leer public.ciudad: no hay ciudades que simular');
     }
@@ -183,7 +198,8 @@ async function comandoPublicar(opciones) {
       await publicarCiudades({
         storage,
         ciudades: elegidas,
-        ciudadesEnBase: opciones.ciudad?.length ? undefined : ciudadesEnBase,
+        ciudadesEnBase: ciudadesDeTodos,
+        avisar: !opciones.ciudad?.length,
         quitarIds,
         extraer: async ({ bbox, zoomMax, destino }) => {
           const { pmtiles, url } = await preparar(opciones.build);
@@ -265,6 +281,7 @@ async function main() {
       salida: { type: 'string' },
       solo: { type: 'string' },
       ciudad: { type: 'string', multiple: true },
+      pais: { type: 'string' },
       zona: { type: 'string', multiple: true },
       quitar: { type: 'string', multiple: true },
       regenerar: { type: 'boolean' },

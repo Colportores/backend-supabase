@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { avisosDeCiudades, ciudadesPublicables, leerCiudades, normalizar, slugDe } from '../src/ambito.mjs';
+import { avisosDeCiudades, ciudadesPublicables, leerCiudades, normalizar, normalizarPais, slugDe } from '../src/ambito.mjs';
 
 const ID_1 = '09990000-0000-7000-8003-000000000001';
 const ID_2 = '09990000-0000-7000-8003-000000000002';
@@ -126,4 +126,57 @@ test('leerCiudades dice qué falló, con el estado HTTP', async () => {
     throw Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
   };
   await assert.rejects(leerCiudades({ url: 'https://p.supabase.co', clave: 'x'.repeat(20), fetchImpl: sinRed }), /ECONNREFUSED/);
+});
+
+test('leerCiudades pide las de Uruguay si no se le dice el país, y las del país pedido si se le dice (`ar` se lee `AR`)', async () => {
+  const pedidos = [];
+  const fetchImpl = async (url) => {
+    pedidos.push(new URL(url));
+    return new Response('[]', { status: 200 });
+  };
+  const base = { url: 'https://p.supabase.co', clave: 'x'.repeat(20), fetchImpl };
+  await leerCiudades(base);
+  await leerCiudades({ ...base, pais: 'AR' });
+  await leerCiudades({ ...base, pais: 'ar' });
+  assert.deepEqual(pedidos.map((p) => p.searchParams.get('pais.iso_code')), ['eq.UY', 'eq.AR', 'eq.AR']);
+  for (const p of pedidos) {
+    assert.equal(p.searchParams.get('deleted_at'), 'is.null');
+    assert.ok(p.searchParams.get('select').includes('pais!inner(iso_code)'), 'filtra por la tabla pais');
+  }
+});
+
+test('leerCiudades con `pais: null` pide las ciudades vivas de todos los países, sin filtro de país', async () => {
+  let pedido;
+  const fetchImpl = async (url) => {
+    pedido = new URL(url);
+    return new Response(JSON.stringify([MONTEVIDEO]), { status: 200 });
+  };
+  const leidas = await leerCiudades({ url: 'https://p.supabase.co', clave: 'x'.repeat(20), pais: null, fetchImpl });
+  assert.deepEqual(leidas, [MONTEVIDEO]);
+  assert.equal(pedido.searchParams.get('pais.iso_code'), null);
+  assert.equal(pedido.searchParams.get('deleted_at'), 'is.null');
+  assert.ok(!pedido.searchParams.get('select').includes('pais'));
+});
+
+for (const invalido of ['A', 'ARG', '1R', '', ' AR', 'A-', 'AR&deleted_at=is.null', undefined]) {
+  test(`un país inválido (${JSON.stringify(invalido)}) se rechaza nombrando el valor, antes de leer nada`, async () => {
+    let pedidos = 0;
+    const fetchImpl = async () => {
+      pedidos += 1;
+      return new Response('[]');
+    };
+    assert.throws(() => normalizarPais(invalido), /--pais tiene que ser un código de país de dos letras.*llegó/);
+    if (invalido !== undefined) {
+      await assert.rejects(leerCiudades({ url: 'https://p.supabase.co', clave: 'x'.repeat(20), pais: invalido, fetchImpl }), (error) => {
+        assert.ok(error.message.includes(JSON.stringify(invalido)), error.message);
+        return true;
+      });
+    }
+    assert.equal(pedidos, 0, 'no llegó a pedirle nada a la base');
+  });
+}
+
+test('normalizarPais pasa a mayúsculas el código de dos letras', () => {
+  assert.equal(normalizarPais('ar'), 'AR');
+  assert.equal(normalizarPais('UY'), 'UY');
 });
