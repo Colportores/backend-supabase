@@ -87,7 +87,7 @@ scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / 
 
 - `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
 - `tiles.yml` (a mano, `workflow_dispatch`, y cada hora para los mapas de las zonas, solo en los environments con su variable `MAPAS_ZONAS_<ENV>` en `true`): publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo; las ciudades salen de `public.ciudad`) en el bucket público `mapas` del environment y lo verifica. No lleva secretos nuevos. [`docs/mapas-tiles.md`](./docs/mapas-tiles.md). El job **tiles** de `ci.yml` corre las pruebas del publicador (`npm ci && npm test` en `tiles/`) y el job **funciones**, las de las Edge Functions del informe PDF y de la foto del ticket (`deno task check && deno task test` en `supabase/functions/informe-reportes/` y en `supabase/functions/foto-ticket/`, sin Docker).
-- `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment*. **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
+- `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment* y, después, `supabase functions deploy --use-api --yes`: publica **todas** las Edge Functions de `supabase/functions/` (hoy `informe-reportes` y `foto-ticket`) en el mismo environment (develop, staging o production), con la misma `SUPABASE_ACCESS_TOKEN` y con el `verify_jwt` y el import map de cada una en `supabase/config.toml` (backend-supabase#203). `--use-api` empaqueta del lado de Supabase, sin Docker en el runner; no lleva `--prune`, así que una función que existe en el proyecto y no en el repo no se borra sola. **Los secretos de cada función no viajan**: se cargan una vez por environment con `supabase secrets set` (README de cada función). **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
 ### Cuándo aplica cada rama
 
@@ -145,6 +145,14 @@ El registro de entidades (`sync.entidad`) es una tabla y no una lista en el cód
 "En curso" (`mis_campanias_vigentes()`, la que usa `mis_zonas()`) y "no terminada" (`inscripciones_no_terminadas_de()`, interna, la que decide `ACTIVA` desde la `0102`) están escritas una sola vez. Una inscripción sin zona activa la cuenta, pero no abre ninguna zona.
 
 `suspendido_en` la fija el servidor: un trigger descarta en silencio cualquier cambio que venga con JWT, incluido el de un ADMIN. Quién suspende y reactiva es de HU-ADM-003, que todavía no está decidido.
+
+### La cuenta suspendida queda afuera de los roles y del sync (`0143`, backend-supabase#203)
+
+Caso: el administrador suspende a un coordinador por una licencia; aunque tenga la sesión abierta en el panel, la base ya no le devuelve datos. Revocar la sesión pasa fuera de esta base y puede llegar tarde (igual que con la baja administrativa, ADR-011), así que el corte también está acá:
+
+- **`tiene_rol()` descarta al usuario con `suspendido_en`** (y con `deleted_at`, como antes): sin rol mientras dure, así que cada regla de acceso que lo usa (políticas RLS y funciones, ADMIN y COORDINADOR) lo deja afuera. Al reactivar, el rol vuelve solo. La fila propia de `usuario` se sigue leyendo y `estado_cuenta()` sigue contestando `SUSPENDIDA`: es lo que el cliente necesita para mostrar el aviso.
+- **`sync_push` y `sync_pull` rechazan la llamada entera con `CS004`** (cuenta suspendida, de cualquier rol), antes de mirar el sobre y los topes: `CS004` gana sobre `CS001`/`CS002`/`CS003`, y la falta de sesión sigue siendo `42501`. No escriben ni leen nada, ni dejan la operación como hecha en `sync.op_cache`. El motor lo trata como **transitorio**: los trabajos quedan `PENDING` en el teléfono (nunca `INVALID` ni descartados, como con «Descartar op.»), la app muestra la cuenta suspendida y **sube todo cuando la reactivan**. El mensaje dice qué pasa y qué hacer, y el código figura en la tabla de rechazos del contrato (§6.1).
+- **Lo que no cambia**: `mis_zonas()`, `mis_campanias_vigentes()` y las políticas de «lo propio» (`colportor_id = auth.uid()`) no miran `suspendido_en`. Pendiente de decisión (PR #203).
 
 ### Términos y Política de Privacidad aceptados
 
