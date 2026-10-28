@@ -7,7 +7,7 @@ select * from no_plan();
 -- --- los datos de antes siguen --------------------------------------------------------------
 select is((select count(*)::int from public.pedido_casa_editora), 4, 'los 4 pedidos siguen');
 select is((select count(*)::int from public.pedido_casa_editora p join public.prueba_0112_pedido s using (id)
-            where to_jsonb(p) - 'monto_autorizado' - 'decidido_por' - 'decidido_en' - 'motivo_rechazo'
+            where to_jsonb(p) - 'monto_autorizado' - 'decidido_por' - 'decidido_en' - 'motivo_rechazo' - 'numero'
                   is distinct from to_jsonb(s)
               and p.id <> '01920000-0000-7000-8000-000000011204'), 0,
           'idénticos en todo lo que ya tenían, sync_version y xmin_w incluidos (salvo el rechazado de antes, al que se le puso el motivo)');
