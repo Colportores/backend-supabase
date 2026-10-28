@@ -69,11 +69,14 @@ returns text language sql as $$
   select split_part(pg_temp.agregar(p_camp, p_jor, p_acomp, p_nota), '|', 1)
 $$;
 
--- Lo guardado en una jornada: acompañante|origen|nota (con 'null' por vacío).
+-- Lo guardado en una jornada: acompañante|origen|nota (con 'null' por vacío). Desde la 0133 el origen y la nota
+-- viven en jornada_acompaniamiento.
 create or replace function pg_temp.guardado(p_jor text) returns text language sql security definer as $$
   select format('%s|%s|%s', coalesce((select u.nombre from public.usuario u where u.id = j.acompaniante_id), 'null'),
-                coalesce(j.acompaniamiento_origen, 'null'), coalesce(j.acompaniamiento_nota, 'null'))
-    from public.jornada j where j.id = pg_temp.u(p_jor)
+                coalesce(d.origen, 'null'), coalesce(d.nota, 'null'))
+    from public.jornada j
+    left join public.jornada_acompaniamiento d on d.jornada_id = j.id
+   where j.id = pg_temp.u(p_jor)
 $$;
 
 -- La fila de la tabla de un colportor: acompañamientos|último|días sin|contado desde.
@@ -196,6 +199,9 @@ select pg_temp.u(x.id), pg_temp.u(x.colp),
     ('fb', 'bb', 15, 'a1'),
     ('d1', 'b7', 20, null), ('d2', 'b8', 25, null), ('d3', 'b5', 10, null)
   ) x(id, colp, dias, acomp);
+-- Las jornadas acompañadas de la fixture son «de antes de la 0100»: sin origen ni nota (desde la 0133 el trigger de
+-- jornada les pone una fila COLPORTOR; se borra para volver a ese caso).
+delete from public.jornada_acompaniamiento;
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma
@@ -203,18 +209,18 @@ select pg_temp.u(x.id), pg_temp.u(x.colp),
 select pg_temp.actuar_como_servidor();
 select is((select array_agg(format('%s:%s', a.attname, format_type(a.atttypid, a.atttypmod)) order by a.attname)
              from pg_attribute a
-            where a.attrelid = 'public.jornada'::regclass and a.attnum > 0 and not a.attisdropped
-              and a.attname in ('acompaniamiento_origen', 'acompaniamiento_nota')),
-          array['acompaniamiento_nota:text', 'acompaniamiento_origen:text'], 'jornada suma el origen y la nota (opcionales)');
+            where a.attrelid = 'public.jornada_acompaniamiento'::regclass and a.attnum > 0 and not a.attisdropped
+              and a.attname in ('origen', 'nota')),
+          array['nota:text', 'origen:text'], 'el origen y la nota (opcionales) viven en jornada_acompaniamiento (0133)');
 select is((select format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull::text || ':' || pg_get_expr(d.adbin, d.adrelid)
              from pg_attribute a join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
             where a.attrelid = 'public.campania_colportor'::regclass and a.attname = 'tramos_afuera'),
           'tstzrange[]:true:''{}''::tstzrange[]', 'campania_colportor suma tramos_afuera: arreglo de rangos, no nulo, vacío por defecto');
-select is((select columnas_servidor @> array['acompaniamiento_origen', 'acompaniamiento_nota']
-             from sync.entidad where nombre = 'jornada'), true, 'las dos columnas son del servidor: el push las descarta');
+select is((select columnas_servidor && array['acompaniamiento_origen', 'acompaniamiento_nota']
+             from sync.entidad where nombre = 'jornada'), false, 'jornada ya no las tiene entre las columnas del servidor (0133)');
 select is((select 'acompaniamiento_origen' = any (sync.columnas_escribibles('jornada'))
               or 'acompaniamiento_nota' = any (sync.columnas_escribibles('jornada'))), false,
-          'y por eso no están entre las columnas que el cliente puede escribir');
+          'ni entre las columnas que el cliente puede escribir');
 select is((select count(*) from pg_proc where proname = 'agregar_acompaniamiento' and pronamespace = 'public'::regnamespace),
           1::bigint, 'hay una sola agregar_acompaniamiento (no quedó la de dos argumentos)');
 select is((select pg_get_function_arguments(oid) from pg_proc
@@ -231,37 +237,43 @@ select is((select prosecdef and proconfig = array['search_path=""'] from pg_proc
             where oid = 'public.agregar_acompaniamiento(uuid,uuid,uuid,text)'::regprocedure),
           true, 'agregar sigue siendo SECURITY DEFINER con search_path vacío');
 select is((select count(*) from pg_trigger where tgrelid = 'public.jornada'::regclass and tgname = 'jornada_acompaniamiento_servidor'),
-          1::bigint, 'el trigger del origen y la nota está en jornada');
+          1::bigint, 'el trigger de quién cargó está en jornada');
 select is((select count(*) from pg_trigger where tgrelid = 'public.campania_colportor'::regclass and tgname = 'campania_colportor_tramos_afuera'),
           1::bigint, 'y el del hueco en campania_colportor');
 
--- La forma del CHECK (desde el servidor, que no pasa por el trigger de los clientes).
+-- La forma del CHECK de jornada_acompaniamiento (desde el servidor). f1 no tiene acompañante: se le pone uno y el
+-- trigger deja la fila con origen COLPORTOR.
 create or replace function pg_temp.upd(p_set text, p_jor text default 'f1') returns text language plpgsql as $$
 begin
-  execute format('update public.jornada set %s where id = %L', p_set, pg_temp.u(p_jor));
+  execute format('update public.jornada_acompaniamiento set %s where jornada_id = %L', p_set, pg_temp.u(p_jor));
   return 'ok';
 exception when others then
   return sqlstate;
 end $$;
-select is(pg_temp.upd(format('acompaniante_id = %L, acompaniamiento_origen = ''COORDINADOR''', pg_temp.u('a1'))), 'ok', 'origen COORDINADOR con acompañante');
-select is(pg_temp.upd(format('acompaniamiento_origen = ''COLPORTOR''')), 'ok', 'origen COLPORTOR con acompañante');
-select is(pg_temp.upd('acompaniamiento_origen = ''OTRO'''), '23514', 'un origen inventado se rechaza');
-select is(pg_temp.upd('acompaniamiento_origen = ''coordinador'''), '23514', 'y en minúsculas, también');
-select is(pg_temp.upd(format('acompaniante_id = %L, acompaniamiento_origen = ''COORDINADOR'', acompaniamiento_nota = ''Trabajamos juntos''', pg_temp.u('a1'))), 'ok', 'una nota con origen COORDINADOR');
-select is(pg_temp.upd('acompaniamiento_origen = ''COLPORTOR'''), '23514', 'una nota con origen COLPORTOR se rechaza');
-select is(pg_temp.upd('acompaniamiento_nota = '' con espacio'''), '23514', 'una nota con espacio al principio se rechaza');
-select is(pg_temp.upd('acompaniamiento_nota = ''con espacio '''), '23514', 'y al final, también');
-select is(pg_temp.upd('acompaniamiento_nota = E''salto\n'''), '23514', 'y con un salto de línea al final');
-select is(pg_temp.upd('acompaniamiento_nota = ''''') , '23514', 'una nota vacía no existe (es null)');
-select is(pg_temp.upd(format('acompaniamiento_nota = %L', repeat('á', 500))), 'ok', '500 caracteres (acentuados: son caracteres, no bytes) entran');
-select is(pg_temp.upd(format('acompaniamiento_nota = %L', repeat('á', 501))), '23514', '501, no');
-select is(pg_temp.upd(format('acompaniamiento_nota = %L', 'uno' || chr(10) || 'dos')), 'ok', 'una nota de dos renglones entra');
--- Sin acompañante no hay origen ni nota: el servidor los limpia (y el CHECK lo respalda).
-select is(pg_temp.upd('acompaniante_id = null'), 'ok', 'quitar al acompañante desde el servidor no falla');
-select is(pg_temp.guardado('f1'), 'null|null|null', 'y se lleva el origen y la nota');
-select is((select count(*) from pg_constraint where conrelid = 'public.jornada'::regclass
-              and conname = 'jornada_acompaniamiento_origen_con_acompaniante'), 1::bigint,
-          'el CHECK que ata el origen al acompañante existe');
+update public.jornada set acompaniante_id = pg_temp.u('a1') where id = pg_temp.u('f1');
+select is(pg_temp.guardado('f1'), 'Mariela|COLPORTOR|null', 'sanity: un acompañante puesto por el servidor deja la fila COLPORTOR');
+select is(pg_temp.upd('origen = ''COORDINADOR'''), 'ok', 'origen COORDINADOR con acompañante');
+select is(pg_temp.upd('origen = ''COLPORTOR'''), 'ok', 'origen COLPORTOR con acompañante');
+select is(pg_temp.upd('origen = ''OTRO'''), '23514', 'un origen inventado se rechaza');
+select is(pg_temp.upd('origen = ''coordinador'''), '23514', 'y en minúsculas, también');
+select is(pg_temp.upd('origen = null'), '23502', 'y el origen no es opcional');
+select is(pg_temp.upd('origen = ''COORDINADOR'', nota = ''Trabajamos juntos'''), 'ok', 'una nota con origen COORDINADOR');
+select is(pg_temp.upd('origen = ''COLPORTOR'''), '23514', 'una nota con origen COLPORTOR se rechaza');
+select is(pg_temp.upd('nota = '' con espacio'''), '23514', 'una nota con espacio al principio se rechaza');
+select is(pg_temp.upd('nota = ''con espacio '''), '23514', 'y al final, también');
+select is(pg_temp.upd('nota = E''salto\n'''), '23514', 'y con un salto de línea al final');
+select is(pg_temp.upd('nota = '''''), '23514', 'una nota vacía no existe (es null)');
+select is(pg_temp.upd(format('nota = %L', repeat('á', 500))), 'ok', '500 caracteres (acentuados: son caracteres, no bytes) entran');
+select is(pg_temp.upd(format('nota = %L', repeat('á', 501))), '23514', '501, no');
+select is(pg_temp.upd(format('nota = %L', 'uno' || chr(10) || 'dos')), 'ok', 'una nota de dos renglones entra');
+-- Sin acompañante no hay origen ni nota: el trigger borra la fila.
+update public.jornada set acompaniante_id = null where id = pg_temp.u('f1');
+select is(pg_temp.guardado('f1'), 'null|null|null', 'quitar al acompañante desde el servidor se lleva el origen y la nota');
+select is((select count(*) from public.jornada_acompaniamiento where jornada_id = pg_temp.u('f1')), 0::bigint,
+          'porque la fila se borra');
+select is((select count(*) from pg_constraint where conrelid = 'public.jornada_acompaniamiento'::regclass
+              and conname = 'jornada_acompaniamiento_jornada_key'), 1::bigint,
+          'y hay una sola fila por jornada (UNIQUE)');
 
 -- ---------------------------------------------------------------------------
 -- 2. «Quién acompaña»
@@ -282,7 +294,8 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 -- Los que no valen: JO005, y la jornada queda como estaba.
 select pg_temp.actuar_como_servidor();
 create temp table antes on commit drop as
-  select id, sync_version, acompaniante_id, acompaniamiento_origen, acompaniamiento_nota from public.jornada;
+  select j.id, j.sync_version, j.acompaniante_id, d.origen, d.nota
+    from public.jornada j left join public.jornada_acompaniamiento d on d.jornada_id = j.id;
 create temp table eventos_antes on commit drop as select count(*) as n from auditoria.audit_log;
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.cod('e1', 'f9', 'b5'), 'JO001', 'sanity: f9 está en el hueco de b4 (JO001 va antes que el acompañante)');
@@ -302,10 +315,11 @@ select alike(pg_temp.agregar('e1', 'f1', 'b2'), '%Mariela Pereyra%', 'y el aviso
 select is(pg_temp.cod('e1', 'fc', null, repeat('x', 501)), '22023', 'una nota de 501 caracteres: 22023, antes de tocar nada');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.jornada j join antes a using (id)
+            left join public.jornada_acompaniamiento d on d.jornada_id = j.id
             where j.sync_version is distinct from a.sync_version
                or j.acompaniante_id is distinct from a.acompaniante_id
-               or j.acompaniamiento_origen is distinct from a.acompaniamiento_origen
-               or j.acompaniamiento_nota is distinct from a.acompaniamiento_nota), 0::bigint,
+               or d.origen is distinct from a.origen
+               or d.nota is distinct from a.nota), 0::bigint,
           'ningún error tocó una jornada (JO001..JO005, 22023)');
 select is((select count(*) from auditoria.audit_log) - (select n from eventos_antes), 0::bigint, 'ni dejó un evento en la auditoría');
 
@@ -357,14 +371,12 @@ update public.jornada set acompaniante_id = pg_temp.u('a2') where id = pg_temp.u
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('fe'), 'Nora|COLPORTOR|null', 'el colportor marcó a a2 en su celular: origen COLPORTOR, sin nota');
 select pg_temp.actuar_como(pg_temp.u('b1'));
-update public.jornada set acompaniante_id = pg_temp.u('a1'), acompaniamiento_origen = 'COORDINADOR', acompaniamiento_nota = 'inventada'
- where id = pg_temp.u('fe');
+update public.jornada set acompaniante_id = pg_temp.u('a1') where id = pg_temp.u('fe');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('fe'), 'Mariela|COLPORTOR|null', 'si manda origen y nota en la fila, el servidor los descarta');
--- Otra columna de una jornada con nota: nada se mueve, ni siquiera si el cliente manda otro origen o nota.
+select is(pg_temp.guardado('fe'), 'Mariela|COLPORTOR|null', 'si cambia al acompañante, sigue COLPORTOR y sin nota');
+-- Otra columna de una jornada con nota: nada se mueve.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-update public.jornada set total_visitas = 3, acompaniamiento_origen = 'COLPORTOR', acompaniamiento_nota = 'pisada'
- where id = pg_temp.u('f1');
+update public.jornada set total_visitas = 3 where id = pg_temp.u('f1');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f1'), 'Mariela|COORDINADOR|Buena presentación', 'tocar otra columna no cambia el origen ni la nota del coordinador');
 select is((select total_visitas from public.jornada where id = pg_temp.u('f1')), 3, 'y la otra columna sí cambió');
@@ -379,26 +391,25 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f1'), 'null|null|null', 'y si lo quita, no queda origen ni nota');
 -- Un INSERT del cliente.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-insert into public.jornada (id, colportor_id, inicio, fin, acompaniante_id, acompaniamiento_origen, acompaniamiento_nota)
+insert into public.jornada (id, colportor_id, inicio, fin, acompaniante_id)
 values (pg_temp.u('c1'), pg_temp.u('b1'), (pg_temp.hoy() - 6 + time '10:00') at time zone 'America/Montevideo',
-        (pg_temp.hoy() - 6 + time '11:00') at time zone 'America/Montevideo', pg_temp.u('a1'), 'COORDINADOR', 'inventada');
-insert into public.jornada (id, colportor_id, inicio, fin, acompaniamiento_origen, acompaniamiento_nota)
+        (pg_temp.hoy() - 6 + time '11:00') at time zone 'America/Montevideo', pg_temp.u('a1'));
+insert into public.jornada (id, colportor_id, inicio, fin)
 values (pg_temp.u('c2'), pg_temp.u('b1'), (pg_temp.hoy() - 6 + time '12:00') at time zone 'America/Montevideo',
-        (pg_temp.hoy() - 6 + time '13:00') at time zone 'America/Montevideo', 'COORDINADOR', 'inventada');
+        (pg_temp.hoy() - 6 + time '13:00') at time zone 'America/Montevideo');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('c1'), 'Mariela|COLPORTOR|null', 'un INSERT del cliente con acompañante: COLPORTOR, sin la nota que mandó');
-select is(pg_temp.guardado('c2'), 'null|null|null', 'y sin acompañante, aunque mande origen y nota, no queda ninguno');
+select is(pg_temp.guardado('c1'), 'Mariela|COLPORTOR|null', 'un INSERT del cliente con acompañante: COLPORTOR y sin nota');
+select is(pg_temp.guardado('c2'), 'null|null|null', 'y sin acompañante no queda ninguno');
 -- Por sync_push.
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is((pg_temp.push(jsonb_build_array(
              pg_temp.job('c3', 'jornada', jsonb_build_object(
                'id', pg_temp.u('c3'), 'inicio', (pg_temp.hoy() - 6 + time '14:00') at time zone 'America/Montevideo',
                'fin', (pg_temp.hoy() - 6 + time '15:00') at time zone 'America/Montevideo',
-               'acompaniante_id', pg_temp.u('a1'), 'acompaniamiento_origen', 'COORDINADOR',
-               'acompaniamiento_nota', 'inventada', 'created_at', now()))
-           )) -> 'results' -> 0 ->> 'outcome'), 'accepted', 'el teléfono sube una jornada con acompañante (y un origen y una nota inventados)');
+               'acompaniante_id', pg_temp.u('a1'), 'created_at', now()))
+           )) -> 'results' -> 0 ->> 'outcome'), 'accepted', 'el teléfono sube una jornada con acompañante');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('c3'), 'Mariela|COLPORTOR|null', 'el push las descartó: COLPORTOR y sin nota');
+select is(pg_temp.guardado('c3'), 'Mariela|COLPORTOR|null', 'el push la dejó COLPORTOR y sin nota');
 -- El coordinador completa una jornada y un push viejo del teléfono (con la versión de antes) no le pisa nada.
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.agregar('e1', 'fd', null, 'Nota de a1'), 'false|Mariela Pereyra|COORDINADOR|Nota de a1', 'a1 completa fd con una nota');
