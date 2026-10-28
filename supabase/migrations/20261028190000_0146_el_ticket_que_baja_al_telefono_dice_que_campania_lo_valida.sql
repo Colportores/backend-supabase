@@ -14,9 +14,13 @@
 --      baja al teléfono con el resto de la fila del ticket, en el pull y en el `server_row` de un conflicto: es un
 --      id, sin texto libre, sin datos de clientes, y no cambia quién ve qué (el ticket sigue siendo de su dueña, del
 --      ADMIN y de la coordinadora de esa campaña; la columna es un dato más de la fila que ya ven).
---   2. Es una columna de verdad (no un cálculo al leer) para que se mantenga cierta: cuando algo la cambia, sube la
---      versión de sync del ticket y el teléfono la baja por delta; si el cálculo da lo mismo, la fila ni se toca
---      (no sube `sync_version`, para no darle un `conflict` de balde al teléfono que está completando la foto).
+--   2. Es una columna de verdad (no un cálculo al leer) para que se mantenga cierta: cuando algo la cambia, avanza
+--      el `xmin_w` del ticket y el teléfono la baja por delta. **El recálculo NO sube `sync_version`** (el republicado
+--      de 0011, `colportores.republicar`): la columna es solo del servidor, el teléfono no la manda, y subir la
+--      versión haría que el siguiente update del teléfono sobre ese ticket (completar la foto) vuelva `conflict`
+--      y pierda `url_cloud` por LWW. El caso: el mismo lote sube el ticket y el cobro que lo apunta; el push ya
+--      devolvió la versión del ticket y el cobro, dentro del mismo lote, cambia la campaña que lo valida. Si el
+--      cálculo da lo mismo, la fila ni se toca.
 --      Se recalcula, solo para los tickets POR VALIDAR y vivos, cuando cambia:
 --        · el ticket nace (por la fecha del ticket; si el cobro llega después, lo recalcula el punto siguiente);
 --        · un cobro lo apunta, deja de apuntarlo, se da de baja o se reactiva, o cambia de venta;
@@ -34,12 +38,12 @@
 --   · Todas las funciones nuevas son internas: sin EXECUTE para nadie (los triggers corren igual). Es lo que evita
 --     abrir `campania_que_valida_el_ticket()` como una RPC que averigua la campaña de un ticket ajeno.
 --   · Los triggers son SECURITY DEFINER (leen cobros, ventas e inscripciones que la dueña no ve por RLS) y
---     actualizan el ticket con la auditoría de siempre (`sync_version`, `updated_at`, `xmin_w`).
+--     actualizan el ticket con la auditoría de siempre, pero en republicado: solo avanza `xmin_w` (ver el punto 2).
 --
 -- ## Los datos
 --
--- Los tickets que ya había se calculan una vez: sube su versión de sync y los teléfonos los bajan de nuevo con la
--- columna. Nada se borra ni cambia de otra forma. Datos simulados hasta diciembre: sin migración de limpieza.
+-- Los tickets que ya había se calculan una vez (acá sí sube su versión de sync: es un UPDATE común de la migración) y
+-- los teléfonos los bajan de nuevo con la columna. Nada se borra ni cambia de otra forma. Datos simulados hasta diciembre: sin migración de limpieza.
 --
 -- ## Para otros repos
 --
@@ -72,13 +76,19 @@ create index ticket_campania_validadora_idx
 -- ----------------------------------------------------------------------------
 
 -- Recalcula la columna de los tickets por validar y vivos que nombra la lista de tickets o la de colportoras. Solo
--- toca el que cambia de verdad: `is distinct from` evita subir `sync_version` por nada. Interna.
+-- toca el que cambia de verdad (`is distinct from`) y lo toca en republicado (0011): avanza `xmin_w` para que el
+-- delta lo lleve, sin subir `sync_version` ni `updated_at`. El republicado cuenta solo adentro de un trigger
+-- (`pg_trigger_depth() > 1` en `tg_auditoria_update`); todos los que la llaman lo son. Interna.
 create function public.recalcular_quien_valida_tickets(p_tickets uuid[], p_colportoras uuid[])
 returns void
-language sql
+language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_antes text := current_setting('colportores.republicar', true);
+begin
+  perform set_config('colportores.republicar', 'on', true);
   with calculo as (
     select t.id,
            public.campania_que_valida_el_ticket(t.id, t.usuario_id, coalesce(t.fecha, t.subido_en)) as campania_id
@@ -92,11 +102,14 @@ as $$
     from calculo c
    where t.id = c.id
      and t.campania_validadora_id is distinct from c.campania_id;
+  -- Solo durante el republicado: lo que siga en la transacción (el próximo job del lote) sube la versión como siempre.
+  perform set_config('colportores.republicar', coalesce(v_antes, 'off'), true);
+end;
 $$;
 
 comment on function public.recalcular_quien_valida_tickets(uuid[], uuid[]) is
   'Recalcula ticket.campania_validadora_id (campania_que_valida_el_ticket, 0131) de los tickets por validar y vivos '
-  'nombrados por id o por colportora; solo toca los que cambian (0146). Interna: la llaman los triggers.';
+  'nombrados por id o por colportora; solo toca los que cambian y sin subir sync_version (republicado de 0011) (0146). Interna: la llaman los triggers.';
 
 revoke all on function public.recalcular_quien_valida_tickets(uuid[], uuid[])
   from public, anon, authenticated, service_role;

@@ -1,9 +1,9 @@
 -- pgTAP · migración 0146 (backend-supabase#209): la campaña que valida el ticket baja al teléfono con el pull.
 -- La colportora sube dos tickets: uno cuya fecha cae en su campaña y uno que no cae en ninguna. Al reinstalar, el pull
 -- trae `campania_validadora_id` en cada fila (el id de la campaña, o null = lo valida Administración, siempre con la
--- clave); cuando una inscripción cambia y con ella la respuesta, el delta lleva solo el ticket que cambió; y el
--- teléfono que completa la foto con una versión vieja recibe el `conflict` con la fila del servidor, que ya trae la
--- campaña nueva. Ni la coordinadora de otra campaña ni el ADMIN bajan tickets por el pull.
+-- clave); cuando una inscripción cambia y con ella la respuesta, el delta lleva solo el ticket que cambió (avanza
+-- `xmin_w`, no `sync_version`); y el teléfono que completa la foto con la versión que bajó antes del cambio no recibe
+-- un `conflict`. Ni la coordinadora de otra campaña ni el ADMIN bajan tickets por el pull.
 --
 -- Como 0004, 0014, 0041, 0108 y 0113, NO va en una transacción: el delta solo sirve filas commiteadas (en producción
 -- el push y el pull son dos requests). Limpia al final, y también al empezar.
@@ -146,26 +146,22 @@ select is((select pg_temp.validadora(sync.pull(array['ticket'], (select d -> 'wa
           'una baja y una reactivación que no cambian la respuesta no mueven ningún ticket: el delta viene vacío');
 
 -- ---------------------------------------------------------------------------
--- 4. El teléfono completa la foto con la versión de antes de que cambiara la campaña
+-- 4. El teléfono completa la foto con la versión que bajó antes de que cambiara la campaña
 -- ---------------------------------------------------------------------------
--- Ya hay un delta (delta1) con la versión del a1 cuando la campaña pasó a null; el servidor ahora está dos versiones
--- adelante. La app manda la foto con la versión que bajó en el pull de cero.
+-- La campaña del a1 cambió dos veces desde el pull de cero (e1 → null → e1), siempre por el servidor y sin subir
+-- sync_version: la app manda la foto con la versión que bajó en ese pull y tiene que entrar.
 create temp table viejo as
 select (e ->> 'sync_version')::bigint as v from pull_b1, jsonb_array_elements(d -> 'rows' -> 'ticket') e
  where e ->> 'id' = pg_temp.u('a1')::text;
-create temp table respuesta as
-select pg_temp.push1(pg_temp.op('03'), 'update',
-                     jsonb_build_object('id', pg_temp.u('a1'), 'url_cloud', pg_temp.u('b1')::text || '/' || pg_temp.u('a1')::text || '.jpg'),
-                     (select v from viejo)) as r;
-select is((select r ->> 'outcome' from respuesta), 'conflict', 'completar la foto con la versión vieja da conflict: gana el servidor');
-select is((select r -> 'server_row' ->> 'campania_validadora_id' from respuesta), pg_temp.u('e1')::text,
-          'y la fila del servidor trae la campaña que valida el ticket');
--- Con la versión de ahora, la foto entra y la campaña no se toca.
-select is(pg_temp.push1(pg_temp.op('04'), 'update',
+select is((select sync_version from public.ticket where id = pg_temp.u('a1')), (select v from viejo),
+          'el servidor sigue en la versión del pull de cero: los recálculos no subieron sync_version');
+select is(pg_temp.push1(pg_temp.op('03'), 'update',
                         jsonb_build_object('id', pg_temp.u('a1'), 'url_cloud', pg_temp.u('b1')::text || '/' || pg_temp.u('a1')::text || '.jpg',
                                            'campania_validadora_id', null),
-                        (select (r -> 'server_row' ->> 'sync_version')::bigint from respuesta)) ->> 'outcome',
-          'accepted', 'con la versión del servidor, la foto entra (aunque el payload traiga la clave del servidor)');
+                        (select v from viejo)) ->> 'outcome',
+          'accepted', 'completar la foto con esa versión entra (aunque el payload traiga la clave del servidor)');
+select is((select url_cloud from public.ticket where id = pg_temp.u('a1')), pg_temp.u('b1')::text || '/' || pg_temp.u('a1')::text || '.jpg',
+          'y la ruta de la foto quedó puesta');
 select is((select campania_validadora_id from public.ticket where id = pg_temp.u('a1')), pg_temp.u('e1'),
           'y la campaña sigue siendo la del servidor');
 

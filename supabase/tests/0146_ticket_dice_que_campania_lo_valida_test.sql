@@ -6,8 +6,10 @@
 --      fecha del ticket; la venta cambia de fecha.
 --   4. Cambian las inscripciones: un tramo afuera, una baja con fecha anterior al ticket, la reactivación, un alta
 --      nueva; el fin de la campaña (la gracia de 15 días) y su baja.
---   5. Solo se toca lo que cambia (no sube sync_version de balde); un ticket resuelto o dado de baja no se recalcula.
+--   5. Solo se toca lo que cambia y sin subir sync_version (solo xmin_w); un ticket resuelto o dado de baja no se
+--      recalcula.
 --   6. El teléfono no la escribe (API directa, push) y nadie ve más ni menos tickets que antes.
+--   8. El lote [ticket, cobro] y la foto con la versión que devolvió el push: entra, no da conflict.
 -- El pull (que la clave baja y que el delta la lleva) está en 0146_ticket_validadora_pull_test.sql. Va en una
 -- transacción.
 begin;
@@ -266,13 +268,14 @@ update public.venta set monto_total = monto_total + 1 where id = pg_temp.u('71')
 update public.campania set nombre = 'c1 en curso (editada)' where id = pg_temp.u('c1');
 select is((select count(*)::int from public.ticket t join versiones v using (id)
             where t.usuario_id = pg_temp.u('b1') and (t.sync_version <> v.sync_version or t.xmin_w::text <> v.xmin_w)), 0,
-          'si la respuesta no cambia, la fila del ticket no se toca: ni sync_version ni xmin_w (no hay conflicto de balde)');
--- Y cuando sí cambia, la versión sube.
+          'si la respuesta no cambia, la fila del ticket no se toca (el delta vacío lo prueba 0146_ticket_validadora_pull_test)');
+-- Y cuando sí cambia, la versión de sync NO sube: avanza solo xmin_w (republicado de 0011), para que el delta lo lleve
+-- sin que el update del teléfono con la versión que le devolvió el push dé conflict.
 update public.campania_colportor set deleted_at = now() - interval '2 days'
  where campania_id = pg_temp.u('c1') and usuario_id = pg_temp.u('b1');
 select is(pg_temp.quien('e1'), '-', 'una baja anterior al ticket de ayer lo deja a Administración');
-select is(pg_temp.version('e1') > (select sync_version from versiones where id = pg_temp.u('e1')), true,
-          'cuando cambia de verdad, sube la versión de sync del ticket (el teléfono lo baja por delta)');
+select is(pg_temp.version('e1'), (select sync_version from versiones where id = pg_temp.u('e1')),
+          'cuando cambia de verdad, la versión de sync del ticket no sube (solo xmin_w: el teléfono lo baja por delta)');
 update public.campania_colportor set deleted_at = null
  where campania_id = pg_temp.u('c1') and usuario_id = pg_temp.u('b1');
 update public.campania_colportor set tramos_afuera = '{}'
@@ -388,6 +391,41 @@ select pg_temp.tk('fb', 'b7', 'DEPOSITO', now() - interval '10 days');
 select is(pg_temp.quien('fb'), 'c3', 'un ticket de hace 10 días, de una colportora dada de baja de c3 hace 2: c3');
 update public.campania set deleted_at = now() where id = pg_temp.u('c3');
 select is(pg_temp.quien('fb'), '-', 'dada de baja c3, la colportora que ya se había ido de ella también queda con Administración');
+
+-- =================================================================================
+-- 8. El caso «Ticket libre» en un solo lote: ticket + cobro + foto
+-- =================================================================================
+-- Ana (b1, inscripta en c1) cobra con tarjeta una cuota de una venta de hace 100 días (de ninguna campaña). El
+-- teléfono sube en el mismo lote el ticket (de hoy: nace con c1) y el cobro que lo apunta (lo pasa a Administración).
+-- El push le devuelve al ticket su versión; la foto que sube después, con esa versión, tiene que entrar: el recálculo
+-- que hizo el cobro no puede haber subido sync_version.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table lote as
+select pg_temp.push(jsonb_build_array(
+         jsonb_build_object('client_op_id', pg_temp.u('d3'), 'entity', 'ticket', 'op', 'insert',
+           'payload', jsonb_build_object('id', pg_temp.u('ed'), 'tipo', 'COBRO_TARJETA', 'monto', 1000, 'fecha', now(),
+                                         'numero_autorizacion', '0001', 'tarjeta_tipo', 'DEBITO')),
+         jsonb_build_object('client_op_id', pg_temp.u('d4'), 'entity', 'cobranza', 'op', 'insert',
+           'payload', jsonb_build_object('id', pg_temp.uc(20), 'venta_id', pg_temp.u('72'), 'monto', 1000, 'medio', 'TARJETA',
+                                         'fecha', now(), 'numero_cuota', 1, 'ticket_id', pg_temp.u('ed'),
+                                         'tarjeta_tipo', 'DEBITO')))) as r;
+select pg_temp.actuar_como_servidor();
+select is((select array[(r -> 'results' -> 0) ->> 'outcome', (r -> 'results' -> 1) ->> 'outcome'] from lote),
+          array['accepted', 'accepted'], 'el lote [ticket, cobro de una venta de ninguna campaña] se acepta entero');
+select is(pg_temp.quien('ed'), '-', 'y el ticket queda para Administración, aunque su fecha caiga en c1');
+select is(pg_temp.version('ed'), (select ((r -> 'results' -> 0) ->> 'sync_version')::bigint from lote),
+          'la versión del ticket en el servidor es la que le devolvió el push: el recálculo no la subió');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultado(pg_temp.push(jsonb_build_array(jsonb_build_object(
+            'client_op_id', pg_temp.u('d5'), 'entity', 'ticket', 'op', 'update',
+            'sync_version', (select ((r -> 'results' -> 0) ->> 'sync_version')::bigint from lote),
+            'payload', jsonb_build_object('id', pg_temp.u('ed'),
+                                          'url_cloud', pg_temp.u('b1')::text || '/' || pg_temp.u('ed')::text || '.jpg'))))),
+          'accepted', 'la foto, con la versión que devolvió el push, entra (no da conflict)');
+select pg_temp.actuar_como_servidor();
+select is((select url_cloud from public.ticket where id = pg_temp.u('ed')), pg_temp.u('b1')::text || '/' || pg_temp.u('ed')::text || '.jpg',
+          'y el ticket tiene la ruta de la foto');
+select is(pg_temp.quien('ed'), '-', 'sin perder lo que dice quién lo valida');
 
 select * from finish();
 rollback;
