@@ -60,7 +60,14 @@ $$;
 
 -- El arreglo de productos tal como lo manda el teléfono.
 create or replace function pg_temp.items(variadic p text[]) returns jsonb language sql as $$
-  select jsonb_agg(jsonb_build_object('producto_id', pg_temp.u(x.p), 'cantidad', x.n))
+  select jsonb_agg(jsonb_build_object('producto_id', pg_temp.u(x.p), 'cantidad', x.n,
+                                      'venta_item_id', pg_temp.u(case x.p when '11' then '81' else '82' end)))
+    from (select p[i] as p, p[i + 1]::int as n from generate_series(1, array_length(p, 1), 2) i) x;
+$$;
+-- Lo mismo con los renglones de la venta 72 (de b2).
+create or replace function pg_temp.items72(variadic p text[]) returns jsonb language sql as $$
+  select jsonb_agg(jsonb_build_object('producto_id', pg_temp.u(x.p), 'cantidad', x.n,
+                                      'venta_item_id', pg_temp.u(case x.p when '11' then '84' else '85' end)))
     from (select p[i] as p, p[i + 1]::int as n from generate_series(1, array_length(p, 1), 2) i) x;
 $$;
 
@@ -127,6 +134,12 @@ insert into public.espacio_persona (id, espacio_id, persona_id, created_by) valu
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by) values
   (pg_temp.u('71'), pg_temp.u('51'), 'T-9171', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-9172', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
+-- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
+insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 30, 50000, 1500000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 30, 50000, 1500000);
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma
@@ -164,7 +177,7 @@ select ok((select pg_get_triggerdef(t.oid) ~ 'AFTER UPDATE OF deleted_at ON publ
           'el de la baja mira solo deleted_at y solo cuando pasa de null a una fecha');
 select is((select count(*)::int from pg_trigger t
             where t.tgrelid = 'public.devolucion'::regclass and not t.tgisinternal),
-          5, 'devolucion tiene 5 triggers: los 2 de auditoría de siempre, el de los productos y estos 2');
+          7, 'devolucion tiene 7 triggers: los 2 de auditoría de siempre, el de los productos, estos 2, el que devuelve el stock (0136) y el del tope por renglón (0142)');
 
 -- ---------------------------------------------------------------------------
 -- 2. El alta deja devolucion_registrada
@@ -210,7 +223,7 @@ select is(pg_temp.error_de(format($$insert into public.devolucion (id, venta_id,
           '23514', 'una devolución sin productos se rechaza (23514)');
 select is(pg_temp.error_de(format($$insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
                                     values (%L, %L, %L::jsonb, now())$$, pg_temp.u('d9'), pg_temp.u('72'),
-                                    pg_temp.items('11', '1')::text)),
+                                    pg_temp.items72('11', '1')::text)),
           '42501', 'y la de una venta ajena también (42501)');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d9')), 0, 'lo rechazado no deja evento');
@@ -304,7 +317,7 @@ select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d4')), 1, 'el rein
 
 -- Lo que se rechaza no deja evento.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.push1(pg_temp.op('03'), 'insert', pg_temp.dev(pg_temp.u('d5'), pg_temp.u('72'))) ->> 'outcome',
+select is(pg_temp.push1(pg_temp.op('03'), 'insert', pg_temp.dev(pg_temp.u('d5'), pg_temp.u('72'), pg_temp.items72('11', '1'))) ->> 'outcome',
           'invalid', 'una devolución sobre la venta de otra vuelve invalid');
 select is(pg_temp.push1(pg_temp.op('04'), 'insert', pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71'), '[]'::jsonb)) ->> 'outcome',
           'invalid', 'y la que no tiene productos también');
@@ -333,9 +346,15 @@ select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d4')), 1, 'ni toca
 insert into public.producto (id, nombre, tipo)
 select ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid, 'Libro masivo ' || i || ' t91', 'LIBRO'
   from generate_series(1, 120) i;
+-- Un renglón de la venta 71 por cada libro masivo (0136: la devolución dice de qué renglón sale cada libro).
+insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal)
+select ('01920000-0000-7000-8000-00000092' || lpad(to_hex(i), 4, '0'))::uuid, pg_temp.u('71'),
+       ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid, 2, 1000, 2000
+  from generate_series(1, 120) i;
 create or replace function pg_temp.muchos(p_n int) returns jsonb language sql as $$
   select jsonb_agg(jsonb_build_object('producto_id', ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid,
-                                      'cantidad', 2))
+                                      'cantidad', 2,
+                                      'venta_item_id', ('01920000-0000-7000-8000-00000092' || lpad(to_hex(i), 4, '0'))::uuid))
     from generate_series(1, p_n) i;
 $$;
 select pg_temp.actuar_como(pg_temp.u('b1'));

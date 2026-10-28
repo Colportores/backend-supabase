@@ -161,7 +161,8 @@ select has_trigger('public', t, t || '_auditoria_insert', format('%s tiene audit
 
 -- Una política de lectura y ninguna de escritura en cada una (el ticket, desde 0113, el depósito, desde 0122, y el
 -- pedido con sus líneas, desde 0124, tienen las de su dueña: supabase/tests/0113_ticket_sube_por_push_test.sql,
--- 0122_deposito_sube_por_push_test.sql y 0124_pedido_del_colportor_test.sql).
+-- 0122_deposito_sube_por_push_test.sql y 0124_pedido_del_colportor_test.sql; la transferencia, desde 0139, tiene la
+-- política de alta de quien la pide: supabase/tests/0139_transferencia_por_push_test.sql).
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd = 'SELECT'), 1,
           format('%s tiene una política de lectura', t))
@@ -170,8 +171,7 @@ select is((select count(*)::int from pg_policies
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
-  from unnest(array['stock','movimiento_stock','transferencia_stock',
-                    'transferencia_item','cuenta_colportor']) t;
+  from unnest(array['stock','movimiento_stock','cuenta_colportor']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'authenticated'), 'SELECT',
@@ -190,9 +190,8 @@ select is((select count(*)::int from information_schema.role_table_grants
                     'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select is((select count(*)::int from sync.entidad
-            where nombre in ('stock','movimiento_stock','transferencia_stock',
-                             'transferencia_item','cuenta_colportor')), 0,
-          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124)');
+            where nombre in ('stock','movimiento_stock','cuenta_colportor')), 0,
+          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124 y la transferencia en 0139)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
