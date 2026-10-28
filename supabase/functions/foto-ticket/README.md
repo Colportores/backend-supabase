@@ -85,8 +85,8 @@ mostrarse tal cual. Los códigos de la base (`FT001`, `FT002`, `FT003`) se tradu
      R2_CUENTA=<account id> R2_CLAVE_DE_ACCESO=<access key id> R2_CLAVE_SECRETA=<secret access key> R2_BUCKET=<nombre del bucket>
    ```
 
-5. **Publicar la función**: no hay que hacerlo a mano. `deploy.yml` corre `supabase functions deploy --use-api` después de
-   `db push` en cada ambiente (backend-supabase#203). Para publicarla a mano, igual sirve
+5. **Publicar la función**: no hay que hacerlo a mano. `deploy.yml` corre `supabase functions deploy --use-api` después
+   de `db push` en cada ambiente (backend-supabase#203). Para publicarla a mano, igual sirve
    `supabase functions deploy foto-ticket --project-ref <ref>`.
 6. **CORS del bucket**, solo si el panel baja la foto con `fetch`/blob en vez de mostrarla en una etiqueta `<img>` o
    abrirla: permitir `GET` desde el origen del panel. El teléfono sube desde código nativo y no lo necesita.
