@@ -157,7 +157,20 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is((select public.sync_pull(jsonb_build_object('device', pg_temp.sobre(), 'entities', '[]'::jsonb)) ? 'watermark'),
           true, 'activa: sync_pull responde');
 
+select is((select array_agg(z) from public.mis_zonas() z), array[pg_temp.u('d1')], 'activa: mis_zonas() devuelve su zona');
+select is((select array_agg(c) from public.mis_ciudades_de_trabajo() c), array[pg_temp.u('1c')], 'activa: mis_ciudades_de_trabajo() devuelve su ciudad');
+select is((select count(*)::integer from public.mis_campanias_vigentes()), 1, 'activa: mis_campanias_vigentes() devuelve su campaña');
+
 select pg_temp.suspender('b1');
+
+-- Lo compartido de su zona y de su ciudad se le cierra también por la Data API directa; lo propio sigue legible.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select count(*)::integer from public.mis_zonas()), 0, 'suspendida: mis_zonas() no devuelve nada');
+select is((select count(*)::integer from public.mis_ciudades_de_trabajo()), 0, 'suspendida: mis_ciudades_de_trabajo() no devuelve nada');
+select is((select count(*)::integer from public.mis_campanias_vigentes()), 0, 'suspendida: mis_campanias_vigentes() no devuelve nada');
+select is((select count(*)::integer from public.campania_colportor where usuario_id = pg_temp.u('b1')), 1,
+          'pero su propia inscripción sigue legible (lo propio no se esconde)');
+select is(public.estado_cuenta(), 'SUSPENDIDA', 'y estado_cuenta() sigue diciendo SUSPENDIDA');
 
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select throws_ok($$ select public.sync_push(jsonb_build_object('device', pg_temp.sobre(), 'jobs', (select jobs from lote))) $$,
@@ -197,6 +210,8 @@ select is((select jsonb_path_query_array(
              '$.results[*].outcome')),
           '["accepted"]'::jsonb, 'reactivada: el lote pendiente entra');
 select is((select count(*)::integer from public.ubicacion where id = pg_temp.u('01')), 1, 'y la casa quedó escrita');
+select is((select array_agg(z) from public.mis_zonas() z), array[pg_temp.u('d1')], 'y mis_zonas() vuelve');
+select is((select count(*)::integer from public.mis_campanias_vigentes()), 1, 'y mis_campanias_vigentes() también');
 select is((select public.sync_pull(jsonb_build_object('device', pg_temp.sobre(), 'entities', '[]'::jsonb)) ? 'watermark'),
           true, 'y el pull responde otra vez');
 

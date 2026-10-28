@@ -21,9 +21,15 @@
 --      la cuenta suspendida. El código se suma a la tabla de rechazos del contrato en el mismo
 --      cambio (docs-organizacion).
 --
--- Lo que NO cambia: `mis_zonas()` / `mis_campanias_vigentes()` y las políticas de «lo propio»
--- (`colportor_id = auth.uid()`) no miran `suspendido_en`; el cliente del colportor suspendido llega
--- a sus filas solo por la Data API directa, que la app no usa (decisión pendiente en el PR).
+--   3. `mis_inscripciones_no_terminadas()` (de la que salen `mis_zonas()` y `mis_ciudades_de_trabajo()`)
+--      y `mis_campanias_vigentes()` no devuelven nada a la cuenta suspendida: lo compartido de su zona y
+--      de su ciudad (casas, mapa) también se le cierra por la Data API directa (decisión del 28/10,
+--      pendiente P2 de #203). Al reactivar vuelven solas.
+--
+-- Lo que NO cambia: las políticas de «lo propio» (`colportor_id = auth.uid()`: ventas, visitas, su
+-- inscripción) siguen legibles para el colportor suspendido; no se esconde ni se pierde nada suyo.
+-- Tampoco cambian `campanias_vigentes_de(usuario)` ni `inscripciones_no_terminadas_de(usuario)`: son
+-- las que miran a OTRO usuario (por ejemplo, «ya está en otra campaña» al inscribir).
 --
 -- Forward-only: esta migración no se edita una vez aplicada.
 
@@ -232,3 +238,49 @@ comment on function public.sync_pull(jsonb) is
   'Entrada del pull del motor (POST /rest/v1/rpc/sync_pull, ADR-013): rechaza con CS004 a la cuenta '
   'suspendida (0143), valida el sobre y delega en sync.pull() con alcance ciudad (contrato 0.9.8) '
   'como quien llama. El watermark viaja como string opaco (0042).';
+
+-- ----------------------------------------------------------------------------
+-- 3. Lo compartido de su zona y de su ciudad se le cierra a la cuenta suspendida
+-- ----------------------------------------------------------------------------
+
+-- Igual que en 0024, más `u.suspendido_en is null`. Alimenta a mis_zonas() y a mis_ciudades_de_trabajo()
+-- (0013), que deciden qué casas y qué mapa ve un colportor (RLS de lectura y alcance «ciudad» del pull).
+create or replace function public.mis_inscripciones_no_terminadas()
+returns table (campania_id uuid, zona_id uuid)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select cc.campania_id, cc.zona_id
+    from public.campania_colportor cc
+    join public.usuario u on u.id = cc.usuario_id
+    join public.campania c on c.id = cc.campania_id
+   where cc.usuario_id = auth.uid()
+     and cc.deleted_at is null
+     and u.deleted_at is null
+     and u.suspendido_en is null
+     and c.deleted_at is null
+     and (c.fecha_fin is null or c.fecha_fin >= public.hoy_montevideo());
+$$;
+
+comment on function public.mis_inscripciones_no_terminadas() is
+  'Inscripciones vivas del usuario autenticado en campañas que no terminaron (en curso o por '
+  'empezar), con su zona; ninguna si la cuenta está suspendida (0143). El día se cuenta en '
+  'America/Montevideo (0024). Decide el mapa y las casas que ve y baja (0013; decisiones del 30/09 '
+  'y del 02/10). Interna.';
+
+-- Igual que en 0005 (delega en campanias_vigentes_de()), salvo que la cuenta suspendida no tiene
+-- ninguna. campanias_vigentes_de(usuario) no cambia: mira a otro usuario.
+create or replace function public.mis_campanias_vigentes()
+returns table (campania_id uuid, zona_id uuid)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select v.campania_id, v.zona_id
+    from public.campanias_vigentes_de(auth.uid()) v
+   where not exists (select 1 from public.usuario u
+                      where u.id = auth.uid() and u.suspendido_en is not null);
+$$;
