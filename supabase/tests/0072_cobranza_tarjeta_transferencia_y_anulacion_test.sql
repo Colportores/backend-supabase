@@ -228,11 +228,11 @@ select is((select count(*)::int from public.cobranza
           0, 'ningún cobro de antes trae datos de tarjeta ni de transferencia');
 select is((select array_agg(tgname::text order by tgname::text collate "C") from pg_trigger
             where tgrelid = 'public.cobranza'::regclass and not tgisinternal and (tgtype & 4) = 4),
-          array['cobranza_anulacion', 'cobranza_auditoria_insert', 'cobranza_ticket_propio'],
-          'al insertar corren, en este orden, el control de la anulación, la auditoría y (desde 0113) que el ticket sea de quien vendió');
+          array['cobranza_anulacion', 'cobranza_auditoria_insert', 'cobranza_avisa_al_ticket', 'cobranza_ticket_propio'],
+          'al insertar corren, en este orden, el control de la anulación, la auditoría, (desde 0146, AFTER) el aviso al ticket y (desde 0113) que el ticket sea de quien vendió');
 select is((select array_agg(tgname::text order by tgname::text collate "C") from pg_trigger
             where tgrelid = 'public.cobranza'::regclass and not tgisinternal and (tgtype & 16) = 16),
-          array['cobranza_anulacion', 'cobranza_auditoria_update', 'cobranza_ticket_propio'],
+          array['cobranza_anulacion', 'cobranza_auditoria_update', 'cobranza_avisa_al_ticket', 'cobranza_ticket_propio'],
           'y al actualizar también');
 select ok(not has_function_privilege('authenticated', 'public.tg_cobranza_anulacion()', 'execute')
           and not has_function_privilege('anon', 'public.tg_cobranza_anulacion()', 'execute'),
