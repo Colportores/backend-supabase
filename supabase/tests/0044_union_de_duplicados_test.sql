@@ -823,8 +823,8 @@ select has_table('public', 'ubicacion_union', 'ubicacion_union existe');
 select has_table('public', 'espacio_union', 'espacio_union existe');
 select is((select count(*)::int from sync.entidad where tabla in ('public.ubicacion_union'::regclass, 'public.espacio_union'::regclass)), 0,
           'ninguna de las dos está en sync.entidad (no van al pull ni al push)');
-select is((select count(*)::int from sync.entidad where nombre not in ('parametro_global', 'precio_general')), 31,
-          'sync.entidad sigue con sus 31 entidades (sin parametro_global ni precio_general, que suman 0070 y 0144)');
+select is((select count(*)::int from sync.entidad where nombre not in ('parametro_global', 'precio_general', 'stock')), 31,
+          'sync.entidad sigue con sus 31 entidades (sin parametro_global, precio_general ni stock, que suman 0070, 0144 y 0145)');
 
 -- El registro de los vínculos que se juntaron (0064): solo ids, solo en la nube, lo lee el ADMIN y lo
 -- escribe únicamente el trigger; vinculo_juntado() solo cuenta a dónde fue a quien lo subió.

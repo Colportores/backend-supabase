@@ -190,8 +190,8 @@ select is((select count(*)::int from information_schema.role_table_grants
                     'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select is((select count(*)::int from sync.entidad
-            where nombre in ('stock','movimiento_stock','cuenta_colportor')), 0,
-          'ninguna entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124 y la transferencia en 0139)');
+            where nombre in ('movimiento_stock','cuenta_colportor')), 0,
+          'ni el histórico ni la cuenta entran todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124, la transferencia en 0139 y el stock en 0145)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
