@@ -111,8 +111,8 @@ select ok((select relrowsecurity from pg_class where oid = 'public.campania_colp
 select has_trigger('public', 'campania_colportor', 'campania_colportor_historial_de_zona_insert', 'trigger de las altas con zona');
 select has_trigger('public', 'campania_colportor', 'campania_colportor_historial_de_zona_update', 'trigger del cambio de zona');
 select has_trigger('public', 'campania_colportor', 'campania_colportor_zona_sale_con_la_baja', 'trigger de la baja de la inscripción');
-select has_trigger('public', 'campania_colportor_zona_historial', 'campania_colportor_zona_historial_sin_usuario',
-                   'trigger que suelta al usuario borrado');
+select hasnt_trigger('public', 'campania_colportor_zona_historial', 'campania_colportor_zona_historial_sin_usuario',
+                     'ya no hay un trigger propio que suelte al usuario borrado: lo hace tg_auditoria_update (0147)');
 select ok(not exists (select 1 from sync.entidad where nombre = 'campania_colportor_zona_historial'),
           'no está en sync.entidad: no va al pull ni al push, vive solo en la nube');
 
@@ -123,11 +123,9 @@ select ok(not has_table_privilege('authenticated', 'public.campania_colportor_zo
 select ok(not has_table_privilege('anon', 'public.campania_colportor_zona_historial', 'select'), 'anon no lee');
 select ok(not has_function_privilege('authenticated', 'public.tg_campania_colportor_historial_de_zona()', 'execute'),
           'el trigger no se ejecuta con JWT');
-select ok(not has_function_privilege('authenticated', 'public.tg_campania_colportor_baja_sin_zona()', 'execute')
-          and not has_function_privilege('authenticated', 'public.tg_campania_colportor_zona_historial_sin_usuario()', 'execute'),
-          'ni los otros dos');
-select ok(obj_description('public.tg_campania_colportor_baja_sin_zona()'::regprocedure, 'pg_proc') is not null
-          and obj_description('public.tg_campania_colportor_zona_historial_sin_usuario()'::regprocedure, 'pg_proc') is not null,
+select ok(not has_function_privilege('authenticated', 'public.tg_campania_colportor_baja_sin_zona()', 'execute'),
+          'ni el otro');
+select ok(obj_description('public.tg_campania_colportor_baja_sin_zona()'::regprocedure, 'pg_proc') is not null,
           'todas las funciones nuevas llevan su comment on');
 
 -- ---------------------------------------------------------------------------
@@ -523,6 +521,7 @@ select is((select count(*)::integer from public.campania_colportor_zona_historia
 -- ---------------------------------------------------------------------------
 -- Con created_by y cerrada_por en el mismo tramo, el borrado fallaba con 23503: tg_auditoria_update
 -- deshacía el ON DELETE SET NULL de created_by y el de cerrada_por revisaba todas las FK de la fila.
+-- Desde 0147 lo resuelve tg_auditoria_update para todas las tablas (no hay trigger propio de esta).
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select ('01920000-0000-7000-8000-0000000027' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'hz-' || s || '@example.com', 'x', now(), now(), now()
