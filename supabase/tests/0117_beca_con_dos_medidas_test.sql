@@ -536,9 +536,9 @@ select is(pg_temp.asig('e1', array['b1'], null), 'b1:-:-:-:N', 'asignar: «sin b
 select pg_temp.actuar_como(pg_temp.u('ad'));
 select is(pg_temp.asig('e1', array['b2'], 'MEDIA'), 'b2:MEDIA:60:3000000:S', 'asignar: el ADMIN asigna en cualquier campaña');
 select pg_temp.actuar_como(pg_temp.u('a1'));
--- Una campaña PERMANENTE no tiene meta (pendiente): avisa en vez de inventar.
+-- Una campaña PERMANENTE no tiene becas (27/10, «Beca perman.», 0132): BC006 con el texto de la decisión.
 select is(pg_temp.cod($$ select * from public.asignar_beca('01920000-0000-7000-8000-0000000117e5', array['01920000-0000-7000-8000-0000000117b6']::uuid[], 'MEDIA') $$),
-          'BC004', 'asignar: en una campaña permanente no hay meta (BC004)');
+          'BC006', 'asignar: en una campaña permanente no hay becas (BC006)');
 select is(pg_temp.asig('e5', array['b6'], null), 'b6:-:-:-:N', 'pero «sin beca» sí se puede');
 
 -- La copia: editar meta_beca después no cambia las becas ya asignadas (S50).
@@ -594,7 +594,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.becas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          (select array(select k from unnest(array['apellido','carrera_elegida_en','carrera_id','carrera_nombre','meta_configurada','meta_libros',
+          (select array(select k from unnest(array['apellido','carrera_elegida_en','carrera_id','carrera_nombre','meta_configurada','meta_libros','meta_recalculada_en',
                 'meta_monto_ces','nombre','tipo_beca','usuario_id']) k order by k collate "C")),
           'becas_de_campania: la forma de la respuesta, sin emails ni clientes');
 select is((select count(*)::int from public.becas_de_campania(pg_temp.u('e1'))), 4,
