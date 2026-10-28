@@ -95,6 +95,9 @@ grant select on lote to authenticated;
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(public.tiene_rol('COORDINADOR'), true, 'el coordinador activo tiene el rol');
 select is(pg_temp.motivo_de(pg_temp.u('a2'), pg_temp.u('e1')), null, 'y la regla de acceso de su campaña lo deja pasar');
+select is((select count(*)::integer from public.zona where id = pg_temp.u('d1')), 1, 'y lee las zonas de su campaña');
+select is((select count(*)::integer from public.campania_ciudad where id = pg_temp.u('f1')), 1, 'y sus ciudades');
+select is((select count(*)::integer from public.mis_campanias_del_mapa()), 1, 'y mis_campanias_del_mapa() devuelve su campaña (de ahí sale precio_general)');
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(public.tiene_rol('ADMIN'), true, 'el administrador activo tiene el rol');
 select is((select count(*)::integer from public.usuario where id = pg_temp.u('b1')), 1,
@@ -110,6 +113,9 @@ select is((select count(*)::integer from public.usuario where id = pg_temp.u('a2
 select is(public.estado_cuenta(), 'SUSPENDIDA', 'estado_cuenta() sigue contestando SUSPENDIDA');
 select is(pg_temp.motivo_de(pg_temp.u('a2'), pg_temp.u('e1')), 'SIN_PERMISO',
           'una regla de acceso que usa tiene_rol lo rechaza (SIN_PERMISO), también sobre su propia campaña');
+select is((select count(*)::integer from public.zona where id = pg_temp.u('d1')), 0, 'y ya no lee las zonas de su campaña');
+select is((select count(*)::integer from public.campania_ciudad where id = pg_temp.u('f1')), 0, 'ni sus ciudades');
+select is((select count(*)::integer from public.mis_campanias_del_mapa()), 0, 'ni mis_campanias_del_mapa() (precio_general queda cerrado)');
 
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(public.tiene_rol('ADMIN'), false, 'el administrador suspendido tampoco tiene el rol');
@@ -128,6 +134,8 @@ select pg_temp.reactivar('a1');
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is(public.tiene_rol('COORDINADOR'), true, 'reactivado, el coordinador recupera el rol');
 select is(pg_temp.motivo_de(pg_temp.u('a2'), pg_temp.u('e1')), null, 'y la regla de acceso lo deja pasar');
+select is((select count(*)::integer from public.zona where id = pg_temp.u('d1')), 1, 'y vuelve a leer las zonas de su campaña');
+select is((select count(*)::integer from public.mis_campanias_del_mapa()), 1, 'y mis_campanias_del_mapa() vuelve');
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(public.tiene_rol('ADMIN'), true, 'reactivado, el administrador recupera el rol');
 select is((select count(*)::integer from public.usuario where id = pg_temp.u('b1')), 1, 'y vuelve a ver a los colportores');
@@ -168,6 +176,9 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is((select count(*)::integer from public.mis_zonas()), 0, 'suspendida: mis_zonas() no devuelve nada');
 select is((select count(*)::integer from public.mis_ciudades_de_trabajo()), 0, 'suspendida: mis_ciudades_de_trabajo() no devuelve nada');
 select is((select count(*)::integer from public.mis_campanias_vigentes()), 0, 'suspendida: mis_campanias_vigentes() no devuelve nada');
+select is((select count(*)::integer from public.mis_campanias_del_mapa()), 0, 'suspendida: mis_campanias_del_mapa() no devuelve nada');
+select is((select count(*)::integer from public.zona where id = pg_temp.u('d1')), 0, 'suspendida: ya no lee las zonas de su campaña');
+select is((select count(*)::integer from public.campania_ciudad where id = pg_temp.u('f1')), 0, 'ni las ciudades de su campaña');
 select is((select count(*)::integer from public.campania_colportor where usuario_id = pg_temp.u('b1')), 1,
           'pero su propia inscripción sigue legible (lo propio no se esconde)');
 select is(public.estado_cuenta(), 'SUSPENDIDA', 'y estado_cuenta() sigue diciendo SUSPENDIDA');
@@ -211,6 +222,7 @@ select is((select jsonb_path_query_array(
           '["accepted"]'::jsonb, 'reactivada: el lote pendiente entra');
 select is((select count(*)::integer from public.ubicacion where id = pg_temp.u('01')), 1, 'y la casa quedó escrita');
 select is((select array_agg(z) from public.mis_zonas() z), array[pg_temp.u('d1')], 'y mis_zonas() vuelve');
+select is((select count(*)::integer from public.zona where id = pg_temp.u('d1')), 1, 'y las zonas de su campaña también');
 select is((select count(*)::integer from public.mis_campanias_vigentes()), 1, 'y mis_campanias_vigentes() también');
 select is((select public.sync_pull(jsonb_build_object('device', pg_temp.sobre(), 'entities', '[]'::jsonb)) ? 'watermark'),
           true, 'y el pull responde otra vez');

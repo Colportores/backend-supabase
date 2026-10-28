@@ -21,8 +21,10 @@
 --      la cuenta suspendida. El código se suma a la tabla de rechazos del contrato en el mismo
 --      cambio (docs-organizacion).
 --
---   3. `mis_inscripciones_no_terminadas()` (de la que salen `mis_zonas()` y `mis_ciudades_de_trabajo()`)
---      y `mis_campanias_vigentes()` no devuelven nada a la cuenta suspendida: lo compartido de su zona y
+--   3. `mis_inscripciones_no_terminadas()` (de la que salen `mis_zonas()` y `mis_ciudades_de_trabajo()`),
+--      `mis_campanias_vigentes()` y `mis_campanias_del_mapa()` (de la que salen `mis_campania_ciudades()`
+--      y las políticas de `zona`, `campania_ciudad` y `precio_general`, también la rama del coordinador de
+--      la campaña) no devuelven nada a la cuenta suspendida: lo compartido de su zona y
 --      de su ciudad (casas, mapa) también se le cierra por la Data API directa (decisión del 28/10,
 --      pendiente P2 de #203). Al reactivar vuelven solas.
 --
@@ -284,3 +286,26 @@ as $$
    where not exists (select 1 from public.usuario u
                       where u.id = auth.uid() and u.suspendido_en is not null);
 $$;
+
+-- Igual que en 0013, más `u.suspendido_en is null` en la rama del coordinador (la del colportor sale de
+-- mis_inscripciones_no_terminadas(), arriba). De acá salen mis_campania_ciudades() y las políticas de
+-- zona, campania_ciudad y precio_general: el coordinador suspendido ya no lee el mapa de su campaña.
+create or replace function public.mis_campanias_del_mapa()
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select c.id
+    from public.campania c
+    join public.usuario u on u.id = c.coordinador_id
+   where c.coordinador_id = auth.uid() and u.deleted_at is null and u.suspendido_en is null
+  union
+  select i.campania_id from public.mis_inscripciones_no_terminadas() i;
+$$;
+
+comment on function public.mis_campanias_del_mapa() is
+  'Campañas cuyo mapa ve el usuario autenticado: las que coordina y las que no terminaron (en '
+  'curso o por empezar) en las que está inscripto (S56, 0013; decisión del 30/09); ninguna si la '
+  'cuenta está suspendida (0143). La usan mis_campania_ciudades() y la huella del mapa en el pull.';
