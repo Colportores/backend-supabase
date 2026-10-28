@@ -3,8 +3,8 @@
 --      triggers, la RLS, los privilegios y el registro en sync.entidad.
 --   2. productos_devueltos_validos(): lo que es un arreglo de {producto_id, cantidad} y lo que no.
 --   3. Las restricciones, con el SQLSTATE que el motor devuelve como `invalid`.
---   4. La RLS contra la tabla: solo la colportora dueña, y sobre una venta suya; ni el coordinador ni el
---      ADMIN la leen por la tabla; sin DELETE.
+--   4. La RLS contra la tabla: la escribe solo la colportora dueña, y sobre una venta suya; la lee ella, el
+--      ADMIN y el coordinador de su campaña (0141); sin DELETE.
 --   5. Por sync.push: idempotente por client_op_id, el dueño sale del JWT y no del payload, lo que llega
 --      mal vuelve `invalid` con su código y lo ajeno no se toca.
 -- El pull (reinstalar) está en 0108_devolucion_pull_test.sql: el delta solo sirve filas commiteadas.
@@ -181,9 +181,10 @@ select is(
   (select array_agg(p.policyname || ' ' || p.cmd || ' {' || array_to_string(p.roles, ',') || '}' order by p.policyname)
      from pg_policies p where p.schemaname = 'public' and p.tablename = 'devolucion'),
   array['devolucion_insert_propia INSERT {authenticated}',
+        'devolucion_select_coordinacion SELECT {authenticated}',
         'devolucion_select_propia SELECT {authenticated}',
         'devolucion_update_propia UPDATE {authenticated}'],
-  'tres políticas, solo para authenticated, y ninguna de DELETE');
+  'cuatro políticas (la de la coordinación es de 0141), solo para authenticated, y ninguna de DELETE');
 -- USING = lo que ve; WITH CHECK = lo que escribe (0021). Cada una se mide contra el dueño; las de escritura,
 -- además, contra el dueño de la venta.
 select ok((select coalesce(p.qual, '') like '%colportor_id%auth.uid()%' from pg_policies p
@@ -199,7 +200,8 @@ select ok((select coalesce(p.with_check, '') like '%colportor_id%auth.uid()%vent
             where p.policyname = 'devolucion_insert_propia'),
           'INSERT: lo que escribe (WITH CHECK) se mide contra el dueño y contra la venta');
 select ok((select bool_and(coalesce(p.qual, '') || coalesce(p.with_check, '') ~* '\(\s*select auth\.uid\(\)')
-             from pg_policies p where p.schemaname = 'public' and p.tablename = 'devolucion'),
+             from pg_policies p where p.schemaname = 'public' and p.tablename = 'devolucion'
+              and p.policyname <> 'devolucion_select_coordinacion'),
           'auth.uid() va envuelta en (select …): se evalúa una vez por consulta, no por fila');
 select table_privs_are('public', 'devolucion', 'authenticated', array['SELECT', 'INSERT', 'UPDATE'],
                        'authenticated: select, insert y update; nunca delete');
@@ -391,9 +393,9 @@ select is((select count(*)::int from public.devolucion where id in (pg_temp.u('d
           'b1 ve las suyas: la mínima y la del reembolso');
 select is((select count(*)::int from public.devolucion where id = pg_temp.u('d2')), 0, 'y no la de b2');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is((select count(*)::int from public.devolucion), 0, 'el coordinador no ve las de nadie por la tabla');
+select is((select count(*)::int from public.devolucion), 0, 'un coordinador que no coordina a nadie no ve las de nadie por la tabla');
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is((select count(*)::int from public.devolucion), 0, 'ni el ADMIN');
+select ok((select count(*)::int from public.devolucion) >= 3, 'el ADMIN ve todas (0141)');
 select pg_temp.actuar_como_anon();
 select is(pg_temp.error_de('select count(*) from public.devolucion'), '42501 ', 'anon: permission denied');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion)
