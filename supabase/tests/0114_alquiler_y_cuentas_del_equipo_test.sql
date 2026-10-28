@@ -231,7 +231,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.cuentas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          (select array(select k from unnest(array['alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
+          (select array(select k from unnest(array['alquiler_a_favor','alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
                 'alquiler_ultimo_pago_fecha','apellido','ciudad_id','ciudad_nombre','colportor_id',
                 'de_baja','deuda_total','dinero_depositado','dinero_en_mano','dinero_por_cobrar',
                 'departamento','nombre','ultimo_deposito_fecha','ultimo_deposito_monto']) k
@@ -412,7 +412,7 @@ select is((select r.ultimo_deposito_fecha from public.cuentas_de_campania(pg_tem
 select is(pg_temp.alq('e1', 'b1'), '150000|75000|50000|75000|2026-09-08',
           'alquiler: pagado = solo tickets VALIDADOS de esta campaña (50000 + 25000); por validar = el ticket pendiente (30000) y el retiro sin ticket (20000); no cuentan el rechazado, el dado de baja ni el de otra campaña');
 select is(pg_temp.alq('e1', 'b2'), '150000|0|0|150000|null', 'alquiler: sin pagos, debe todo');
-select is(pg_temp.alq('e1', 'b3'), '150000|0|0|150000|null', 'alquiler: el de baja se calcula igual (ver pendientes)');
+select is(pg_temp.alq('e1', 'b3'), '150000|0|0|0|null', 'alquiler: el de baja no debe nada («Alq. de baja», 27/10, 0132)');
 select is(pg_temp.alq('e1', 'b4'), '150000|200000|0|0|2026-09-03', 'alquiler: pagó de más: no debe, y se ve en pagado');
 select is(pg_temp.alq('e1', 'b5'), '150000|0|0|150000|null', 'alquiler: otro sin pagos');
 select is((select count(*)::int from public.cuentas_de_campania(pg_temp.u('e1')) r
