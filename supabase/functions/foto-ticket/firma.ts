@@ -8,7 +8,7 @@
  */
 
 export interface ParametrosDeFirma {
-  metodo: "GET" | "PUT";
+  metodo: "GET" | "PUT" | "HEAD";
   /** El dominio, sin esquema ni ruta (`<cuenta>.r2.cloudflarestorage.com`). */
   host: string;
   /** La ruta ya codificada, con `/` al principio (`/<bucket>/<usuario>/<ticket>.jpg`). */

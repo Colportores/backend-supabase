@@ -35,10 +35,21 @@ interface PedidoRegistrado {
 type Respuesta = { ok: unknown } | { code: string; status: number } | "sin-red" | "no-json";
 
 /** Un `fetch` que contesta como PostgREST y anota qué se le pidió. */
-function dependenciasDe(respuestas: Record<string, Respuesta>, ajustes: Partial<Dependencias> = {}) {
+/** `headR2`: lo que contesta R2 al HEAD previo a una subida (404 = la foto no está). */
+function dependenciasDe(
+  respuestas: Record<string, Respuesta>,
+  ajustes: Partial<Dependencias> = {},
+  headR2: number | "sin-red" = 404,
+) {
   const pedidos: PedidoRegistrado[] = [];
+  const pedidosR2: { url: string; metodo: string }[] = [];
   const fetchFalso: typeof fetch = (entrada, init) => {
     const url = String(entrada);
+    if (url.includes(".r2.cloudflarestorage.com")) {
+      pedidosR2.push({ url, metodo: init?.method ?? "GET" });
+      if (headR2 === "sin-red") return Promise.reject(new TypeError("sin red"));
+      return Promise.resolve(new Response(null, { status: headR2 }));
+    }
     const cabeceras = new Headers(init?.headers);
     pedidos.push({
       url,
@@ -71,7 +82,7 @@ function dependenciasDe(respuestas: Record<string, Respuesta>, ajustes: Partial<
     ahora: () => AHORA,
     ...ajustes,
   };
-  return { dependencias, pedidos };
+  return { dependencias, pedidos, pedidosR2 };
 }
 
 function pedido(cuerpo: unknown, cabeceras: Record<string, string> = { Authorization: JWT }, metodo = "POST") {
@@ -354,4 +365,57 @@ Deno.test("secretos · la clave secreta de R2 no sale en ninguna respuesta ni en
     }
     assert(!log.join("\n").includes("X-Amz-Signature"), "un enlace firmado salió en el log");
   }
+});
+
+// --- no se pisa una foto ya subida ---------------------------------------------------------------------------------
+
+Deno.test("subir · antes de firmar le pregunta a R2 con un HEAD firmado de corta vida si la foto ya está", async () => {
+  const { dependencias, pedidosR2 } = dependenciasDe({ ruta_para_subir_foto_de_ticket: { ok: RUTA } });
+  const respuesta = await manejar(pedido(SUBIR), dependencias);
+  assertEquals(respuesta.status, 200);
+  assertEquals(pedidosR2.length, 1);
+  assertEquals(pedidosR2[0].metodo, "HEAD");
+  const url = new URL(pedidosR2[0].url);
+  assertEquals(url.pathname, `/fotos-tickets/${RUTA}`);
+  assertEquals(url.searchParams.get("X-Amz-Expires"), "60");
+  // El enlace del HEAD no se le devuelve a nadie: el que sale es el PUT.
+  assert((await respuesta.clone().text()).includes("X-Amz-Expires=600"));
+  assert(!(await respuesta.text()).includes("X-Amz-Expires=60&"));
+});
+
+Deno.test("subir · si la foto ya está en R2: 409 y no se firma ninguna subida", async () => {
+  const { dependencias } = dependenciasDe({ ruta_para_subir_foto_de_ticket: { ok: RUTA } }, {}, 200);
+  const { resultado, log } = await conLog(() => manejar(pedido(SUBIR), dependencias));
+  assertEquals(resultado.status, 409);
+  const cuerpo = await resultado.text();
+  assertEquals(JSON.parse(cuerpo).error.codigo, "foto_ya_subida");
+  assertEquals(JSON.parse(cuerpo).error.mensaje, "Este ticket ya tiene su foto: no se puede cambiar.");
+  assert(!cuerpo.includes("X-Amz-Signature"), "no se devolvió ningún enlace");
+  assert(!log.join("").includes(TICKET), "el log no lleva el ticket");
+});
+
+Deno.test("subir · si R2 no contesta como se espera, ante la duda no se firma", async () => {
+  for (const headR2 of [403, 500, 503, "sin-red"] as const) {
+    const { dependencias } = dependenciasDe({ ruta_para_subir_foto_de_ticket: { ok: RUTA } }, {}, headR2);
+    const { resultado } = await conLog(() => manejar(pedido(SUBIR), dependencias));
+    assertEquals(resultado.status, 502, String(headR2));
+    assertEquals((await error(resultado)).codigo, "no_se_pudo_comprobar");
+  }
+});
+
+Deno.test("ver · no hace ningún pedido a R2 (solo firma)", async () => {
+  const { dependencias, pedidosR2 } = dependenciasDe({ ruta_para_ver_foto_de_ticket: { ok: RUTA } });
+  assertEquals((await manejar(pedido(VER), dependencias)).status, 200);
+  assertEquals(pedidosR2.length, 0);
+});
+
+Deno.test("subir · si la base niega el permiso, ni siquiera se pregunta a R2", async () => {
+  const { dependencias, pedidosR2 } = dependenciasDe(
+    { ruta_para_subir_foto_de_ticket: { code: "FT003", status: 400 } },
+    {},
+    200,
+  );
+  const { resultado } = await conLog(() => manejar(pedido(SUBIR), dependencias));
+  assertEquals((await error(resultado)).codigo, "foto_vencida");
+  assertEquals(pedidosR2.length, 0);
 });

@@ -34,6 +34,8 @@ export const MAXIMO_DE_LA_FOTO = 2 * 1024 * 1024;
 /** Cuánto valen los enlaces. Subir da más margen: es una foto de hasta 2 MiB por una conexión que puede ser mala. */
 export const SEGUNDOS_PARA_SUBIR = 600;
 export const SEGUNDOS_PARA_VER = 300;
+/** El enlace del HEAD que la función se hace a sí misma antes de firmar una subida. */
+const SEGUNDOS_PARA_COMPROBAR = 60;
 
 const MAXIMO_DEL_CUERPO = 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -62,6 +64,8 @@ const MENSAJES = {
   foto_vencida: "La foto de este ticket ya venció: se guarda 4 meses. Los datos del ticket siguen en el historial.",
   no_se_pudo_leer: "No pudimos comprobar tu permiso. Esperá unos minutos y volvé a intentar.",
   no_se_pudo_firmar: "No pudimos preparar la foto. Volvé a intentar en unos minutos.",
+  foto_ya_subida: "Este ticket ya tiene su foto: no se puede cambiar.",
+  no_se_pudo_comprobar: "No pudimos comprobar si el ticket ya tiene foto. Esperá unos minutos y volvé a intentar.",
   sin_configurar: "Las fotos de los tickets todavía no están disponibles. Avisá a Administración.",
 } as const;
 
@@ -79,6 +83,8 @@ const ESTADO_HTTP: Record<CodigoDeError, number> = {
   foto_vencida: 410,
   no_se_pudo_leer: 502,
   no_se_pudo_firmar: 500,
+  foto_ya_subida: 409,
+  no_se_pudo_comprobar: 502,
   sin_configurar: 503,
 };
 
@@ -130,6 +136,43 @@ class ErrorDeLaBase extends Error {
   }
 }
 
+/** Una falla al hablar con R2 que tiene su propio aviso. */
+class ErrorDeR2 extends Error {
+  constructor(readonly codigo: "foto_ya_subida" | "no_se_pudo_comprobar") {
+    super(codigo);
+    this.name = "ErrorDeR2";
+  }
+}
+
+/**
+ * Una foto subida es la prueba del ticket y no se pisa (como en el bucket de Supabase, que no tenía política de UPDATE):
+ * antes de firmar una subida se pregunta a R2 con un HEAD firmado (vence en 60 s, no sale de la función) si la clave ya
+ * existe. 404: no existe, se puede firmar. 200: ya está, 409 y no se firma. Cualquier otra cosa: no se sabe, y ante la
+ * duda no se firma.
+ */
+async function laFotoYaEstaEnR2(dependencias: Dependencias, r2: ConfiguracionDeR2, ruta: string): Promise<boolean> {
+  const url = await firmarUrl({
+    metodo: "HEAD",
+    host: `${r2.cuenta}.r2.cloudflarestorage.com`,
+    ruta: `/${r2.bucket}/${codificarRuta(ruta)}`,
+    region: "auto",
+    servicio: "s3",
+    claveDeAcceso: r2.claveDeAcceso,
+    claveSecreta: r2.claveSecreta,
+    fecha: dependencias.ahora(),
+    expiraEnSegundos: SEGUNDOS_PARA_COMPROBAR,
+  });
+  let respuesta: Response;
+  try {
+    respuesta = await dependencias.fetch(url, { method: "HEAD" });
+  } catch {
+    throw new ErrorDeR2("no_se_pudo_comprobar");
+  }
+  if (respuesta.status === 200) return true;
+  if (respuesta.status === 404) return false;
+  throw new ErrorDeR2("no_se_pudo_comprobar");
+}
+
 /** Llama a una RPC con la sesión de quien pidió (`Authorization` tal cual llegó) y devuelve su resultado. */
 async function llamarRpc(
   dependencias: Dependencias,
@@ -177,6 +220,7 @@ function codigoDeError(error: unknown): CodigoDeError {
     if (error.codigo === "42501" || error.http === 401 || error.codigo.startsWith("PGRST30")) return "sin_sesion";
     return "no_se_pudo_leer";
   }
+  if (error instanceof ErrorDeR2) return error.codigo;
   return "no_se_pudo_firmar";
 }
 
@@ -221,6 +265,10 @@ export async function manejar(pedido: Request, dependencias: Dependencias): Prom
         p_extension: EXTENSION_DE[datosDelPedido.tipoDeImagen],
       });
     if (typeof ruta !== "string" || ruta === "") throw new ErrorDeLaBase("respuesta_inesperada", 200);
+
+    if (datosDelPedido.accion === "subir" && await laFotoYaEstaEnR2(dependencias, r2, ruta)) {
+      throw new ErrorDeR2("foto_ya_subida");
+    }
 
     const ahora = dependencias.ahora();
     const subir = datosDelPedido.accion === "subir";

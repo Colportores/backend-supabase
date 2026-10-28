@@ -57,6 +57,8 @@ solo con `supabase.functions.invoke`). Cuerpo de hasta 1 KB.
 | `404` `ticket_no_encontrado` | el ticket no existe **o** no lo ve quien pregunta (no se distingue)                     |
 | `404` `sin_foto`             | el ticket todavía no tiene foto                                                         |
 | `405` / `413` / `415`        | método que no es POST / cuerpo o foto demasiado grande / tipo que no es JPG, PNG o WebP |
+| `409` `foto_ya_subida`       | (subir) la foto de ese ticket ya está en R2: no se pisa                                 |
+| `502` `no_se_pudo_comprobar` | (subir) R2 no contestó al HEAD previo: no se firma                                      |
 | `410` `foto_vencida`         | pasaron 4 meses desde que se subió el ticket (RF-CO08A)                                 |
 | `502` `no_se_pudo_leer`      | la base no contestó                                                                     |
 | `500` `no_se_pudo_firmar`    | falla propia al firmar                                                                  |
@@ -93,9 +95,14 @@ faltan.
 
 ## Límites a tener en cuenta
 
-- **Una foto ya subida se puede pisar con un enlace de subida nuevo.** El bucket de Supabase no lo permitía (sin
-  política de UPDATE). Hoy: solo la dueña del ticket pide un enlace de subida, a su propia carpeta, y no uno de un
-  ticket suyo vencido. Queda como pendiente de decisión (archivo de pendientes de #182).
+- **Una foto ya subida no se pisa** (decisión del 28/10, pendiente P1 §2 de #182; el bucket de Supabase tampoco lo
+  permitía). Antes de firmar una subida la función le hace a R2 un `HEAD` firmado (vence en 60 s y no sale de la
+  función): si la clave ya existe contesta `409 foto_ya_subida` («Este ticket ya tiene su foto: no se puede cambiar.») y
+  no firma nada; si R2 no contesta 200 ni 404, `502 no_se_pudo_comprobar` (ante la duda no se firma). Quien reintente
+  una subida cuyo `PUT` sí llegó a R2 pero cuya respuesta se perdió recibe ese `409`: el teléfono lo tiene que tomar
+  como «la foto ya está» y seguir. Queda una carrera mínima entre el `HEAD` y el `PUT`. **Para después, con el bucket
+  real:** probar un `PUT` con la cabecera firmada `If-None-Match: *`; si R2 la respeta, se suma a `cabecerasFirmadas` y
+  la carrera desaparece (si no la respeta, no se suma).
 - **No hay cifrado propio de cada colportora**: la foto la ve el panel (decisión «Foto cifrada» del 27/10: carpeta
   privada, sin clave por colportora). R2 cifra en reposo.
 - Los enlaces firmados son del portador: quien tenga el enlace puede usarlo hasta que venza. Por eso vencen en minutos y
