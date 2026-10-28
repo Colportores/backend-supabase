@@ -674,13 +674,12 @@ select pg_temp.actuar_como_servidor();
 insert into public.pedido_casa_editora (id, colportor_id, estado, origen) values
   (pg_temp.u('b8'), pg_temp.u('b1'), 'PENDIENTE_AUTORIZACION', 'COLPORTOR');
 select pg_temp.actuar_como(pg_temp.u('b1'));
+-- 0138 (#201): cancelar un pedido por autorizar no compara la versión: la cancelación nunca lo vuelve a «por
+-- autorizar», así que una versión vieja no es un conflicto.
 select is(pg_temp.push1(pg_temp.op('30'), 'pedido_casa_editora', 'update', jsonb_build_object('id', pg_temp.u('b8'), 'estado', 'CANCELADO'), 7) ->> 'outcome',
-          'conflict', 'cancelar con una versión vieja: conflict');
-select is(pg_temp.push1(pg_temp.op('31'), 'pedido_casa_editora', 'update', jsonb_build_object('id', pg_temp.u('b8'), 'estado', 'CANCELADO'), 7) -> 'server_row' ->> 'estado',
-          'PENDIENTE_AUTORIZACION', 'con la fila del servidor para resolver');
-select is(pg_temp.push1(pg_temp.op('32'), 'pedido_casa_editora', 'update', jsonb_build_object('id', pg_temp.u('b8'), 'estado', 'CANCELADO'),
-                        (select sync_version from public.pedido_casa_editora where id = pg_temp.u('b8'))) ->> 'outcome',
-          'accepted', 'con la versión al día: accepted');
+          'accepted', 'cancelar con una versión vieja: accepted (la cancelación no compara versión)');
+select is(pg_temp.push1(pg_temp.op('30'), 'pedido_casa_editora', 'update', jsonb_build_object('id', pg_temp.u('b8'), 'estado', 'CANCELADO'), 7) ->> 'outcome',
+          'duplicate', 'y el mismo envío otra vez: duplicate (no se cancela dos veces)');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.pedido(pg_temp.u('b8')), '0/false/CANCELADO/COLPORTOR', 'queda cancelado');
 select pg_temp.actuar_como(pg_temp.u('b1'));

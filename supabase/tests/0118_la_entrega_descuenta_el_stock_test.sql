@@ -132,7 +132,7 @@ select is(has_function_privilege('authenticated', 'public.tg_entrega_descuenta_s
           or has_function_privilege('anon', 'public.tg_entrega_descuenta_stock()', 'execute')
           or has_function_privilege('authenticated', 'public.tg_entrega_stock_inconsistente()', 'execute'), false,
           'nadie con JWT puede llamar a las funciones de los triggers');
-select has_index('public', 'movimiento_stock', 'movimiento_stock_salida_entrega_key', 'hay un índice único de la salida por entrega');
+select hasnt_index('public', 'movimiento_stock', 'movimiento_stock_salida_entrega_key', 'ya no hay un índice único de la salida por entrega (0135: una entrega deshecha y vuelta a entregar descuenta otra vez)');
 
 -- ---------------------------------------------------------------------------
 -- 2. Entrega inmediata (como el servidor)
@@ -209,11 +209,12 @@ select is(pg_temp.marca('f1'), false, 'sin marca: había stock');
 update public.entrega set fecha_entrega = '2026-10-21 15:00:00+00' where id = pg_temp.u('f1');
 select is(pg_temp.stock('b1', 'd1') || '/' || pg_temp.salidas('f1'), '6/1', 'corregir la fecha de una entregada no descuenta de nuevo');
 
--- Vuelve a pendiente y se entrega otra vez: la salida sigue siendo una.
+-- Vuelve a pendiente (0135: el stock vuelve, con su movimiento) y se entrega otra vez: descuenta de nuevo, y cada
+-- paso deja su salida y su evento.
 update public.entrega set pendiente = true where id = pg_temp.u('f1');
 update public.entrega set pendiente = false where id = pg_temp.u('f1');
-select is(pg_temp.stock('b1', 'd1') || '/' || pg_temp.salidas('f1') || '/' || pg_temp.eventos('f1'), '6/1/1',
-          'pendiente y entregada otra vez: una sola salida y un solo evento');
+select is(pg_temp.stock('b1', 'd1') || '/' || pg_temp.salidas('f1') || '/' || pg_temp.eventos('f1'), '6/2/2',
+          'pendiente y entregada otra vez: el stock termina igual (6), con dos salidas y dos eventos de descuento');
 
 -- Una entrega diferida de más de lo que hay: se marca al entregarla, no al registrarla.
 select is(pg_temp.ent('f2', '51', 'd1', 9, true), 'ok', 'otra pendiente, de 9, con 6 de stock');
@@ -245,9 +246,9 @@ select is(pg_temp.stock('b2', 'd1') || '/' || pg_temp.salidas('91'), '5/0', 'no 
 select is(pg_temp.ent('95', '53', 'd1', 50, false, null, now()), 'ok', 'una entrega de baja de 50 con 5 de stock');
 select is(pg_temp.marca('95'), false, 'no se marca: no es una entrega');
 
--- Anular una entrega ya descontada no devuelve el stock (queda como pendiente de decisión).
+-- Anular una entrega ya descontada devuelve el stock (0135, decisión «Entrega desh» del 27/10), con su movimiento.
 update public.entrega set deleted_at = now() where id = pg_temp.u('90');
-select is(pg_temp.stock('b2', 'd1') || '/' || pg_temp.salidas('90'), '5/1', 'anular una entrega descontada no toca el stock (pendiente de decisión)');
+select is(pg_temp.stock('b2', 'd1') || '/' || pg_temp.salidas('90'), '7/1', 'anular una entrega descontada devuelve sus 2 al stock (5 + 2), la salida original sigue en el historial');
 
 -- Una entrega anterior, entregada sin movimiento (como las de antes de la 0118), no descuenta si se le cambia algo.
 alter table public.entrega disable trigger entrega_descuenta_stock;
@@ -256,7 +257,7 @@ select is(pg_temp.ent('92', '53', 'd1', 2), 'ok', 'una entrega entregada de ante
 alter table public.entrega enable trigger entrega_descuenta_stock;
 alter table public.entrega enable trigger entrega_stock_inconsistente;
 update public.entrega set fecha_prevista = now() where id = pg_temp.u('92');
-select is(pg_temp.stock('b2', 'd1') || '/' || pg_temp.salidas('92'), '5/0', 'editarla no descuenta: solo cuenta el paso a entregada');
+select is(pg_temp.stock('b2', 'd1') || '/' || pg_temp.salidas('92'), '7/0', 'editarla no descuenta: solo cuenta el paso a entregada');
 select is(pg_temp.marca('92'), false, 'y sigue sin marca');
 
 -- La marca no se recalcula si la entrega vuelve a pendiente y se entrega otra vez sin stock.
@@ -267,8 +268,8 @@ select is(pg_temp.stock('b1', 'd1') || '/' || pg_temp.marca('96'), '4/false', 'l
 update public.stock set cantidad_disponible = 0 where usuario_id = pg_temp.u('b1') and producto_id = pg_temp.u('d1');
 update public.entrega set pendiente = true where id = pg_temp.u('96');
 update public.entrega set pendiente = false where id = pg_temp.u('96');
-select is(pg_temp.stock('b1', 'd1') || '/' || pg_temp.marca('96') || '/' || pg_temp.salidas('96'), '0/false/1',
-          'entregada otra vez con el stock en 0: no descuenta ni cambia la marca');
+select is(pg_temp.stock('b1', 'd1') || '/' || pg_temp.marca('96') || '/' || pg_temp.salidas('96'), '0/false/2',
+          'deshecha y entregada otra vez: el stock que volvió (1) se descuenta de nuevo; la marca no cambia');
 
 -- Una entrega de antes de la 0118 (entregada, sin movimiento) que se anula y se restaura vuelve a contar como
 -- entregada: descuenta una vez.

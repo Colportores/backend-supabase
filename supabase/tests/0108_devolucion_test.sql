@@ -71,11 +71,25 @@ create or replace function pg_temp.items(variadic p text[]) returns jsonb langua
     from (select p[i] as p, p[i + 1]::int as n from generate_series(1, array_length(p, 1), 2) i) x;
 $$;
 
+-- Lo mismo con el renglón de la venta (0136): tres claves. ren() son los renglones de la venta 71; ren72(), los de la 72.
+create or replace function pg_temp.ren(variadic p text[]) returns jsonb language sql as $$
+  select jsonb_agg(jsonb_build_object('producto_id', pg_temp.u(x.p), 'cantidad', x.n,
+                                      'venta_item_id', pg_temp.u(case x.p when '11' then '81' when '12' then '82'
+                                                                           when '13' then '83' else '8f' end)))
+    from (select p[i] as p, p[i + 1]::int as n from generate_series(1, array_length(p, 1), 2) i) x;
+$$;
+create or replace function pg_temp.ren72(variadic p text[]) returns jsonb language sql as $$
+  select jsonb_agg(jsonb_build_object('producto_id', pg_temp.u(x.p), 'cantidad', x.n,
+                                      'venta_item_id', pg_temp.u(case x.p when '11' then '84' when '12' then '85'
+                                                                           when '13' then '86' else '8f' end)))
+    from (select p[i] as p, p[i + 1]::int as n from generate_series(1, array_length(p, 1), 2) i) x;
+$$;
+
 -- El payload de una devolución tal como lo manda el teléfono.
 create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb default null)
 returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta,
-                            'productos_devueltos', coalesce(p_items, pg_temp.items('11', '1')),
+                            'productos_devueltos', coalesce(p_items, pg_temp.ren('11', '1')),
                             'dinero_retenido', 0, 'fecha_devolucion', '2026-10-05T12:00:00Z');
 $$;
 -- Un job de push de la entidad; devuelve el resultado.
@@ -118,14 +132,22 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
   (pg_temp.u('71'), pg_temp.u('51'), 'T-8171', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-8172', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
 
+insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 3, 100000, 300000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 3, 50000, 150000),
+  (pg_temp.u('83'), pg_temp.u('71'), pg_temp.u('13'), 5, 20000, 100000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 3, 100000, 300000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 3, 50000, 150000),
+  (pg_temp.u('86'), pg_temp.u('72'), pg_temp.u('13'), 5, 20000, 100000);
+
 -- ---------------------------------------------------------------------------
 -- 1. La forma
 -- ---------------------------------------------------------------------------
 select has_table('public', 'devolucion', 'existe la tabla');
 select columns_are('public', 'devolucion',
   array['id', 'venta_id', 'productos_devueltos', 'dinero_retenido', 'monto_reembolsado', 'fecha_devolucion',
-        'colportor_id', 'created_at', 'updated_at', 'created_by', 'deleted_at', 'sync_version', 'xmin_w'],
-  'las columnas: la devolución, la plata y las de siempre; sin motivo ni texto libre');
+        'colportor_id', 'created_at', 'updated_at', 'created_by', 'deleted_at', 'sync_version', 'xmin_w', 'motivo'],
+  'las columnas: la devolución, la plata, el motivo (0136, opcional y acotado) y las de siempre');
 select col_is_pk('public', 'devolucion', 'id', 'la clave es un uuid');
 select col_type_is('public', 'devolucion', 'productos_devueltos', 'jsonb', 'productos_devueltos es jsonb (ADR-002)');
 select col_not_null('public', 'devolucion', 'productos_devueltos', 'y es obligatorio');
@@ -258,7 +280,7 @@ select is(public.productos_devueltos_validos(jsonb_build_array(
 -- 3. Las restricciones (como postgres: sin RLS de por medio)
 -- ---------------------------------------------------------------------------
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('d0'), pg_temp.u('71'), pg_temp.items('11', '1', '12', '2'),
+                              values (pg_temp.u('d0'), pg_temp.u('71'), pg_temp.ren('11', '1', '12', '2'),
                                       '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
           'ok', 'una devolución mínima: sin reembolso y sin retención');
 select is((select array[dinero_retenido::text, coalesce(monto_reembolsado::text, '-')]
@@ -266,14 +288,14 @@ select is((select array[dinero_retenido::text, coalesce(monto_reembolsado::text,
           'dinero_retenido 0 y sin reembolso: así sale la mayoría');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, dinero_retenido, monto_reembolsado,
                                                               fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), 50000, 190000, '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), 50000, 190000, '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
           'ok', 'con retención y reembolso en el momento');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, monto_reembolsado, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('13', '1'), 0, '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('13', '1'), 0, '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
           'ok', 'un reembolso de 0 no se rechaza (el teléfono no queda atascado)');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), '2026-10-05 12:00+00', pg_temp.u('b1')),
-                                     (pg_temp.u('71'), pg_temp.items('11', '1'), '2026-10-06 12:00+00', pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), '2026-10-05 12:00+00', pg_temp.u('b1')),
+                                     (pg_temp.u('71'), pg_temp.ren('11', '1'), '2026-10-06 12:00+00', pg_temp.u('b1')) $$),
           'ok', 'una venta puede tener varias devoluciones parciales');
 
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
@@ -287,45 +309,45 @@ select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos
                                       now(), pg_temp.u('b1')) $$),
           '23514 devolucion_productos_validos', 'un producto_id que no es uuid: 23514, no 22P02 (el trigger no castea lo que no vio el CHECK)');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '0'), now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '0'), now(), pg_temp.u('b1')) $$),
           '23514 devolucion_productos_validos', 'cantidad 0: 23514');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1', '11', '1'), now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1', '11', '1'), now(), pg_temp.u('b1')) $$),
           '23514 devolucion_productos_validos', 'el mismo producto dos veces: 23514');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
                               values (pg_temp.u('71'), null, now(), pg_temp.u('b1')) $$) like '23502%', true,
           'sin productos (null): not null');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1', '99', '1'), now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1', '99', '1'), now(), pg_temp.u('b1')) $$),
           '23503 devolucion_producto_existe', 'un producto que no existe: 23503, como una FK');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, dinero_retenido, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), -1, now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), -1, now(), pg_temp.u('b1')) $$),
           '23514 devolucion_dinero_retenido_no_negativo', 'una retención negativa: 23514');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, monto_reembolsado, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), -1, now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), -1, now(), pg_temp.u('b1')) $$),
           '23514 devolucion_monto_reembolsado_no_negativo', 'un reembolso negativo: 23514');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, dinero_retenido, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), null, now(), pg_temp.u('b1')) $$) like '23502%', true,
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), null, now(), pg_temp.u('b1')) $$) like '23502%', true,
           'dinero_retenido null: not null (0 es 0)');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), null, pg_temp.u('b1')) $$) like '23502%', true,
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), null, pg_temp.u('b1')) $$) like '23502%', true,
           'sin fecha: not null');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('7f'), pg_temp.items('11', '1'), now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('7f'), pg_temp.ren('11', '1'), now(), pg_temp.u('b1')) $$),
           '23503 devolucion_venta_id_fkey', 'una venta que no existe: foreign key');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (null, pg_temp.items('11', '1'), now(), pg_temp.u('b1')) $$) like '23502%', true,
+                              values (null, pg_temp.ren('11', '1'), now(), pg_temp.u('b1')) $$) like '23502%', true,
           'sin venta: not null');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('d0'), pg_temp.u('71'), pg_temp.items('11', '1'), now(), pg_temp.u('b1')) $$),
+                              values (pg_temp.u('d0'), pg_temp.u('71'), pg_temp.ren('11', '1'), now(), pg_temp.u('b1')) $$),
           '23505 devolucion_pkey', 'el mismo id dos veces: clave primaria');
 
 -- Cambiar los productos de una devolución existente también los juzga el CHECK y el trigger.
-select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos = pg_temp.items('99', '1') where id = pg_temp.u('d0') $$),
+select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos = pg_temp.ren('99', '1') where id = pg_temp.u('d0') $$),
           '23503 devolucion_producto_existe', 'al modificar los productos, un producto que no existe: 23503');
 select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos = '[]'::jsonb where id = pg_temp.u('d0') $$),
           '23514 devolucion_productos_validos', 'y vaciarlos: 23514');
-select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos = pg_temp.items('13', '3') where id = pg_temp.u('d0') $$),
+select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos = pg_temp.ren('13', '3') where id = pg_temp.u('d0') $$),
           'ok', 'cambiar a otros productos que existen, ok');
 
 -- ---------------------------------------------------------------------------
@@ -333,7 +355,7 @@ select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos =
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, dinero_retenido, monto_reembolsado, fecha_devolucion)
-                              values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.items('11', '1'), 0, 190000, '2026-10-04 10:00+00') $$),
+                              values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.ren('11', '1'), 0, 190000, '2026-10-04 10:00+00') $$),
           'ok', 'b1 guarda una devolución de su venta, sin mandar colportor_id');
 select is((select colportor_id from public.devolucion where id = pg_temp.u('d1')), pg_temp.u('b1'),
           'colportor_id sale del JWT, sin que nadie lo mande');
@@ -342,24 +364,24 @@ select is((select monto_reembolsado from public.devolucion where id = pg_temp.u(
 select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d1')), '2026-10-04 10:00+00'::timestamptz,
           'la fecha es la del teléfono, no la de ahora');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.items('11', '1'), now(), pg_temp.u('b2')) $$),
+                              values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.ren('11', '1'), now(), pg_temp.u('b2')) $$),
           '42501 ', 'b1 no puede escribir una devolución a nombre de b2 (WITH CHECK)');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
-                              values (pg_temp.u('d9'), pg_temp.u('72'), pg_temp.items('11', '1'), now()) $$),
+                              values (pg_temp.u('d9'), pg_temp.u('72'), pg_temp.ren72('11', '1'), now()) $$),
           '42501 ', 'ni sobre la venta de b2, aunque el dueño de la devolución sea él');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('d9'), pg_temp.u('72'), pg_temp.items('11', '1'), now(), pg_temp.u('b2')) $$),
+                              values (pg_temp.u('d9'), pg_temp.u('72'), pg_temp.ren72('11', '1'), now(), pg_temp.u('b2')) $$),
           '42501 ', 'ni a nombre de b2 sobre la venta de b2');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.items('11', '1'), now(), null) $$),
+                              values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.ren('11', '1'), now(), null) $$),
           '42501 ', 'ni sin dueño (colportor_id null)');
 
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
-                              values (pg_temp.u('d2'), pg_temp.u('72'), pg_temp.items('12', '1'), '2026-10-04 11:00+00') $$),
+                              values (pg_temp.u('d2'), pg_temp.u('72'), pg_temp.ren72('12', '1'), '2026-10-04 11:00+00') $$),
           'ok', 'b2 guarda la suya, sobre su venta');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
-                              values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.items('12', '1'), now()) $$),
+                              values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.ren('12', '1'), now()) $$),
           '42501 ', 'b2 no anota una devolución sobre la venta de b1');
 
 -- Quién ve qué: cada uno, lo suyo.
@@ -375,7 +397,7 @@ select is((select count(*)::int from public.devolucion), 0, 'ni el ADMIN');
 select pg_temp.actuar_como_anon();
 select is(pg_temp.error_de('select count(*) from public.devolucion'), '42501 ', 'anon: permission denied');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion)
-                              values (pg_temp.u('71'), pg_temp.items('11', '1'), now()) $$), '42501 ', 'ni escribe');
+                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), now()) $$), '42501 ', 'ni escribe');
 
 -- Lo ajeno no se toca: ni modificar, ni dar de baja, ni borrar.
 select pg_temp.actuar_como(pg_temp.u('b2'));
@@ -385,7 +407,8 @@ select is(pg_temp.filas($$ update public.devolucion set deleted_at = now() where
 select is(pg_temp.error_de($$ delete from public.devolucion where id = pg_temp.u('d2') $$), '42501 ',
           'nadie borra: ni lo propio (una baja es deleted_at)');
 -- Pasar la propia a una venta ajena: el WITH CHECK lo frena.
-select is(pg_temp.error_de($$ update public.devolucion set venta_id = pg_temp.u('71') where id = pg_temp.u('d2') $$), '42501 ',
+select is(pg_temp.error_de($$ update public.devolucion set venta_id = pg_temp.u('71'), productos_devueltos = pg_temp.ren('11', '1')
+                                where id = pg_temp.u('d2') $$), '42501 ',
           'b2 no le cuelga su devolución a la venta de b1');
 select is(pg_temp.error_de($$ update public.devolucion set colportor_id = pg_temp.u('b1') where id = pg_temp.u('d2') $$), '42501 ',
           'ni se la regala a b1');
@@ -409,14 +432,14 @@ select is((select count(*)::int from public.devolucion where id = pg_temp.u('d1'
 select pg_temp.actuar_como(pg_temp.u('b1'));
 create temp table r_alta as
   select pg_temp.push1(pg_temp.op('01'), 'insert',
-                       pg_temp.dev(pg_temp.u('d3'), pg_temp.u('71'), pg_temp.items('11', '2', '12', '1'))
+                       pg_temp.dev(pg_temp.u('d3'), pg_temp.u('71'), pg_temp.ren('11', '2', '12', '1'))
                          || jsonb_build_object('monto_reembolsado', 190000, 'colportor_id', pg_temp.u('b2'))) as r;
 select is((select r ->> 'outcome' from r_alta), 'accepted', 'el push de una devolución se acepta');
 select is((select colportor_id from public.devolucion where id = pg_temp.u('d3')), pg_temp.u('b1'),
           'el dueño es quien sube (JWT): el colportor_id del payload se descarta');
 select is((select monto_reembolsado from public.devolucion where id = pg_temp.u('d3')), 190000, 'el reembolso llegó');
 select is((select productos_devueltos from public.devolucion where id = pg_temp.u('d3')),
-          pg_temp.items('11', '2', '12', '1'), 'y los productos, tal cual');
+          pg_temp.ren('11', '2', '12', '1'), 'y los productos, tal cual');
 
 select is((select pg_temp.push1(pg_temp.op('01'), 'insert', pg_temp.dev(pg_temp.u('d3'), pg_temp.u('71'))) ->> 'outcome'),
           'duplicate', 'el mismo client_op_id otra vez: duplicate (idempotente)');
@@ -469,10 +492,10 @@ select is((select pg_temp.push1(pg_temp.op('11'), 'insert',
                                 pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71'), '[]'::jsonb)) ->> 'code'),
           '23514', 'sin productos: invalid 23514');
 select is((select pg_temp.push1(pg_temp.op('12'), 'insert',
-                                pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71'), pg_temp.items('11', '0'))) ->> 'code'),
+                                pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71'), pg_temp.ren('11', '0'))) ->> 'code'),
           '23514', 'cantidad 0: invalid 23514');
 select is((select pg_temp.push1(pg_temp.op('13'), 'insert',
-                                pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71'), pg_temp.items('11', '1', '99', '1'))) ->> 'code'),
+                                pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71'), pg_temp.ren('11', '1', '99', '1'))) ->> 'code'),
           '23503', 'un producto desconocido: invalid 23503');
 select is((select pg_temp.push1(pg_temp.op('14'), 'insert',
                                 pg_temp.dev(pg_temp.u('d6'), pg_temp.u('7f'))) ->> 'code'),

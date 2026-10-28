@@ -39,7 +39,12 @@ begin
   -- audit_log no se borra (AU001) y tiene FK al actor, así que dejaría los usuarios de prueba sin poder borrarse.
   alter table public.devolucion enable trigger devolucion_auditar_alta;
   alter table public.devolucion enable trigger devolucion_auditar_baja;
+  alter table public.devolucion enable trigger devolucion_devuelve_stock;
+  delete from public.movimiento_stock where devolucion_id in
+    (select id from public.devolucion where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad')));
+  delete from public.stock where usuario_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
   delete from public.devolucion where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+  delete from public.venta_item where venta_id in (pg_temp.u('71'), pg_temp.u('72'));
   delete from public.venta where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'));
   delete from public.espacio_persona where created_by in (pg_temp.u('b1'), pg_temp.u('b2'));
   delete from public.espacio where created_by in (pg_temp.u('b1'), pg_temp.u('b2'));
@@ -63,8 +68,14 @@ returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta, 'productos_devueltos', p_items,
                             'dinero_retenido', p_retenido, 'fecha_devolucion', '2026-10-05T12:00:00Z');
 $$;
+-- El renglón de la venta de b1 (71) con ese libro; item72() el de la venta de b2 (0136: tres claves).
 create or replace function pg_temp.item(p_producto text, p_cantidad int) returns jsonb language sql as $$
-  select jsonb_build_object('producto_id', pg_temp.u(p_producto), 'cantidad', p_cantidad);
+  select jsonb_build_object('producto_id', pg_temp.u(p_producto), 'cantidad', p_cantidad,
+                            'venta_item_id', pg_temp.u(case p_producto when '11' then '81' else '82' end));
+$$;
+create or replace function pg_temp.item72(p_producto text, p_cantidad int) returns jsonb language sql as $$
+  select jsonb_build_object('producto_id', pg_temp.u(p_producto), 'cantidad', p_cantidad,
+                            'venta_item_id', pg_temp.u(case p_producto when '11' then '84' else '85' end));
 $$;
 
 -- Una columna de las filas de la entidad en un pull, ordenadas por id.
@@ -109,10 +120,18 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
   (pg_temp.u('71'), pg_temp.u('51'), 'T-8271', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')),
   (pg_temp.u('72'), pg_temp.u('53'), 'T-8272', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'));
 
+insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 3, 100000, 300000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 3, 50000, 150000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 3, 100000, 300000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 3, 50000, 150000);
+
 -- Sin los eventos de 0121 (ver limpiar()): este archivo prueba el pull, y los eventos de la auditoría tienen su
 -- propio test (0121_devolucion_auditoria_test.sql).
 alter table public.devolucion disable trigger devolucion_auditar_alta;
 alter table public.devolucion disable trigger devolucion_auditar_baja;
+-- Tampoco el que devuelve el stock (0136): su evento de auditoría tampoco se borra; tiene su test.
+alter table public.devolucion disable trigger devolucion_devuelve_stock;
 
 -- ---------------------------------------------------------------------------
 -- 1. El teléfono de b1 sube tres devoluciones y el de b2, una
@@ -130,7 +149,7 @@ select is(pg_temp.push1(pg_temp.op('03'), 'insert',
           'accepted', 'y una tercera sin plata de por medio');
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is(pg_temp.push1(pg_temp.op('04'), 'insert',
-                        pg_temp.dev(pg_temp.u('d4'), pg_temp.u('72'), jsonb_build_array(pg_temp.item('11', 1)))),
+                        pg_temp.dev(pg_temp.u('d4'), pg_temp.u('72'), jsonb_build_array(pg_temp.item72('11', 1)))),
           'accepted', 'b2 sube la suya');
 
 -- ---------------------------------------------------------------------------

@@ -504,7 +504,7 @@ select is(pg_temp.lineas(pg_temp.u('a1'), '1d') -> 0 ->> 'tiene_quien_recibe', '
 -- ============================================================================
 
 select is(pg_temp.estado('11'), 'PENDIENTE_AUTORIZACION', 'antes: por autorizar');
-select is((pg_temp.aut(pg_temp.u('a1'), '11') -> 0) - 'decidido_en',
+select is((pg_temp.aut(pg_temp.u('a1'), '11') -> 0) - 'decidido_en' - 'deshacer_hasta',
           jsonb_build_object('transferencia_id', pg_temp.u('11'), 'estado', 'AUTORIZADO', 'monto_deuda', 5500,
                              'ya_estaba', false),
           'a1 la autoriza: AUTORIZADO, con la deuda que pasa (3000 + 2500)');
@@ -546,7 +546,7 @@ select ok(auditoria.metadata_sin_datos_personales((select a.metadata from audito
           'el detalle pasa el control de datos personales');
 
 -- El reintento no mueve nada dos veces.
-select is((pg_temp.aut(pg_temp.u('a1'), '11') -> 0) - 'decidido_en',
+select is((pg_temp.aut(pg_temp.u('a1'), '11') -> 0) - 'decidido_en' - 'deshacer_hasta',
           jsonb_build_object('transferencia_id', pg_temp.u('11'), 'estado', 'AUTORIZADO', 'monto_deuda', 5500,
                              'ya_estaba', true),
           'un reintento de quien ya la autorizó: ya_estaba = true');
@@ -607,7 +607,7 @@ select is(pg_temp.err(pg_temp.u('a1'), format('select * from public.rechazar_tra
           'TR004', 'con más de 500 caracteres: TR004');
 select is(pg_temp.estado('1c'), 'PENDIENTE_AUTORIZACION', 'y sigue por autorizar');
 
-select is((pg_temp.rech(pg_temp.u('a1'), '1b', '  No hay libros  ') -> 0) - 'decidido_en',
+select is((pg_temp.rech(pg_temp.u('a1'), '1b', '  No hay libros  ') -> 0) - 'decidido_en' - 'deshacer_hasta',
           jsonb_build_object('transferencia_id', pg_temp.u('1b'), 'estado', 'RECHAZADO', 'ya_estaba', false),
           'rechazar con motivo: RECHAZADO');
 select is((select (estado, motivo_rechazo, coordinador_id, decidido_en is not null, monto_deuda)::text
