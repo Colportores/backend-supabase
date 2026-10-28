@@ -818,3 +818,40 @@ test('una corrida parcial (avisar: false) no da los avisos de la completa', () =
     await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [], ciudadesEnBase: [], avisar: false, ahora: '2026-10-08T12:00:00Z', log: (m) => mensajes.push(m) }));
     assert.deepEqual(mensajes.filter((m) => m.startsWith('aviso:')), []);
   }));
+
+test('un renombre no es un choque: la ciudad que cambió de nombre se publica en la misma corrida y otra toma su nombre viejo', () =>
+  conTmp(async (tmp) => {
+    const A = '09990000-0000-7000-8003-0000000000b1';
+    const C = '09990000-0000-7000-8003-0000000000b2';
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [{ slug: 'rivera', nombre: 'Rivera', ciudad_id: A, bbox: [-55.6, -31.0, -55.4, -30.8] }] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        // A pasó a llamarse «Tranqueras» y se creó C «Rivera».
+        ciudades: [
+          { slug: 'rivera', nombre: 'Rivera', ciudad_id: C, bbox: [-55.7, -31.1, -55.3, -30.7] },
+          { slug: 'tranqueras', nombre: 'Tranqueras', ciudad_id: A, bbox: [-55.6, -31.0, -55.4, -30.8] },
+        ],
+        ciudadesEnBase: [fila(A, 'Tranqueras'), fila(C, 'Rivera')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-rivera', C], ['ciudad-tranqueras', A]]);
+  }));
+
+test('dos ciudades que se intercambian los nombres tampoco chocan: los dos paquetes pasan a su ambito_id nuevo', () =>
+  conTmp(async (tmp) => {
+    const A = '09990000-0000-7000-8003-0000000000b3';
+    const B = '09990000-0000-7000-8003-0000000000b4';
+    const storage = bucketFalso();
+    const de = (slug, nombre, id) => ({ slug, nombre, ciudad_id: id, bbox: [-57.1, -34.4, -56.9, -34.2] });
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [de('san-jose', 'San José', A), de('libertad', 'Libertad', B)] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [de('san-jose', 'San José', B), de('libertad', 'Libertad', A)],
+        ciudadesEnBase: [fila(A, 'Libertad'), fila(B, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-libertad', A], ['ciudad-san-jose', B]]);
+  }));

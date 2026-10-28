@@ -232,7 +232,10 @@ export async function publicarCiudades({
     const choques = ciudades.flatMap((c) => {
       const del = (previo?.paquetes ?? []).find((p) => p.nivel === 'ciudad' && p.id === `ciudad-${c.slug}` && p.ambito_id !== c.ciudad_id);
       // Si la dueña del paquete ya no está viva, el paquete es de la ciudad nueva (como un renombre): no hay choque.
-      return del && vivas.has(del.ambito_id) ? [{ paquete: del, ciudad: c }] : [];
+      // Tampoco si la dueña se publica en esta misma corrida con otro slug (se renombró): su paquete viejo se
+      // retira por `renombrados` y el nombre queda libre para la otra ciudad (o para el intercambio de nombres).
+      const sePublicaConOtroSlug = del && ciudades.some((o) => o.ciudad_id === del.ambito_id);
+      return del && !sePublicaConOtroSlug && vivas.has(del.ambito_id) ? [{ paquete: del, ciudad: c }] : [];
     });
     if (choques.length > 0) {
       throw new Error(
