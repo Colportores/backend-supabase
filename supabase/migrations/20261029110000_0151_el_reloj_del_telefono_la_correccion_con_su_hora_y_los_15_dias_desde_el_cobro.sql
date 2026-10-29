@@ -11,7 +11,8 @@
 --   2. «Corregir off» · la corrección del monto o del medio hecha sin señal se mide con la HORA DEL TELÉFONO. La
 --      columna nueva `cobranza.corregido_at` es la hora (del teléfono) en que se hizo la última corrección; solo
 --      suma y viaja por el push como `anulado_at`. La corrección vale si su hora:
---        · no es anterior al cobro ni del futuro (con los 5 minutos): si no, CB008;
+--        · no es anterior al cobro ni del futuro (con los 5 minutos): si no, CB008 (solo cuando la corrección llega
+--          sobre un cobro que ya está; un cobro NUEVO que ya trae su `corregido_at` entra sin juzgarla);
 --        · cae dentro de las 72 h desde la `fecha` del cobro, inclusive (si no, el cobro está fijo: CB007, como
 --          hasta ahora);
 --        · y la corrección sube dentro de la gracia (punto 3): si no, CB009.
@@ -122,15 +123,10 @@ declare
   v_con_hora       boolean := false;
   v_fuera          text;
 begin
-  -- Un cobro nuevo que ya trae su hora de corrección (corregido y subido por primera vez): la hora no puede ser
-  -- anterior al cobro ni del futuro (con los 5 minutos). Un alta que ya existe se deja pasar (replay idempotente).
-  if tg_op = 'INSERT' and auth.uid() is not null and new.corregido_at is not null
-     and not exists (select 1 from public.cobranza c where c.id = new.id)
-     and (new.corregido_at > now() + interval '5 minutes' or new.corregido_at < new.fecha) then
-    raise exception using
-      errcode = 'CB008',
-      message = 'La hora de la corrección no es válida: no puede ser del futuro ni anterior al cobro. Revisá la fecha y la hora de tu teléfono.';
-  end if;
+  -- Un cobro nuevo que ya trae su hora de corrección (corregido en el teléfono antes de subir por primera vez) entra
+  -- igual y sin juzgar esa hora: en un alta el servidor no ve el cobro original, así que ni las 72 h ni la gracia se
+  -- pueden medir, y rechazarlo haría perder un cobro vivo (nunca se pierde una venta). La hora solo cuenta cuando una
+  -- corrección llega después, sobre un cobro que ya está (el UPDATE de abajo).
 
   if tg_op = 'UPDATE' and auth.uid() is not null then
     -- El cobro fijo (CB007): pasado el plazo de 72 h desde el cobro, o con su ticket validado, no cambian monto,

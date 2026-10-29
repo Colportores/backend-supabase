@@ -5,7 +5,7 @@
 --   3. «Corregir off»: la corrección se mide con la hora del teléfono (71 h vale aunque suba a las 80 h; 72 h inclusive;
 --      72 h y un segundo, CB007); sin esa hora se mide con la del servidor; una hora anterior al cobro o del futuro es
 --      CB008; con el ticket validado, fijo; dos correcciones seguidas; fuera de la gracia, CB009; un cobro nuevo que ya
---      trae su hora de corrección.
+--      trae su hora de corrección entra sin juzgarla.
 --   4. «Anular sin c.»: sin campaña o con la gracia ya vencida al cobrar, 15 días desde el cobro (inclusive); con la
 --      gracia abierta al cobrar, la de la campaña (CB009 si ya cerró); el coordinador no tiene CB009.
 --   5. Por sync_push: la corrección con su hora entra y los rechazos vuelven invalid con su código.
@@ -299,18 +299,29 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.cobranza (id, venta_id, monto, medio, fecha, corregido_at)
                               values (pg_temp.uc(60), pg_temp.u('71'), 1000, 'EFECTIVO', now() - interval '3 hours',
                                       now() - interval '2 hours') $$), 'ok', 'un cobro nuevo ya corregido en el teléfono entra');
+-- Un cobro nuevo con la hora de corrección rara (reloj adelantado o atrasado) entra igual: perderlo sería perder un cobro vivo.
 select is(pg_temp.error_de($$ insert into public.cobranza (id, venta_id, monto, medio, fecha, corregido_at)
-                              values (pg_temp.uc(61), pg_temp.u('71'), 1000, 'EFECTIVO', now() - interval '3 hours',
-                                      now() + interval '6 minutes') $$), 'CB008', 'con la hora en el futuro: CB008');
+                              values (pg_temp.uc(61), pg_temp.u('71'), 1000, 'EFECTIVO', now() + interval '10 minutes',
+                                      now() + interval '11 minutes') $$), 'ok',
+          'un cobro de un teléfono con el reloj adelantado, corregido un minuto después, entra');
 select is(pg_temp.error_de($$ insert into public.cobranza (id, venta_id, monto, medio, fecha, corregido_at)
                               values (pg_temp.uc(62), pg_temp.u('71'), 1000, 'EFECTIVO', now() - interval '3 hours',
-                                      now() - interval '4 hours') $$), 'CB008', 'o anterior al cobro: CB008');
+                                      now() - interval '4 hours') $$), 'ok',
+          'uno cuya corrección quedó antes del cobro (el reloj se atrasó) también entra');
+select is(pg_temp.error_de($$ insert into public.cobranza (id, venta_id, monto, medio, fecha, corregido_at)
+                              values (pg_temp.uc(63), pg_temp.u('71'), 1000, 'EFECTIVO', now() - interval '3 hours',
+                                      now() + interval '1 day') $$), 'ok', 'ni aunque la hora sea de mañana');
 select is(pg_temp.error_de($$ insert into public.cobranza (id, venta_id, monto, medio, fecha, corregido_at)
                               values (pg_temp.uc(60), pg_temp.u('71'), 1000, 'EFECTIVO', now() - interval '3 hours',
                                       now() + interval '1 day') on conflict do nothing $$), 'ok',
-          'reenviar un alta que ya está no se vuelve a juzgar (el push la resuelve como duplicate)');
+          'reenviar un alta que ya está se resuelve como duplicate');
 select pg_temp.actuar_como_servidor();
-select is((select count(*)::int from public.cobranza where id in (pg_temp.uc(61), pg_temp.uc(62))), 0, 'y los rechazados no escribieron nada');
+select is((select count(*)::int from public.cobranza where id in (pg_temp.uc(60), pg_temp.uc(61), pg_temp.uc(62), pg_temp.uc(63))), 4,
+          'los cuatro cobros llegaron: ninguno se perdió');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+-- Pero una corrección posterior sobre un cobro que ya está sí se juzga.
+select is(pg_temp.corregir(62, 1500, now() + interval '6 minutes'), 'CB008', 'una corrección posterior con hora del futuro sigue siendo CB008');
+select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
 -- 4. «Anular sin c.»: 15 días desde el cobro
