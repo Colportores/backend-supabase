@@ -111,6 +111,17 @@ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unit
   (pg_temp.u('83'), pg_temp.u('71'), pg_temp.u('d0'), 2, 110000, 220000,
    jsonb_build_array(jsonb_build_object('producto_id', pg_temp.u('11'), 'cantidad', 1),
                      jsonb_build_object('producto_id', pg_temp.u('13'), 'cantidad', 2)));
+-- Todo lo vendido ya está entregado (desde 0148 la devolución suma al stock solo lo entregado). Las entregas se
+-- cargan sin los triggers del stock (0118, 0135): el stock del test se fija a mano abajo.
+alter table public.entrega disable trigger entrega_stock_inconsistente;
+alter table public.entrega disable trigger entrega_descuenta_stock;
+insert into public.entrega (id, venta_id, producto_id, cantidad, fecha_entrega, pendiente) values
+  (pg_temp.u('e1'), pg_temp.u('71'), pg_temp.u('11'), 7, '2026-10-01 15:30:00+00', false),
+  (pg_temp.u('e2'), pg_temp.u('71'), pg_temp.u('12'), 3, '2026-10-01 15:30:00+00', false),
+  (pg_temp.u('e3'), pg_temp.u('71'), pg_temp.u('13'), 4, '2026-10-01 15:30:00+00', false),
+  (pg_temp.u('e4'), pg_temp.u('72'), pg_temp.u('11'), 3, '2026-10-01 16:30:00+00', false);
+alter table public.entrega enable trigger entrega_stock_inconsistente;
+alter table public.entrega enable trigger entrega_descuenta_stock;
 insert into public.stock (usuario_id, producto_id, cantidad_disponible) values
   (pg_temp.u('b1'), pg_temp.u('11'), 10), (pg_temp.u('b1'), pg_temp.u('12'), 0);
 

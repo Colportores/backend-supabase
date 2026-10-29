@@ -595,7 +595,7 @@ select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.becas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
           (select array(select k from unnest(array['apellido','carrera_elegida_en','carrera_id','carrera_nombre','meta_configurada','meta_libros','meta_recalculada_en',
-                'meta_monto_ces','nombre','tipo_beca','usuario_id']) k order by k collate "C")),
+                'meta_monto_ces','nombre','tipo_beca','usuario_id','libros_bonificables','compra_ces','estado_beca','beca_alcanzada_tipo']) k order by k collate "C")),
           'becas_de_campania: la forma de la respuesta, sin emails ni clientes');
 select is((select count(*)::int from public.becas_de_campania(pg_temp.u('e1'))), 4,
           'becas: los 4 inscriptos vivos de Verano (el de baja no sale)');
