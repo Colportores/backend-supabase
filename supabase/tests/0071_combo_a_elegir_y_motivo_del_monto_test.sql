@@ -244,8 +244,9 @@ select is((select sync.expresion_json('public.venta_item'::regclass) like '%''co
 select is((select sync.expresion_json('public.venta'::regclass) like '%''motivo_monto_manual''%'), true, 'y el de venta, el motivo');
 
 -- Las ventas de b1 y b2 (como postgres: el dueño va explícito).
-insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id) values
-  (pg_temp.u('b0'), pg_temp.u('ca'), 'T-71', 220000, now(), pg_temp.u('b1'));
+-- Con motivo: los ítems de los casos de abajo suman más que el total (0150: sin motivo, el servidor lo rechaza).
+insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, motivo_monto_manual) values
+  (pg_temp.u('b0'), pg_temp.u('ca'), 'T-71', 220000, now(), pg_temp.u('b1'), 'fixture: los ítems suman más (0150)');
 
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
