@@ -49,8 +49,8 @@ select is((select relrowsecurity from pg_class where oid = 'public.cuenta_colpor
 select columns_are('public', 'cuenta_colportor',
   array['id', 'usuario_id', 'deuda_total', 'dinero_depositado', 'dinero_en_mano', 'dinero_por_cobrar',
         'deuda_alquiler', 'actualizado_en', 'created_at', 'updated_at', 'created_by', 'deleted_at',
-        'sync_version', 'xmin_w'],
-  'las columnas son las de siempre');
+        'sync_version', 'xmin_w', 'alquiler_trasladado'],
+  'las columnas son las de siempre (y alquiler_trasladado, de 0152)');
 select ok(has_table_privilege('authenticated', 'public.cuenta_colportor', 'select'),
           'authenticated sigue leyendo (la RLS recorta a lo suyo)');
 select ok(not has_table_privilege('authenticated', 'public.cuenta_colportor', 'insert')

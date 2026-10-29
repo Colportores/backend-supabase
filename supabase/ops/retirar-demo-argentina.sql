@@ -147,10 +147,6 @@ begin
   -- --------------------------------------------------------------------------------------------------
   begin
     -- Actividad
-    update public.deposito_cobro set deleted_at = now()
-     where deleted_at is null and (deposito_id = any (v_deposito) or cobranza_id = any (v_cobranza));
-    get diagnostics v_n = row_count; v_resumen := v_resumen || jsonb_build_object('que', 'deposito_cobro', 'filas', v_n);
-
     update public.deposito set deleted_at = now() where deleted_at is null and id = any (v_deposito);
     get diagnostics v_n = row_count; v_resumen := v_resumen || jsonb_build_object('que', 'deposito', 'filas', v_n);
 

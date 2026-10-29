@@ -276,7 +276,7 @@ select is(pg_temp.mensaje_de($$ update public.cobranza set anulado_at = now() - 
 select is(pg_temp.anulado(3), false, 'y el cobro sigue vivo');
 select is(pg_temp.anular_a(3, now()), 'CB001', 'con la hora del servidor (80 h) tampoco: lo que cuenta es la hora que dice el teléfono');
 -- Una hora del futuro, o anterior al cobro, no es de fiar.
-select is(pg_temp.anular_a(4, now() + interval '1 minute'), 'CB008', 'una hora del futuro no vale');
+select is(pg_temp.anular_a(4, now() + interval '6 minutes'), 'CB008', 'una hora del futuro (más de los 5 minutos de margen de 0151) no vale');
 select is(pg_temp.mensaje_de($$ update public.cobranza set anulado_at = now() + interval '1 hour', motivo_anulacion = 'Otro'
                                 where id = pg_temp.uc(4) $$),
           'CB008: La hora de la anulación no es válida: no puede ser del futuro ni anterior al cobro. Revisá la fecha y la hora de tu teléfono.',
@@ -304,16 +304,14 @@ select is(pg_temp.anular_a(1, now() - interval '8 hours'), 'CB003', 'pero cambia
 select is(pg_temp.anular_a(7, now() - interval '9 hours'), 'CB002', 'con el ticket validado la colportora no anula, tampoco offline');
 -- Los 15 días de gracia de las ventas: la campaña de la venta.
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is(pg_temp.anular_a(8, now()), 'CB009', 'la venta es de una campaña que terminó hace 20 días: ya no se anula');
-select is(pg_temp.mensaje_de($$ update public.cobranza set anulado_at = now(), motivo_anulacion = 'Otro' where id = pg_temp.uc(15) $$),
-          'CB009: La campaña de esta venta terminó hace más de 15 días: el cobro ya no se puede anular. Pedile a tu coordinador que lo revise.',
-          'y el aviso dice a quién pedírselo');
-select is(pg_temp.anulado(8), false, 'el cobro sigue vivo');
+-- Desde 0151 («Anular sin c.»): la campaña terminó hace 20 días, pero el cobro es de hoy; con la gracia ya vencida al
+-- cobrar rigen los 15 días desde el cobro. El CB009 se prueba en 0151_el_reloj_del_telefono_..._test.sql.
+select is(pg_temp.anular_a(8, now()), 'ok', 'la venta es de una campaña que terminó hace 20 días, pero se cobró hoy: vale (0151)');
+select is(pg_temp.anulado(8), true, 'y queda anulado');
 select pg_temp.actuar_como(pg_temp.u('b3'));
 select is(pg_temp.anular_a(9, now()), 'ok', 'a los 15 días justos del fin de la campaña todavía vale');
 select pg_temp.actuar_como(pg_temp.u('b4'));
-select is(pg_temp.anular_a(10, now()), 'CB009', 'a los 16 días no');
-select is(pg_temp.anular_a(10, now() - interval '1 hour'), 'CB009', 'ni con una hora vieja del teléfono: la gracia mira cuándo sube');
+select is(pg_temp.anular_a(10, now()), 'ok', 'a los 16 días, con un cobro de hoy: vale, la gracia ya estaba vencida al cobrar (0151)');
 select pg_temp.actuar_como(pg_temp.u('b5'));
 select is(pg_temp.anular_a(11, now()), 'ok', 'una venta que no es de ninguna campaña: no hay gracia que medir, vale la ventana de 72 h');
 -- El coordinador usa la hora del servidor.
@@ -438,9 +436,9 @@ select is(pg_temp.codigos((select r from lote)), array['CB007', '-', '-', '-', '
 select pg_temp.actuar_como(pg_temp.u('b4'));
 select is(pg_temp.codigos(pg_temp.push(jsonb_build_array(
             pg_temp.job_upd('e5', 55, jsonb_build_object('anulado_at', now() - interval '1 hour', 'motivo_anulacion', 'Otro'))))),
-          array['CB009'], 'por el push, CB009: la campaña de la venta terminó hace más de 15 días');
+          array['-'], 'por el push, la campaña de la venta terminó hace 16 días pero el cobro es de hace 3 h: entra (0151)');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.anulado(55), false, 'y el cobro no se anuló');
+select is(pg_temp.anulado(55), true, 'y el cobro quedó anulado');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.monto_de(50), 1000, 'el cobro fijo no cambió');
 select is(pg_temp.monto_de(51), 1500, 'el corregido dentro del plazo sí');
