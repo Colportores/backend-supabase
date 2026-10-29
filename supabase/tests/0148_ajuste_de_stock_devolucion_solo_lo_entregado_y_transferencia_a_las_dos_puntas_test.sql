@@ -125,8 +125,8 @@ insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, crea
 insert into public.espacio (id, ubicacion_id, created_by) values (pg_temp.u('e2'), pg_temp.u('01'), pg_temp.u('b1'));
 insert into public.espacio_persona (id, espacio_id, persona_id, created_by) values
   (pg_temp.u('51'), pg_temp.u('e2'), pg_temp.u('c2'), pg_temp.u('b1'));
-insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)
-select pg_temp.u(x.v), pg_temp.u('51'), 'T-148' || x.v, 300000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1')
+insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by, motivo_monto_manual)
+select pg_temp.u(x.v), pg_temp.u('51'), 'T-148' || x.v, 300000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1'), 'fixture: ítems que no cuadran con el total (0150)'
   from unnest(array['71','72','73','74','75']) x(v);
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
   (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 3, 100000, 300000),
