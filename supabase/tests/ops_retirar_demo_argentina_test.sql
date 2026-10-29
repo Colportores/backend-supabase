@@ -164,7 +164,7 @@ insert into t_ar values
   ('agenda', 'id', array[pg_temp.u('d0')]), ('deposito', 'id', array[pg_temp.u('d1')]),
   ('deposito_cobro', 'id', array[pg_temp.u('d2')]), ('usuario', 'id', array[pg_temp.u('a3')]),
   ('usuario_rol', 'usuario_id', array[pg_temp.u('a3')]),
-  ('cuenta_colportor', 'usuario_id', array[pg_temp.u('a2'), pg_temp.u('a3')]);
+  ('cuenta_colportor', 'usuario_id', array[pg_temp.u('a3')]);
 -- Lo que los triggers armaron solos y también tiene que caer (se busca por su dueño, sin ids fijos).
 insert into t_ar
 select 'stock', 'id', array_agg(id) from public.stock where producto_id in (pg_temp.dede('8005', 1), pg_temp.dede('8005', 2))
@@ -187,7 +187,7 @@ insert into t_uy values
   ('movimiento_stock', 'id', array[pg_temp.u('b1')]),
   ('usuario', 'id', array[pg_temp.u('a1'), pg_temp.u('a2')]),
   ('usuario_rol', 'usuario_id', array[pg_temp.u('a1'), pg_temp.u('a2')]),
-  ('cuenta_colportor', 'usuario_id', array[pg_temp.u('a1')]);
+  ('cuenta_colportor', 'usuario_id', array[pg_temp.u('a1'), pg_temp.u('a2')]);
 insert into t_uy
 select 'stock', 'id', array_agg(id) from public.stock where producto_id = pg_temp.u('bb');
 
@@ -293,6 +293,10 @@ select is((select count(*) from public.ubicacion u join public.ciudad c on c.id 
 -- tiene qué bloquear y lo dice con un 0. El bloqueo real se verifica en el proyecto de desarrollo (README de ops).
 select is((select filas from retiro_resumen where que = 'auth.users (login bloqueado)'), 0,
           'sin la columna banned_until de Supabase Auth, el script no falla ni inventa un bloqueo');
+-- La cuenta de saldo de colportor.demo sigue viva, y la deuda que se le mueva después cuenta (no cae en una fila oculta).
+select public.mover_deuda_casa_editora(pg_temp.u('a2'), 500);
+select is((select deuda_total from public.cuenta_colportor where usuario_id = pg_temp.u('a2') and deleted_at is null),
+          1500::bigint, 'la cuenta de colportor.demo sigue viva y suma la deuda nueva');
 select is((select count(*) from auth.users where email like '%.demo@example.com'), 3::bigint,
           'las cuentas de Auth no se borran');
 select ok((select deleted_at is null from public.campania where id = pg_temp.u('b2')),

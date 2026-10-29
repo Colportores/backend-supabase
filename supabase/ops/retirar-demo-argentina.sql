@@ -27,8 +27,9 @@
 --   · Por id, lo único que no cuelga de nada geográfico: los 9 productos, las 2 colecciones y las 3 carreras
 --     de la demo (`dede0000-0000-7000-8005-…01..09`, `…8006-…01..02`, `…801e-…01..03`). De ahí salen sus
 --     precios, componentes, metas de beca, pedidos, movimientos y stock.
---   · Por correo: colportor2.demo@example.com (usuario, rol, login) y la cuenta del colportor de
---     colportor.demo@example.com, que se queda pero cuyo saldo de la demo se retira.
+--   · Por correo: colportor2.demo@example.com (usuario, rol, cuenta de saldo y login). La cuenta de saldo de
+--     colportor.demo NO se toca: ese usuario se queda, y mover_deuda_casa_editora() no reactiva una cuenta
+--     dada de baja (la deuda nueva se sumaría a una fila oculta y se perdería).
 --
 -- Se frena (sin cambiar nada) si algo huele a que la demo y lo del dominio comparten filas: una campaña que
 -- tiene ciudades de Argentina y de otro país, o una venta de otro lado que usa un producto de la demo. Un
@@ -50,7 +51,6 @@ do $retiro$
 declare
   v_aplicar    boolean := coalesce(current_setting('retiro.aplicar', true), '') = 'si';
   v_demo_u2    constant text := 'colportor2.demo@example.com';
-  v_demo_u1    constant text := 'colportor.demo@example.com';
 
   v_pais       uuid[];
   v_ciudad     uuid[];
@@ -58,7 +58,6 @@ declare
   v_campania   uuid[];
   v_inscr      uuid[];
   v_u2         uuid[];
-  v_u1         uuid[];
   v_ubic       uuid[];
   v_esp        uuid[];
   v_ep         uuid[];
@@ -99,7 +98,6 @@ begin
 
   select coalesce(array_agg(id), '{}') into v_inscr from public.campania_colportor where campania_id = any (v_campania);
   select coalesce(array_agg(id), '{}') into v_u2 from public.usuario where lower(email) = v_demo_u2;
-  select coalesce(array_agg(id), '{}') into v_u1 from public.usuario where lower(email) = v_demo_u1;
 
   select coalesce(array_agg(id), '{}') into v_ubic from public.ubicacion where ciudad_id = any (v_ciudad);
   select coalesce(array_agg(id), '{}') into v_esp from public.espacio where ubicacion_id = any (v_ubic);
@@ -210,7 +208,7 @@ begin
     get diagnostics v_n = row_count; v_resumen := v_resumen || jsonb_build_object('que', 'pedido_casa_editora', 'filas', v_n);
 
     update public.cuenta_colportor set deleted_at = now()
-     where deleted_at is null and usuario_id = any (v_u2 || v_u1);
+     where deleted_at is null and usuario_id = any (v_u2);
     get diagnostics v_n = row_count; v_resumen := v_resumen || jsonb_build_object('que', 'cuenta_colportor', 'filas', v_n);
 
     -- Catálogo

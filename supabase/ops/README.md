@@ -23,7 +23,7 @@ Retira del proyecto de **desarrollo** (`ohdsavwpasfpapbyutrv`) los datos de la d
 - **Por estructura, desde el país**: todo país que no sea `UY` → sus ciudades → las campañas que cuelgan de ellas → zonas, inscripciones (con su historial de zonas y cuentas de alquiler), ubicaciones, espacios, personas del espacio, y desde ahí las visitas, ventas (con renglones), entregas, cobranzas y agenda.
 - **Por colportor2.demo**: sus jornadas y depósitos (con los cobros que incluyen), su usuario, su rol y su login de Auth.
 - **Por id**: lo único que no cuelga de nada geográfico, el catálogo de la demo (`dede0000-0000-7000-8005-…01..09` productos, `…8006-…01..02` colecciones, `…801e-…01..03` carreras) y, de ahí, sus precios, componentes, metas de beca, pedidos, renglones, movimientos de stock y stock.
-- **La cuenta de saldo** (`cuenta_colportor`) de colportor2.demo y de colportor.demo (que se queda, pero el saldo era el de la demo; la próxima operación de deuda la reactiva en cero).
+- **La cuenta de saldo** (`cuenta_colportor`) de colportor2.demo. La de colportor.demo **no se toca**: el usuario se queda y `mover_deuda_casa_editora()` no reactiva una cuenta dada de baja (la deuda nueva se perdería en una fila oculta). Si su saldo quedó con cifras de la demo de Argentina, se corrige a mano.
 - No se borra nada de verdad, tampoco las cuentas de Auth.
 
 ### Qué NO hace
