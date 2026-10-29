@@ -67,7 +67,7 @@ insert into public.espacio_persona (id, espacio_id, persona_id) values (pg_temp.
 insert into public.visita (id, espacio_persona_id, espacio_id, fecha, tipo_resultado, colportor_id)
 values (pg_temp.u('bf'), pg_temp.u('b8'), pg_temp.u('b7'), now(), 'RECHAZO', pg_temp.u('a2'));
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id)
-values (pg_temp.u('b9'), pg_temp.u('b8'), 'T-UY', 4500, now(), pg_temp.u('a2'));
+values (pg_temp.u('b9'), pg_temp.u('b8'), 'T-UY', 6500, now(), pg_temp.u('a2'));
 insert into public.cobranza (id, venta_id, monto, medio, fecha) values (pg_temp.u('ba'), pg_temp.u('b9'), 1000, 'EFECTIVO', now());
 insert into public.producto (id, nombre, tipo) values (pg_temp.u('bb'), 'Libro UY t216', 'LIBRO');
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal)
