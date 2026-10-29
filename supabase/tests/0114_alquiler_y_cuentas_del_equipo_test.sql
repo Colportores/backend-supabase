@@ -231,7 +231,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.cuentas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          (select array(select k from unnest(array['alquiler_a_favor','alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
+          (select array(select k from unnest(array['alquiler_trasladado','alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
                 'alquiler_ultimo_pago_fecha','apellido','ciudad_id','ciudad_nombre','colportor_id',
                 'de_baja','deuda_total','dinero_depositado','dinero_en_mano','dinero_por_cobrar',
                 'departamento','nombre','ultimo_deposito_fecha','ultimo_deposito_monto']) k
@@ -361,7 +361,7 @@ select is((select array_agg(r.colportor_id order by r.colportor_id) from public.
 -- Las cuatro cifras, del snapshot.
 select is((select format('%s|%s|%s|%s', r.deuda_total, r.dinero_depositado, r.dinero_en_mano, r.dinero_por_cobrar)
              from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b1')),
-          '1200000|500000|30000|80000', 'cuentas: las cuatro cifras de su cuenta, tal cual');
+          '1200000|500000|0|80000', 'cuentas: las cuatro cifras de su cuenta (en mano se calcula: sin cobros en efectivo, 0)');
 select is((select format('%s|%s|%s|%s', r.deuda_total, r.dinero_depositado, r.dinero_en_mano, r.dinero_por_cobrar)
              from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b2')),
           '0|0|0|0', 'cuentas: una cuenta dada de baja no cuenta');
