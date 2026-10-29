@@ -10,17 +10,16 @@
 -- ## 1. «Ajuste stock»: la colportora ajusta su stock desde el teléfono
 --
 -- Caso: Mariela arranca la campaña con 10 libros que trajo encima, sin ningún pedido; cada entrega se marcaba como
--- inconsistente («Sin stock», 27/10). Desde el teléfono registra un ajuste de +10 con el motivo «Stock inicial»,
--- y su stock pasa de 0 a 10. Si un libro se le dañó, ajusta -1 con «Libros dañados»; si cuenta y le faltan 2,
--- ajusta -2 con «Conteo».
+-- inconsistente («Sin stock», 27/10). Desde el teléfono registra un ajuste de entrada de 10 con el motivo «Stock inicial»,
+-- y su stock pasa de 0 a 10. Si un libro se le dañó, registra una salida de 1 con «Libros dañados»; si cuenta y le
+-- faltan 2, una salida de 2 con «Conteo».
 --
---   · `movimiento_stock` gana el tipo `AJUSTE` y la columna `motivo`. Para el ajuste la `cantidad` lleva signo
---     (positiva sube el stock, negativa lo baja; cero no es un ajuste): los demás tipos siguen con cantidad mayor
---     que cero y el tipo dice para qué lado van. El `motivo` es un código de una lista (`STOCK_INICIAL`,
---     `LIBROS_DANIADOS`, `CONTEO`), obligatorio en un ajuste y nulo en cualquier otro movimiento: NO hay texto
---     libre que salga del teléfono.
+--   · `movimiento_stock` gana los tipos `AJUSTE_ENTRADA` y `AJUSTE_SALIDA` y la columna `motivo` (decisión del
+--     29/10, convención: la `cantidad` es siempre mayor que cero y el tipo dice para qué lado va; el CHECK de
+--     cantidad no cambia). El `motivo` es un código de una lista (`STOCK_INICIAL`, `LIBROS_DANIADOS`, `CONTEO`),
+--     obligatorio en un ajuste y nulo en cualquier otro movimiento: NO hay texto libre que salga del teléfono.
 --   · `movimiento_stock` entra al motor de sync como entidad de PUSH (y pull de las propias, `usuario_id`): el
---     teléfono solo INSERTA un movimiento de tipo `AJUSTE` de su propio stock. Lo demás lo pone el servidor:
+--     teléfono solo INSERTA un movimiento de ajuste (entrada o salida) de su propio stock. Lo demás lo pone el servidor:
 --     `usuario_id` sale del JWT, `fecha` es cuándo LLEGÓ (como el pedido, 0124) y ningún origen (pedido,
 --     transferencia, entrega, devolución) se elige desde el teléfono. Sin UPDATE ni DELETE: un ajuste no se edita,
 --     se corrige con otro ajuste. Un reintento (replay del push) no suma dos veces: el `ON CONFLICT DO NOTHING`
@@ -58,15 +57,20 @@
 --
 --   · `sync.entidad.columna_duenio` admite una LISTA de columnas separadas por coma: la fila baja si el usuario es
 --     cualquiera de ellas (`sync.pull` arma `(t.a = $4 or t.b = $4)`; con una sola columna es igual que antes).
---     `transferencia_stock` y `transferencia_item` pasan a `origen_id,destino_id`.
---   · `transferencia_item` gana `origen_id` y `destino_id`, copiadas del encabezado por el trigger de 0139 (como
---     `solicitante_id`) para que el pull filtre por columnas de la propia tabla; las líneas que ya había se
---     completan. Son del servidor (`columnas_servidor`): el teléfono no las manda.
---   · Índices del delta con el dueño primero (uno por punta) en las dos tablas.
---   · La RLS de lectura no cambia (0067): las dos puntas, el coordinador de cada una y el ADMIN. Lo que baja al
---     teléfono de un coordinador sigue siendo solo lo suyo: si es una de las puntas.
---   · Las filas que ya existían se tocan una vez (sube su versión) para que la otra punta las reciba: de otro modo
---     quedarían debajo de su cursor.
+--     `transferencia_stock` y `transferencia_item` pasan a `baja_a_1,baja_a_2`.
+--   · `baja_a_1` y `baja_a_2` son las dos personas a las que BAJA la transferencia: quien da y quien recibe
+--     (`origen_id` y `destino_id`). Las pone el servidor al crear el encabezado y las copia a cada línea el trigger
+--     de 0139 (como `solicitante_id`), así el pull filtra por columnas de la propia tabla. Son del servidor
+--     (`columnas_servidor`): el teléfono no las manda. Las filas que ya había se completan.
+--   · Excepción (decisión del 29/10, seguridad barata): una transferencia que el teléfono sube YA CANCELADA (se
+--     arrepintió antes de mandarla) no baja a la otra punta: `baja_a_1` y `baja_a_2` son las de quien la pidió, así
+--     una persona que no es compañera no recibe en su teléfono un registro que nadie le mandó a autorizar. Una
+--     que se cancela después de pedirse sigue bajando a las dos (ya la habían visto).
+--   · Índices del delta con el dueño primero (uno por columna) en las dos tablas.
+--   · La RLS de lectura (0067) pasa a las mismas dos columnas: las dos puntas, el coordinador de cada una y el
+--     ADMIN; para la nacida cancelada, solo quien la pidió y su coordinador. Lo que baja al teléfono de un
+--     coordinador sigue siendo solo lo suyo: si es una de las puntas.
+--   · Las filas que ya existían se completan y suben su versión: de otro modo la otra punta no las recibiría.
 --   · La acción pasa a llamarse «Pedir transferencia de materiales» (panel: front-coordinadores-web#91; teléfono:
 --     front-colportores-mobile#512): es un cambio de texto de las pantallas, no de la base.
 --
@@ -89,12 +93,12 @@
 --
 -- ## Para otros repos
 --
---   · front-colportores-mobile#549: entidad `movimiento_stock` (push de `AJUSTE` + pull de los propios) con
---     `{ id, producto_id, tipo: 'AJUSTE', cantidad (con signo), motivo }`; `invalid` con 23514 (cantidad cero,
+--   · front-colportores-mobile#549: entidad `movimiento_stock` (push de los ajustes + pull de los propios) con
+--     `{ id, producto_id, tipo: 'AJUSTE_ENTRADA' | 'AJUSTE_SALIDA', cantidad (positiva), motivo }`; `invalid` con 23514 (cantidad cero o negativa,
 --     motivo fuera de la lista o faltante) y 42501 (otro tipo de movimiento).
 --   · front-colportores-mobile#512: las transferencias bajan a las dos puntas; cancelar es un update
 --     `{ id, estado: 'CANCELADO' }` con la `sync_version` que tiene (42501 si ya no está por autorizar).
---   · front-coordinadores-web#91: el historial de la vista 34 incluye los `AJUSTE` (cantidad con signo y motivo).
+--   · front-coordinadores-web#91: el historial de la vista 34 incluye los ajustes (`AJUSTE_ENTRADA` / `AJUSTE_SALIDA`, cantidad y motivo).
 --   · docs-organizacion: esquema-datos.md, contrato-sync-engine.md §2 (lista en `columna_duenio`) y HU-STK-005,
 --     HU-STK-007 y HU-VEN-004: se piden en el cuerpo del PR.
 --
@@ -114,32 +118,23 @@ alter table public.movimiento_stock
   add constraint movimiento_stock_tipo_check
   check (tipo in ('ENTRADA_PEDIDO', 'SALIDA_ENTREGA', 'SALIDA_TRANSFERENCIA', 'ENTRADA_TRANSFERENCIA',
                   'ENTRADA_ENTREGA_ANULADA', 'ENTRADA_ENTREGA_CORREGIDA', 'ENTRADA_DEVOLUCION',
-                  'SALIDA_DEVOLUCION_ANULADA', 'AJUSTE'));
-
--- La cantidad es siempre positiva salvo en el ajuste, que lleva signo (cero no es un ajuste).
-alter table public.movimiento_stock
-  drop constraint movimiento_stock_cantidad_check;
-alter table public.movimiento_stock
-  add constraint movimiento_stock_cantidad_check
-  check ((tipo = 'AJUSTE' and cantidad <> 0) or (tipo <> 'AJUSTE' and cantidad > 0));
+                  'SALIDA_DEVOLUCION_ANULADA', 'AJUSTE_ENTRADA', 'AJUSTE_SALIDA'));
 
 -- El motivo: un código de una lista, obligatorio en el ajuste y nulo en cualquier otro movimiento. (`is not null`
 -- explícito: `null in (...)` es null y un CHECK null PASA.)
 alter table public.movimiento_stock
   add constraint movimiento_stock_motivo_check
-  check ((tipo = 'AJUSTE' and motivo is not null and motivo in ('STOCK_INICIAL', 'LIBROS_DANIADOS', 'CONTEO'))
-         or (tipo <> 'AJUSTE' and motivo is null));
+  check ((tipo in ('AJUSTE_ENTRADA', 'AJUSTE_SALIDA')
+          and motivo is not null and motivo in ('STOCK_INICIAL', 'LIBROS_DANIADOS', 'CONTEO'))
+         or (tipo not in ('AJUSTE_ENTRADA', 'AJUSTE_SALIDA') and motivo is null));
 
 comment on column public.movimiento_stock.motivo is
-  'Por qué se ajustó el stock (solo en un AJUSTE, 0148): STOCK_INICIAL, LIBROS_DANIADOS o CONTEO. Un código de '
+  'Por qué se ajustó el stock (solo en un ajuste, 0148): STOCK_INICIAL, LIBROS_DANIADOS o CONTEO. Un código de '
   'una lista, nunca texto libre. Nulo en los demás movimientos.';
-comment on column public.movimiento_stock.cantidad is
-  'Cuántas unidades. Mayor que cero en todos los tipos, y el tipo dice para qué lado va; salvo el AJUSTE (0148), '
-  'que lleva signo: positiva sube el stock, negativa lo baja.';
 comment on table public.movimiento_stock is
   'Histórico de cambios de stock del colportor (V2): entrada por pedido recibido, salida por entrega o por '
   'transferencia, las entradas de lo que se deshace (entrega anulada o corregida, libros devueltos) y, desde '
-  '0148, el AJUSTE que la colportora registra desde el teléfono (cantidad con signo y motivo de una lista).';
+  '0148, el ajuste (AJUSTE_ENTRADA o AJUSTE_SALIDA) que la colportora registra desde el teléfono, con el motivo de una lista.';
 
 -- La dueña del movimiento por default: el payload no la manda (columnas_servidor), sale del JWT.
 alter table public.movimiento_stock
@@ -174,7 +169,7 @@ begin
     return new;
   end if;
 
-  if new.tipo is distinct from 'AJUSTE' then
+  if new.tipo not in ('AJUSTE_ENTRADA', 'AJUSTE_SALIDA') then
     raise exception 'Desde el teléfono solo se registra un ajuste de tu stock. Los demás movimientos los hace el sistema.'
       using errcode = '42501';
   end if;
@@ -183,7 +178,7 @@ end;
 $$;
 
 comment on function public.tg_movimiento_stock_del_cliente() is
-  'BEFORE INSERT de movimiento_stock, solo para authenticated (0148): desde el teléfono solo entra un AJUSTE de '
+  'BEFORE INSERT de movimiento_stock, solo para authenticated (0148): desde el teléfono solo entra un ajuste de '
   'su propio stock (42501 si no); el servidor fija la dueña, la fecha (cuándo llegó) y deja sin origen el '
   'movimiento. El servidor no pasa por acá.';
 
@@ -204,14 +199,17 @@ set search_path = ''
 as $$
 declare
   v_despues integer;
+  v_delta   integer;
 begin
-  if new.tipo <> 'AJUSTE' or new.deleted_at is not null then
+  if new.tipo not in ('AJUSTE_ENTRADA', 'AJUSTE_SALIDA') or new.deleted_at is not null then
     return null;
   end if;
 
+  v_delta := case when new.tipo = 'AJUSTE_ENTRADA' then new.cantidad else -new.cantidad end;
+
   -- Una fila de stock dada de baja cuenta como cero (como en 0126 y 0136).
   insert into public.stock as s (usuario_id, producto_id, cantidad_disponible)
-  values (new.usuario_id, new.producto_id, new.cantidad)
+  values (new.usuario_id, new.producto_id, v_delta)
   on conflict (usuario_id, producto_id)
   do update set cantidad_disponible = case when s.deleted_at is null then s.cantidad_disponible else 0 end
                                       + excluded.cantidad_disponible,
@@ -221,16 +219,17 @@ begin
   perform auditoria.registrar(
     'stock_ajustado', 'movimiento_stock', new.id, new.usuario_id,
     jsonb_build_object('producto_id', new.producto_id,
+                       'tipo', new.tipo,
                        'cantidad', new.cantidad,
                        'motivo', new.motivo,
-                       'stock_antes', v_despues - new.cantidad,
+                       'stock_antes', v_despues - v_delta,
                        'stock_despues', v_despues));
   return null;
 end;
 $$;
 
 comment on function public.tg_movimiento_stock_ajusta_el_stock() is
-  'AFTER INSERT de movimiento_stock (0148, #221): un AJUSTE suma su cantidad (con signo) al stock del colportor, '
+  'AFTER INSERT de movimiento_stock (0148, #221): un ajuste suma (AJUSTE_ENTRADA) o resta (AJUSTE_SALIDA) su cantidad al stock del colportor, '
   'que puede quedar en negativo (S46), y deja el evento stock_ajustado en audit_log. Un ajuste que entra dado de '
   'baja no mueve nada. Nunca rechaza.';
 
@@ -245,7 +244,7 @@ create trigger movimiento_stock_ajusta_el_stock
 create policy movimiento_stock_insert_propio on public.movimiento_stock
   for insert to authenticated
   with check (usuario_id = (select auth.uid())
-              and tipo = 'AJUSTE');
+              and tipo in ('AJUSTE_ENTRADA', 'AJUSTE_SALIDA'));
 
 grant insert (id, producto_id, tipo, cantidad, motivo, created_at, deleted_at)
   on public.movimiento_stock to authenticated;
@@ -425,34 +424,70 @@ comment on function public.tg_devolucion_devuelve_stock() is
 -- 3. La transferencia baja a las dos puntas
 -- ----------------------------------------------------------------------------
 
+alter table public.transferencia_stock
+  add column baja_a_1 uuid references public.usuario(id),
+  add column baja_a_2 uuid references public.usuario(id);
 alter table public.transferencia_item
-  add column origen_id  uuid references public.usuario(id),
-  add column destino_id uuid references public.usuario(id);
+  add column baja_a_1 uuid references public.usuario(id),
+  add column baja_a_2 uuid references public.usuario(id);
 
-comment on column public.transferencia_item.origen_id is
-  'Quien da los libros: el origen de la transferencia, copiado del encabezado por un trigger (0148). Existe para '
-  'que el pull filtre por una columna de la propia tabla; el teléfono no la manda.';
-comment on column public.transferencia_item.destino_id is
-  'Quien recibe los libros: el destino de la transferencia, copiado del encabezado por un trigger (0148). Existe '
-  'para que el pull filtre por una columna de la propia tabla; el teléfono no la manda.';
+comment on column public.transferencia_stock.baja_a_1 is
+  'Una de las dos personas a las que baja la transferencia por el sync (0148): quien da los libros, salvo la que el '
+  'teléfono sube ya cancelada, que baja solo a quien la pidió. La pone un trigger; el teléfono no la manda.';
+comment on column public.transferencia_stock.baja_a_2 is
+  'La otra persona a la que baja la transferencia por el sync (0148): quien recibe los libros, salvo la que el '
+  'teléfono sube ya cancelada, que baja solo a quien la pidió. La pone un trigger; el teléfono no la manda.';
+comment on column public.transferencia_item.baja_a_1 is
+  'Copia de baja_a_1 del encabezado (0148), para que el pull filtre por una columna de la propia tabla.';
+comment on column public.transferencia_item.baja_a_2 is
+  'Copia de baja_a_2 del encabezado (0148), para que el pull filtre por una columna de la propia tabla.';
 
--- Las líneas que ya había. (La actualización sube su versión y su xmin_w: las recibe quien todavía no las tenía.)
+-- Lo que ya había: baja a quien da y a quien recibe. (La actualización sube su versión y su xmin_w: la otra punta
+-- recibe lo que todavía no tenía.)
+update public.transferencia_stock
+   set baja_a_1 = origen_id,
+       baja_a_2 = destino_id;
 update public.transferencia_item i
-   set origen_id = t.origen_id,
-       destino_id = t.destino_id
+   set baja_a_1 = t.baja_a_1,
+       baja_a_2 = t.baja_a_2
   from public.transferencia_stock t
  where t.id = i.transferencia_id;
 
--- Los encabezados que ya había: se tocan una vez para que bajen a la otra punta (de otro modo quedarían debajo de
--- su cursor). No cambia ningún valor.
-update public.transferencia_stock
-   set deleted_at = deleted_at;
+-- Índices del delta con el dueño primero, uno por columna (el pull busca `baja_a_1 = $4 or baja_a_2 = $4`).
+create index transferencia_stock_delta_baja_a_1_idx on public.transferencia_stock (baja_a_1, xmin_w, id);
+create index transferencia_stock_delta_baja_a_2_idx on public.transferencia_stock (baja_a_2, xmin_w, id);
+create index transferencia_item_delta_baja_a_1_idx on public.transferencia_item (baja_a_1, xmin_w, id);
+create index transferencia_item_delta_baja_a_2_idx on public.transferencia_item (baja_a_2, xmin_w, id);
 
--- Índices del delta con el dueño primero, uno por punta (el pull busca `origen_id = $4 or destino_id = $4`).
-create index transferencia_stock_delta_origen_idx on public.transferencia_stock (origen_id, xmin_w, id);
-create index transferencia_stock_delta_destino_idx on public.transferencia_stock (destino_id, xmin_w, id);
-create index transferencia_item_delta_origen_idx on public.transferencia_item (origen_id, xmin_w, id);
-create index transferencia_item_delta_destino_idx on public.transferencia_item (destino_id, xmin_w, id);
+-- A quién baja el encabezado: a quien da y a quien recibe; la que el teléfono sube ya cancelada, solo a quien la
+-- pidió. Por todo camino (el teléfono, el servidor, los tests). Corre después de tg_transferencia_stock_del_cliente
+-- (por nombre), que fija `solicitante_id`.
+create function public.tg_transferencia_stock_baja_a()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.estado = 'CANCELADO' and new.solicitante_id is not null then
+    new.baja_a_1 := new.solicitante_id;
+    new.baja_a_2 := new.solicitante_id;
+  else
+    new.baja_a_1 := new.origen_id;
+    new.baja_a_2 := new.destino_id;
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_transferencia_stock_baja_a() is
+  'BEFORE INSERT de transferencia_stock (0148): baja_a_1 y baja_a_2 son quien da y quien recibe, salvo la que nace '
+  'cancelada con solicitante (la sube el teléfono arrepentido), que baja solo a quien la pidió.';
+
+revoke all on function public.tg_transferencia_stock_baja_a() from public, anon, authenticated, service_role;
+
+create trigger transferencia_stock_puntas_que_la_ven
+  before insert on public.transferencia_stock
+  for each row execute function public.tg_transferencia_stock_baja_a();
 
 -- Por todo camino (el teléfono, el servidor, los tests): las puntas de la línea son las del encabezado, como su
 -- solicitante. DEFINER para leer el encabezado aunque la RLS lo esconda (una línea de una transferencia ajena o
@@ -464,8 +499,8 @@ security definer
 set search_path = ''
 as $$
 begin
-  select t.solicitante_id, t.origen_id, t.destino_id
-    into new.solicitante_id, new.origen_id, new.destino_id
+  select t.solicitante_id, t.baja_a_1, t.baja_a_2
+    into new.solicitante_id, new.baja_a_1, new.baja_a_2
     from public.transferencia_stock t
    where t.id = new.transferencia_id;
   return new;
@@ -473,21 +508,21 @@ end;
 $$;
 
 comment on function public.tg_transferencia_item_solicitante() is
-  'BEFORE INSERT de transferencia_item (0139, 0148): solicitante_id, origen_id y destino_id son los de la '
+  'BEFORE INSERT de transferencia_item (0139, 0148): solicitante_id, baja_a_1 y baja_a_2 son los de la '
   'transferencia, venga de donde venga la línea.';
 
 -- La columna del dueño pasa a ser una lista; el pull baja la fila si el usuario es cualquiera de las columnas.
 update sync.entidad
-   set columna_duenio = 'origen_id,destino_id'
+   set columna_duenio = 'baja_a_1,baja_a_2'
  where nombre in ('transferencia_stock', 'transferencia_item');
 
 update sync.entidad
-   set columnas_servidor = columnas_servidor || array['origen_id', 'destino_id']
- where nombre = 'transferencia_item';
+   set columnas_servidor = columnas_servidor || array['baja_a_1', 'baja_a_2']
+ where nombre in ('transferencia_stock', 'transferencia_item');
 
 comment on column sync.entidad.columna_duenio is
   'Columna(s) con el usuario dueño de la fila (0014, 0148): si está, el pull baja solo las filas donde esa columna '
-  'es el usuario autenticado. Puede ser una lista separada por coma (origen_id,destino_id): baja la fila si el '
+  'es el usuario autenticado. Puede ser una lista separada por coma (baja_a_1,baja_a_2): baja la fila si el '
   'usuario es cualquiera de ellas.';
 
 -- El pull con la columna del dueño como lista. Misma firma y cuerpo que en 0023; solo cambia el filtro por
@@ -619,7 +654,7 @@ begin
     -- Solo las filas propias (0014): la RLS le puede mostrar más (el coordinador y el ADMIN
     -- ven todas las inscripciones), pero al teléfono baja solo lo suyo. Usa el índice
     -- (dueño, xmin_w, id).
-    -- Desde 0148 la columna puede ser una lista separada por coma (origen_id,destino_id): la fila baja si el
+    -- Desde 0148 la columna puede ser una lista separada por coma (baja_a_1,baja_a_2): la fila baja si el
     -- usuario es cualquiera de ellas.
     if v_col_duenio is not null then
       v_filtro := v_filtro || (select ' and (' || string_agg(format('t.%I = $4', c), ' or ' order by c) || ')'
@@ -830,6 +865,17 @@ comment on function public.tg_transferencia_stock_del_cliente() is
   'CANCELADO (23514), quien llama es una de las dos puntas (42501) y, si no nace cancelada, la otra es un '
   'compañero de su campaña (42501); el servidor fija solicitante y fecha de solicitud y deja en blanco '
   'coordinador, deuda, decisión y motivo. El servidor no pasa por acá.';
+
+-- Quién ve el encabezado (las líneas siguen al encabezado, 0067): las dos puntas a las que baja, el ADMIN y el
+-- coordinador de cada una. La nacida cancelada tiene a quien la pidió en las dos, así que la otra punta no la ve.
+drop policy transferencia_stock_select on public.transferencia_stock;
+create policy transferencia_stock_select on public.transferencia_stock
+  for select to authenticated
+  using (baja_a_1 = (select auth.uid())
+         or baja_a_2 = (select auth.uid())
+         or (select public.tiene_rol('ADMIN'))
+         or public.coordina_al_colportor(baja_a_1)
+         or public.coordina_al_colportor(baja_a_2));
 
 drop policy transferencia_stock_insert_propia on public.transferencia_stock;
 create policy transferencia_stock_insert_propia on public.transferencia_stock

@@ -24,18 +24,21 @@ select is((select deleted_at is not null from public.producto where id = '019200
 select is((select count(*)::int from public.transferencia_stock where id::text like '01920000-0000-7000-8000-0000000149c%'), 2,
           'las 2 transferencias siguen');
 select is((select count(*)::int from public.transferencia_stock t join public.prueba_0149_transferencia s using (id)
-            where to_jsonb(t) - 'sync_version' - 'updated_at' - 'xmin_w'
+            where to_jsonb(t) - 'baja_a_1' - 'baja_a_2' - 'sync_version' - 'updated_at' - 'xmin_w'
                   is distinct from to_jsonb(s) - 'sync_version' - 'updated_at' - 'xmin_w'), 0,
-          'idénticas salvo la versión (se tocan para que las puntas las reciban por el delta)');
+          'idénticas salvo la versión y a quién bajan (se completan para que las puntas las reciban por el delta)');
+select is((select count(*)::int from public.transferencia_stock
+            where id::text like '01920000-0000-7000-8000-0000000149c%'
+              and baja_a_1 = origen_id and baja_a_2 = destino_id), 2, 'y bajan a quien da y a quien recibe');
 select is((select count(*)::int from public.transferencia_stock t join public.prueba_0149_transferencia s using (id)
             where t.sync_version <= s.sync_version), 0, 'y subieron su versión de sync');
 select is((select count(*)::int from public.transferencia_item i
             join public.transferencia_stock t on t.id = i.transferencia_id
            where i.id::text like '01920000-0000-7000-8000-0000000149e%'
-             and i.origen_id = t.origen_id and i.destino_id = t.destino_id), 2,
+             and i.baja_a_1 = t.baja_a_1 and i.baja_a_2 = t.baja_a_2), 2,
           'las dos líneas de antes tienen las puntas de su encabezado');
 select is((select count(*)::int from public.transferencia_item i join public.prueba_0149_item s using (id)
-            where to_jsonb(i) - 'origen_id' - 'destino_id' - 'sync_version' - 'updated_at' - 'xmin_w'
+            where to_jsonb(i) - 'baja_a_1' - 'baja_a_2' - 'sync_version' - 'updated_at' - 'xmin_w'
                   is distinct from to_jsonb(s) - 'sync_version' - 'updated_at' - 'xmin_w'), 0,
           'y quedaron idénticas salvo las puntas');
 
@@ -45,7 +48,7 @@ select is((select count(*)::int from public.movimiento_stock m join public.prueb
           'el movimiento de stock de antes quedó idéntico (solo suma la columna motivo, vacía)');
 select is((select count(*)::int from sync.entidad), (select n + 1 from public.prueba_0149_entidades),
           'la única entidad nueva de sync es movimiento_stock');
-select is((select columna_duenio from sync.entidad where nombre = 'transferencia_item'), 'origen_id,destino_id',
+select is((select columna_duenio from sync.entidad where nombre = 'transferencia_item'), 'baja_a_1,baja_a_2',
           'y las transferencias bajan a las dos puntas');
 
 -- Lo nuevo anda sobre los datos de antes
@@ -55,8 +58,8 @@ select set_config('role', 'authenticated', true);
 select is(sync.push(jsonb_build_array(jsonb_build_object(
             'client_op_id', '01920000-0000-7000-8000-0000000149a0', 'entity', 'movimiento_stock', 'op', 'insert',
             'payload', jsonb_build_object('id', '01920000-0000-7000-8000-0000000149f2',
-                                          'producto_id', '01920000-0000-7000-8000-0000000149a1', 'tipo', 'AJUSTE',
-                                          'cantidad', -2, 'motivo', 'LIBROS_DANIADOS')))) #>> '{results,0,outcome}',
+                                          'producto_id', '01920000-0000-7000-8000-0000000149a1', 'tipo', 'AJUSTE_SALIDA',
+                                          'cantidad', 2, 'motivo', 'LIBROS_DANIADOS')))) #>> '{results,0,outcome}',
           'accepted', 'la colportora ajusta su stock de un libro de antes');
 select set_config('role', 'postgres', true);
 select is((select cantidad_disponible from public.stock

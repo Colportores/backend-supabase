@@ -104,7 +104,7 @@ insert into public.movimiento_stock (id, usuario_id, producto_id, tipo, cantidad
   (pg_temp.u('d1'), pg_temp.u('b1'), pg_temp.u('11'), 'SALIDA_TRANSFERENCIA', 2, pg_temp.u('a1')),
   (pg_temp.u('d2'), pg_temp.u('b2'), pg_temp.u('11'), 'ENTRADA_TRANSFERENCIA', 2, pg_temp.u('a1'));
 insert into public.movimiento_stock (id, usuario_id, producto_id, tipo, cantidad, motivo, deleted_at) values
-  (pg_temp.u('d3'), pg_temp.u('b1'), pg_temp.u('12'), 'AJUSTE', 3, 'CONTEO', now());
+  (pg_temp.u('d3'), pg_temp.u('b1'), pg_temp.u('12'), 'AJUSTE_ENTRADA', 3, 'CONTEO', now());
 
 -- ---------------------------------------------------------------------------
 -- 1. movimiento_stock: cada una baja los suyos
@@ -140,7 +140,7 @@ select is(pg_temp.ids(pg_temp.pull(pg_temp.u('c1'), 'transferencia_stock'), 'tra
           'la coordinadora que no es punta no las baja a su teléfono');
 select is(pg_temp.ids(pg_temp.pull(pg_temp.u('c1'), 'transferencia_item'), 'transferencia_item'), array[]::text[], 'ni las líneas');
 select is(pg_temp.ids(pg_temp.pull(pg_temp.u('ad'), 'transferencia_stock'), 'transferencia_stock'), array[]::text[], 'ni el ADMIN');
-select is((select (e ->> 'origen_id') || '>' || (e ->> 'destino_id')
+select is((select (e ->> 'baja_a_1') || '>' || (e ->> 'baja_a_2')
              from jsonb_array_elements(pg_temp.pull(pg_temp.u('b2'), 'transferencia_item') -> 'rows' -> 'transferencia_item') e
             where right(e ->> 'id', 2) = 'c1'),
           pg_temp.u('b1')::text || '>' || pg_temp.u('b2')::text, 'la línea baja con quién da y quién recibe');
@@ -181,6 +181,22 @@ select is((select e ->> 'estado' from jsonb_array_elements(
 select is((select e ->> 'estado' from jsonb_array_elements(
              pg_temp.pull(pg_temp.u('b1'), 'transferencia_stock') -> 'rows' -> 'transferencia_stock') e
            where right(e ->> 'id', 2) = 'f1'), 'CANCELADO', 'y b1 la ve cancelada');
+
+-- Una que b1 sube ya cancelada (se arrepintió antes de mandarla) para b2: baja solo a b1; b2 no la recibe.
+select is(pg_temp.push(pg_temp.u('b1'), 'f4', 'transferencia_stock', 'insert',
+            jsonb_build_object('id', pg_temp.u('f4'), 'origen_id', pg_temp.u('b1'), 'destino_id', pg_temp.u('b2'),
+                               'estado', 'CANCELADO')) ->> 'outcome', 'accepted', 'b1 sube una que nace cancelada');
+select is(pg_temp.push(pg_temp.u('b1'), 'f5', 'transferencia_item', 'insert',
+            jsonb_build_object('id', pg_temp.u('f5'), 'transferencia_id', pg_temp.u('f4'), 'producto_id', pg_temp.u('11'),
+                               'cantidad', 1)) ->> 'outcome', 'accepted', 'con su línea');
+select is(pg_temp.ids(pg_temp.pull(pg_temp.u('b1'), 'transferencia_stock'), 'transferencia_stock'), array['a1','a2','f1','f4'],
+          'b1 la baja (la pidió él)');
+select is(pg_temp.ids(pg_temp.pull(pg_temp.u('b1'), 'transferencia_item'), 'transferencia_item'), array['c1','c2','f2','f5'],
+          'con su línea');
+select is(pg_temp.ids(pg_temp.pull(pg_temp.u('b2'), 'transferencia_stock'), 'transferencia_stock'), array['a1','a3','f1'],
+          'b2, la otra punta, no la recibe (sigue con las tres de antes)');
+select is(pg_temp.ids(pg_temp.pull(pg_temp.u('b2'), 'transferencia_item'), 'transferencia_item'), array['c1','c3','f2'],
+          'ni su línea');
 
 -- ---------------------------------------------------------------------------
 -- Limpieza

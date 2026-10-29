@@ -1,6 +1,6 @@
 -- pgTAP · 0148 (backend-supabase#221, respuestas de Cristian del 28/10): cuatro casas de stock y transferencias.
---   1. Ajuste de stock desde el teléfono («Ajuste stock»): la colportora sube un movimiento AJUSTE de su propio stock
---      (cantidad con signo, motivo de una lista); el stock se recalcula; la coordinadora lo ve; el replay no suma
+--   1. Ajuste de stock desde el teléfono («Ajuste stock»): la colportora sube un movimiento AJUSTE_ENTRADA o AJUSTE_SALIDA de su
+--      propio stock (cantidad positiva, el tipo dice el sentido; motivo de una lista); el stock se recalcula; la coordinadora lo ve; el replay no suma
 --      dos veces; el stock puede quedar en negativo (S46).
 --   2. La devolución suma al stock solo lo entregado («Devol. s/ent»): vendió 3, entregó 1, devuelve 3 → suma 1 y los
 --      2 no entregados salen de la entrega pendiente sin tocar el stock. Acumulado, anulación y venta sin entregas.
@@ -156,7 +156,7 @@ select is((select has_table_privilege('authenticated', 'public.movimiento_stock'
 
 -- Stock inicial: +5 del libro 11 (b1 no tenía fila de stock).
 select is(pg_temp.push(pg_temp.u('b1'), 'a1', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a1'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', 5,
+            jsonb_build_object('id', pg_temp.u('a1'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 5,
                                'motivo', 'STOCK_INICIAL')) ->> 'outcome',
           'accepted', 'b1 sube un ajuste de +5 con el motivo «Stock inicial»: accepted');
 select is(pg_temp.stock('b1', '11'), '5', 'el stock se recalcula: 5 (sin fila antes)');
@@ -170,18 +170,18 @@ select is((select metadata ->> 'stock_antes' || '>' || (metadata ->> 'stock_desp
 
 -- Libros dañados: -2.
 select is(pg_temp.push(pg_temp.u('b1'), 'a2', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a2'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', -2,
+            jsonb_build_object('id', pg_temp.u('a2'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_SALIDA', 'cantidad', 2,
                                'motivo', 'LIBROS_DANIADOS')) ->> 'outcome',
           'accepted', 'un ajuste de -2 por «Libros dañados»: accepted');
 select is(pg_temp.stock('b1', '11'), '3', 'el stock baja a 3');
 
 -- El reintento y el replay no suman dos veces.
 select is(pg_temp.push(pg_temp.u('b1'), 'a2', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a2'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', -2,
+            jsonb_build_object('id', pg_temp.u('a2'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_SALIDA', 'cantidad', 2,
                                'motivo', 'LIBROS_DANIADOS')) ->> 'outcome',
           'duplicate', 'el mismo envío otra vez: duplicate');
 select is(pg_temp.push(pg_temp.u('b1'), 'a3', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a2'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', -2,
+            jsonb_build_object('id', pg_temp.u('a2'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_SALIDA', 'cantidad', 2,
                                'motivo', 'LIBROS_DANIADOS')) ->> 'outcome',
           'duplicate', 'la misma fila con otro envío (el motor reenvía): duplicate');
 select is(pg_temp.stock('b1', '11'), '3', 'pero el stock no se mueve otra vez');
@@ -189,25 +189,33 @@ select is((select count(*)::int from public.movimiento_stock where id = pg_temp.
 
 -- Conteo: baja por debajo de cero (S46: el stock nunca frena nada, solo se corrige).
 select is(pg_temp.push(pg_temp.u('b1'), 'a4', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a4'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', -10,
+            jsonb_build_object('id', pg_temp.u('a4'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_SALIDA', 'cantidad', 10,
                                'motivo', 'CONTEO')) ->> 'outcome',
           'accepted', 'un conteo de -10 con 3 en el stock: accepted');
 select is(pg_temp.stock('b1', '11'), '-7', 'el stock queda en -7 (S46: puede ser negativo)');
 
 -- Lo que el teléfono no puede subir.
+select is(pg_temp.push(pg_temp.u('b1'), 'a0', 'movimiento_stock', 'insert',
+            jsonb_build_object('id', pg_temp.u('a0'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_SALIDA', 'cantidad', -2,
+                               'motivo', 'CONTEO')) ->> 'code',
+          '23514', 'la cantidad va siempre positiva y el tipo dice el sentido: una salida de -2 es invalid 23514');
+select is(pg_temp.push(pg_temp.u('b1'), 'ae', 'movimiento_stock', 'insert',
+            jsonb_build_object('id', pg_temp.u('ae'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', 2,
+                               'motivo', 'CONTEO')) ->> 'code',
+          '42501', 'el tipo genérico AJUSTE ya no existe: invalid 42501 (desde el teléfono solo entra un ajuste de entrada o de salida)');
 select is(pg_temp.push(pg_temp.u('b1'), 'a5', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a5'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', 1,
+            jsonb_build_object('id', pg_temp.u('a5'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 1,
                                'motivo', 'OTRO')) ->> 'code',
           '23514', 'un motivo que no está en la lista: invalid 23514');
 select is(pg_temp.push(pg_temp.u('b1'), 'a6', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a6'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', 1,
+            jsonb_build_object('id', pg_temp.u('a6'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 1,
                                'motivo', 'se me cayeron al agua')) ->> 'code',
           '23514', 'un texto libre como motivo: invalid 23514 (el motivo es de una lista)');
 select is(pg_temp.push(pg_temp.u('b1'), 'a7', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a7'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', 1)) ->> 'code',
+            jsonb_build_object('id', pg_temp.u('a7'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 1)) ->> 'code',
           '23514', 'un ajuste sin motivo: invalid 23514');
 select is(pg_temp.push(pg_temp.u('b1'), 'a8', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('a8'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE', 'cantidad', 0,
+            jsonb_build_object('id', pg_temp.u('a8'), 'producto_id', pg_temp.u('11'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 0,
                                'motivo', 'CONTEO')) ->> 'code',
           '23514', 'un ajuste de cero unidades: invalid 23514');
 select is(pg_temp.push(pg_temp.u('b1'), 'a9', 'movimiento_stock', 'insert',
@@ -222,7 +230,7 @@ select is(pg_temp.stock('b1', '11'), '-7', 'nada de lo rechazado movió el stock
 -- Ajeno: el servidor fija la dueña; el stock del otro no se toca.
 select is(pg_temp.push(pg_temp.u('b1'), 'ab', 'movimiento_stock', 'insert',
             jsonb_build_object('id', pg_temp.u('ab'), 'usuario_id', pg_temp.u('b2'), 'producto_id', pg_temp.u('12'),
-                               'tipo', 'AJUSTE', 'cantidad', 9, 'motivo', 'CONTEO')) ->> 'outcome',
+                               'tipo', 'AJUSTE_ENTRADA', 'cantidad', 9, 'motivo', 'CONTEO')) ->> 'outcome',
           'accepted', 'un ajuste que dice ser de b2: accepted, pero la dueña es b1');
 select is(pg_temp.stock('b2', '12') || '/' || pg_temp.stock('b1', '12'), 'sin fila/9', 'el stock de b2 no se toca; el ajuste fue al de b1');
 -- Directo por SQL con el JWT de b1: ni update ni delete, ni insertar a nombre de otro.
@@ -233,7 +241,7 @@ select is(pg_temp.filas_de(pg_temp.u('b1'), format($$ delete from public.movimie
 
 -- La coordinadora lo ve en el historial (vista 34) y b2 no ve el de b1.
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is((select count(*)::int from public.movimiento_stock where tipo = 'AJUSTE' and usuario_id = pg_temp.u('b1')), 4,
+select is((select count(*)::int from public.movimiento_stock where tipo in ('AJUSTE_ENTRADA', 'AJUSTE_SALIDA') and usuario_id = pg_temp.u('b1')), 4,
           'la coordinadora de la campaña ve los ajustes de b1 en el historial');
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is((select count(*)::int from public.movimiento_stock where usuario_id = pg_temp.u('b1')), 0, 'b2 no ve los movimientos de b1');
@@ -241,7 +249,7 @@ select pg_temp.actuar_como_servidor();
 
 -- Un ajuste que llega dado de baja no mueve el stock.
 select is(pg_temp.push(pg_temp.u('b1'), 'ac', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('ac'), 'producto_id', pg_temp.u('13'), 'tipo', 'AJUSTE', 'cantidad', 4,
+            jsonb_build_object('id', pg_temp.u('ac'), 'producto_id', pg_temp.u('13'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 4,
                                'motivo', 'CONTEO', 'deleted_at', now())) ->> 'outcome',
           'accepted', 'un ajuste armado y dado de baja sin conexión: accepted');
 select is(pg_temp.stock('b1', '13'), 'sin fila', 'y no mueve el stock');
@@ -250,7 +258,7 @@ select is(pg_temp.stock('b1', '13'), 'sin fila', 'y no mueve el stock');
 select pg_temp.actuar_como_servidor();
 insert into public.stock (usuario_id, producto_id, cantidad_disponible, deleted_at) values (pg_temp.u('b3'), pg_temp.u('12'), 40, now());
 select is(pg_temp.push(pg_temp.u('b3'), 'ad', 'movimiento_stock', 'insert',
-            jsonb_build_object('id', pg_temp.u('ad'), 'producto_id', pg_temp.u('12'), 'tipo', 'AJUSTE', 'cantidad', 3,
+            jsonb_build_object('id', pg_temp.u('ad'), 'producto_id', pg_temp.u('12'), 'tipo', 'AJUSTE_ENTRADA', 'cantidad', 3,
                                'motivo', 'CONTEO')) ->> 'outcome', 'accepted', 'ajuste sobre una fila de stock dada de baja');
 select is(pg_temp.stock('b3', '12') || '/' || (select (deleted_at is null)::text from public.stock
                                                 where usuario_id = pg_temp.u('b3') and producto_id = pg_temp.u('12')),
@@ -321,11 +329,16 @@ select is(pg_temp.stock('b1', '11'), '15', 'anular la que no sumó nada no resta
 -- ---------------------------------------------------------------------------
 -- 3. La transferencia baja a las dos puntas
 -- ---------------------------------------------------------------------------
-select has_column('public', 'transferencia_item', 'origen_id', 'transferencia_item.origen_id');
-select has_column('public', 'transferencia_item', 'destino_id', 'transferencia_item.destino_id');
+select has_column('public', 'transferencia_stock', 'baja_a_1', 'transferencia_stock.baja_a_1');
+select has_column('public', 'transferencia_stock', 'baja_a_2', 'transferencia_stock.baja_a_2');
+select has_column('public', 'transferencia_item', 'baja_a_1', 'transferencia_item.baja_a_1');
+select has_column('public', 'transferencia_item', 'baja_a_2', 'transferencia_item.baja_a_2');
 select results_eq($$ select columna_duenio from sync.entidad where nombre in ('transferencia_stock', 'transferencia_item') order by nombre $$,
-                  $$ values ('origen_id,destino_id'::text), ('origen_id,destino_id'::text) $$,
-                  'las dos entidades bajan por origen_id y destino_id');
+                  $$ values ('baja_a_1,baja_a_2'::text), ('baja_a_1,baja_a_2'::text) $$,
+                  'las dos entidades bajan por baja_a_1 y baja_a_2');
+select is((select has_column_privilege('authenticated', 'public.transferencia_stock', 'baja_a_1', 'insert')
+           or has_column_privilege('authenticated', 'public.transferencia_stock', 'baja_a_2', 'update')), false,
+          'el teléfono no escribe a quién baja la transferencia');
 
 -- T1: la arma la coordinadora (sin solicitante), b1 da y b2 recibe. T2: la pidió b3, b1 da y b3 recibe.
 -- T3: b2 da y b3 recibe (no es de b1).
@@ -339,8 +352,10 @@ insert into public.transferencia_item (id, transferencia_id, producto_id, cantid
   (pg_temp.u('c2'), pg_temp.u('b2'), pg_temp.u('12'), 1),
   (pg_temp.u('c3'), pg_temp.u('b3'), pg_temp.u('12'), 1);
 
-select is((select origen_id::text || '>' || destino_id::text from public.transferencia_item where id = pg_temp.u('c1')),
-          pg_temp.u('b1')::text || '>' || pg_temp.u('b2')::text, 'la línea copia las dos puntas del encabezado');
+select is((select baja_a_1::text || '>' || baja_a_2::text from public.transferencia_stock where id = pg_temp.u('b1')),
+          pg_temp.u('b1')::text || '>' || pg_temp.u('b2')::text, 'el encabezado baja a quien da y a quien recibe');
+select is((select baja_a_1::text || '>' || baja_a_2::text from public.transferencia_item where id = pg_temp.u('c1')),
+          pg_temp.u('b1')::text || '>' || pg_temp.u('b2')::text, 'la línea copia las dos del encabezado');
 select is((select solicitante_id from public.transferencia_item where id = pg_temp.u('c1')), null,
           'y la armada por la coordinadora no tiene solicitante');
 
@@ -354,7 +369,7 @@ select is(pg_temp.push(pg_temp.u('b1'), 'f1', 'transferencia_stock', 'insert',
 select is(pg_temp.push(pg_temp.u('b1'), 'f2', 'transferencia_item', 'insert',
             jsonb_build_object('id', pg_temp.u('f2'), 'transferencia_id', pg_temp.u('f1'), 'producto_id', pg_temp.u('11'),
                                'cantidad', 2)) ->> 'outcome', 'accepted', 'con su línea');
-select is((select origen_id::text || '>' || destino_id::text from public.transferencia_item where id = pg_temp.u('f2')),
+select is((select baja_a_1::text || '>' || baja_a_2::text from public.transferencia_item where id = pg_temp.u('f2')),
           pg_temp.u('b2')::text || '>' || pg_temp.u('b1')::text, 'la línea que sube el teléfono también lleva las dos puntas');
 
 -- La cancela con la versión vieja que tenía el teléfono (la del alta): no hay conflicto.
@@ -429,10 +444,22 @@ select is(pg_temp.push(pg_temp.u('b1'), '91', 'transferencia_stock', 'insert',
                                'estado', 'CANCELADO')) ->> 'outcome',
           'accepted', 'una que nace CANCELADO: accepted (aunque el otro no sea compañero: no hay nada que autorizar)');
 select is(pg_temp.estado('91'), 'CANCELADO', 'queda cancelada');
+select is((select baja_a_1::text || '>' || baja_a_2::text from public.transferencia_stock where id = pg_temp.u('91')),
+          pg_temp.u('b1')::text || '>' || pg_temp.u('b1')::text,
+          'y baja solo a quien la pidió (b1): la otra punta (b4) no es compañera y no recibe un registro que nadie le mandó');
 select is(pg_temp.push(pg_temp.u('b1'), '92', 'transferencia_item', 'insert',
             jsonb_build_object('id', pg_temp.u('92'), 'transferencia_id', pg_temp.u('91'), 'producto_id', pg_temp.u('11'),
                                'cantidad', 1)) ->> 'outcome',
           'accepted', 'sus líneas entran también');
+select is((select baja_a_1::text || '>' || baja_a_2::text from public.transferencia_item where id = pg_temp.u('92')),
+          pg_temp.u('b1')::text || '>' || pg_temp.u('b1')::text, 'y la línea sigue al encabezado');
+select pg_temp.actuar_como(pg_temp.u('b4'));
+select is((select count(*)::int from public.transferencia_stock where id = pg_temp.u('91')), 0,
+          'b4 (la otra punta) no la ve por RLS');
+select is((select count(*)::int from public.transferencia_item where id = pg_temp.u('92')), 0, 'ni su línea');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select count(*)::int from public.transferencia_stock where id = pg_temp.u('91')), 1, 'b1 que la pidió sí');
+select pg_temp.actuar_como_servidor();
 select is(pg_temp.push(pg_temp.u('b1'), '93', 'transferencia_stock', 'insert',
             jsonb_build_object('id', pg_temp.u('93'), 'origen_id', pg_temp.u('b2'), 'destino_id', pg_temp.u('b3'),
                                'estado', 'CANCELADO')) ->> 'code',

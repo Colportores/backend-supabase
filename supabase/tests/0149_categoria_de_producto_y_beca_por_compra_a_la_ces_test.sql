@@ -225,6 +225,14 @@ select is((select metadata ->> 'tipo_beca' || '/' || (metadata ->> 'meta_monto_c
              from auditoria.audit_log where event_type = 'beca_alcanzada' and target_user_id = pg_temp.u('b1')),
           'COMPLETA/180000/185000', 'con el tipo, la meta y la compra de ese momento (sin datos personales)');
 select is(pg_temp.beca('b1'), '3|185000|ALCANZADA|COMPLETA', 'Juan sigue con la beca alcanzada aunque ya no tenga meta');
+-- Si después le asignan una beca más chica que también alcanza (MEDIA, 90.000), se sigue viendo lo que alcanzó: COMPLETA.
+update public.campania_colportor set tipo_beca = 'MEDIA', meta_libros = 60, meta_monto_ces = 90000
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b1');
+select is(pg_temp.beca('b1'), '3|185000|ALCANZADA|COMPLETA',
+          'le bajan la beca a MEDIA y también la alcanza: se ve lo que alcanzó (COMPLETA), no el tipo de ahora');
+update public.campania_colportor set tipo_beca = null, meta_libros = null, meta_monto_ces = null
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b1');
+select is(pg_temp.beca('b1'), '3|185000|ALCANZADA|COMPLETA', 'y al volver a «Sin beca» sigue igual');
 -- Ana, que no la había alcanzado, queda sin estado al pasar a «Sin beca» y sin evento.
 update public.campania_colportor set tipo_beca = null, meta_libros = null, meta_monto_ces = null
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');

@@ -347,7 +347,13 @@ begin
            case when av.alcanzada_ahora or av.tipo_previo is not null then 'ALCANZADA'
                 when cc.tipo_beca is not null then 'EN_PROGRESO'
            end,
-           case when av.alcanzada_ahora then cc.tipo_beca else av.tipo_previo end
+           -- Lo alcanzado no se pierde («Logro beca»): el mayor entre lo que alcanzó ahora y lo que ya había alcanzado
+           -- (COMPLETA > MEDIA), aunque después le hayan bajado la beca.
+           case when av.alcanzada_ahora and av.tipo_previo is not null
+                  then case when 'COMPLETA' in (cc.tipo_beca, av.tipo_previo) then 'COMPLETA' else 'MEDIA' end
+                when av.alcanzada_ahora then cc.tipo_beca
+                else av.tipo_previo
+           end
       from public.campania_colportor cc
       join public.usuario u on u.id = cc.usuario_id
       left join public.carrera ca on ca.id = u.carrera_id
@@ -358,11 +364,11 @@ begin
              select c1.libros, c1.compra,
                     (cc.tipo_beca is not null and cc.meta_monto_ces is not null
                      and c1.compra >= cc.meta_monto_ces) as alcanzada_ahora,
-                    -- «Logro beca»: lo que alcanzó antes de que le cambiaran el tipo o la meta.
+                    -- «Logro beca»: lo mejor que alcanzó antes de que le cambiaran el tipo o la meta (COMPLETA > MEDIA).
                     (select a.metadata ->> 'tipo_beca'
                        from auditoria.audit_log a
                       where a.event_type = 'beca_alcanzada' and a.fila_id = cc.id
-                      order by a.created_at desc, a.id desc
+                      order by (a.metadata ->> 'tipo_beca' = 'COMPLETA') desc, a.created_at desc, a.id desc
                       limit 1) as tipo_previo) av
      where cc.campania_id = p_campania_id
        and cc.deleted_at is null and u.deleted_at is null

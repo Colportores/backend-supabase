@@ -119,10 +119,10 @@ select col_is_null('public', 'transferencia_stock', 'solicitante_id', 'y es opci
 select fk_ok('public', 'transferencia_stock', 'solicitante_id', 'public', 'usuario', 'id', 'cuelga de usuario');
 select col_type_is('public', 'transferencia_item', 'solicitante_id', 'uuid', 'transferencia_item.solicitante_id es uuid');
 select results_eq($$ select permite_push, columna_pk, columna_duenio, sigue_campanias from sync.entidad where nombre = 'transferencia_stock' $$,
-                  $$ values (true, 'id'::text, 'origen_id,destino_id'::text, false) $$,
-                  'transferencia_stock: push y pull de las propias, a las dos puntas (origen_id,destino_id; 0148), sin campañas');
+                  $$ values (true, 'id'::text, 'baja_a_1,baja_a_2'::text, false) $$,
+                  'transferencia_stock: push y pull de las propias, a las dos puntas (baja_a_1,baja_a_2; 0148), sin campañas');
 select results_eq($$ select permite_push, columna_pk, columna_duenio, sigue_campanias from sync.entidad where nombre = 'transferencia_item' $$,
-                  $$ values (true, 'id'::text, 'origen_id,destino_id'::text, false) $$,
+                  $$ values (true, 'id'::text, 'baja_a_1,baja_a_2'::text, false) $$,
                   'transferencia_item: igual');
 select is((select columnas_servidor @> array['solicitante_id','coordinador_id','fecha_solicitud','numero','monto_deuda','decidido_en','motivo_rechazo']
              from sync.entidad where nombre = 'transferencia_stock'), true, 'las columnas del servidor de la transferencia');
