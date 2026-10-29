@@ -171,7 +171,7 @@ select is((select count(*)::int from pg_policies
 select is((select count(*)::int from pg_policies
             where schemaname = 'public' and tablename = t and cmd <> 'SELECT'), 0,
           format('%s no tiene políticas de escritura: nadie con JWT escribe', t))
-  from unnest(array['stock','movimiento_stock','cuenta_colportor']) t;
+  from unnest(array['stock','cuenta_colportor']) t;
 select is((select string_agg(privilege_type, ',' order by privilege_type)
              from information_schema.role_table_grants
             where table_schema = 'public' and table_name = t and grantee = 'authenticated'), 'SELECT',
@@ -190,8 +190,8 @@ select is((select count(*)::int from information_schema.role_table_grants
                     'transferencia_item','deposito','ticket','cuenta_colportor']) t;
 
 select is((select count(*)::int from sync.entidad
-            where nombre in ('movimiento_stock','cuenta_colportor')), 0,
-          'ni el histórico ni la cuenta entran todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124, la transferencia en 0139 y el stock en 0145)');
+            where nombre in ('cuenta_colportor')), 0,
+          'la cuenta no entra todavía a sync.entidad: el contrato espera su PR de docs (el ticket entró en 0113, el depósito en 0122, el pedido en 0124, la transferencia en 0139, el stock en 0145 y el histórico en 0148)');
 
 select is((select prosecdef from pg_proc where oid = 'public.coordina_al_colportor(uuid)'::regprocedure), true,
           'coordina_al_colportor es SECURITY DEFINER');
@@ -354,9 +354,9 @@ select is(pg_temp.error_de($$ insert into public.transferencia_item (transferenc
           'una línea de transferencia de cero unidades se rechaza');
 
 select is(pg_temp.error_de($$ insert into public.movimiento_stock (usuario_id, producto_id, tipo, cantidad)
-                              values ('01920000-0000-7000-8000-0000000067b1', '01920000-0000-7000-8000-000000006711', 'AJUSTE', 1) $$),
+                              values ('01920000-0000-7000-8000-0000000067b1', '01920000-0000-7000-8000-000000006711', 'INVENTADO', 1) $$),
           '23514: new row for relation "movimiento_stock" violates check constraint "movimiento_stock_tipo_check"',
-          'el tipo de movimiento es uno de los cuatro');
+          'el tipo de movimiento es uno de la lista');
 select is(pg_temp.error_de($$ insert into public.movimiento_stock (usuario_id, producto_id, tipo, cantidad)
                               values ('01920000-0000-7000-8000-0000000067b1', '01920000-0000-7000-8000-000000006711', 'SALIDA_ENTREGA', 0) $$),
           '23514: new row for relation "movimiento_stock" violates check constraint "movimiento_stock_cantidad_check"',
@@ -558,7 +558,7 @@ select is(pg_temp.error_de(x.s), '42501: permission denied for table ' || x.t,
           format('el colportor no actualiza %s', x.t))
   from (values
     ('stock', $$ update public.stock set cantidad_disponible = 99 where id = '01920000-0000-7000-8000-0000000067a1' $$),
-    ('transferencia_stock', $$ update public.transferencia_stock set estado = 'AUTORIZADO' where id = '01920000-0000-7000-8000-0000000067e5' $$),
+    ('transferencia_stock', $$ update public.transferencia_stock set monto_deuda = 1 where id = '01920000-0000-7000-8000-0000000067e5' $$),
     ('cuenta_colportor', $$ update public.cuenta_colportor set deuda_total = 0 where id = '01920000-0000-7000-8000-000000006791' $$)
   ) x(t, s);
 select is(pg_temp.error_de($$ delete from public.stock where id = '01920000-0000-7000-8000-0000000067a1' $$),

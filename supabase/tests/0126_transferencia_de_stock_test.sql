@@ -653,8 +653,8 @@ select is(pg_temp.err_srv(format($$ update public.transferencia_stock set monto_
           '23514', 'la deuda no es negativa');
 select is(pg_temp.err_srv(format($$ update public.transferencia_item set precio_unitario = -1 where transferencia_id = %L $$, pg_temp.u('12'))),
           '23514', 'ni el costo de una línea');
-select is(pg_temp.err_dml(pg_temp.u('b1'), format($$ update public.transferencia_stock set estado = 'AUTORIZADO' where id = %L $$, pg_temp.u('12'))),
-          '42501', 'un colportor sigue sin poder escribir la tabla');
+select is(pg_temp.err_dml(pg_temp.u('b1'), format($$ update public.transferencia_stock set monto_deuda = 1 where id = %L $$, pg_temp.u('12'))),
+          '42501', 'un colportor sigue sin poder escribir la tabla (desde 0148 solo cambia el estado de la que pidió)');
 select is((select count(*)::int from public.transferencia_stock where id = pg_temp.u('12')
               and estado = 'PENDIENTE_AUTORIZACION'), 1, 'y la fila no cambió');
 

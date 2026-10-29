@@ -119,10 +119,10 @@ select col_is_null('public', 'transferencia_stock', 'solicitante_id', 'y es opci
 select fk_ok('public', 'transferencia_stock', 'solicitante_id', 'public', 'usuario', 'id', 'cuelga de usuario');
 select col_type_is('public', 'transferencia_item', 'solicitante_id', 'uuid', 'transferencia_item.solicitante_id es uuid');
 select results_eq($$ select permite_push, columna_pk, columna_duenio, sigue_campanias from sync.entidad where nombre = 'transferencia_stock' $$,
-                  $$ values (true, 'id'::text, 'solicitante_id'::text, false) $$,
-                  'transferencia_stock: push y pull de las propias (solicitante_id), sin campañas');
+                  $$ values (true, 'id'::text, 'baja_a_1,baja_a_2'::text, false) $$,
+                  'transferencia_stock: push y pull de las propias, a las dos puntas (baja_a_1,baja_a_2; 0148), sin campañas');
 select results_eq($$ select permite_push, columna_pk, columna_duenio, sigue_campanias from sync.entidad where nombre = 'transferencia_item' $$,
-                  $$ values (true, 'id'::text, 'solicitante_id'::text, false) $$,
+                  $$ values (true, 'id'::text, 'baja_a_1,baja_a_2'::text, false) $$,
                   'transferencia_item: igual');
 select is((select columnas_servidor @> array['solicitante_id','coordinador_id','fecha_solicitud','numero','monto_deuda','decidido_en','motivo_rechazo']
              from sync.entidad where nombre = 'transferencia_stock'), true, 'las columnas del servidor de la transferencia');
@@ -137,7 +137,8 @@ select has_index('public', 'transferencia_stock', 'transferencia_stock_delta_idx
 select has_index('public', 'transferencia_item', 'transferencia_item_delta_idx', array['solicitante_id', 'xmin_w', 'id'], 'y el de las líneas');
 select is((select array_agg(p.policyname::text order by p.policyname) from pg_policies p
             where p.schemaname = 'public' and p.tablename = 'transferencia_stock' and p.cmd <> 'SELECT'),
-          array['transferencia_stock_insert_propia'], 'transferencia_stock: solo una política de escritura, el alta propia');
+          array['transferencia_stock_insert_propia', 'transferencia_stock_update_propia'],
+          'transferencia_stock: dos políticas de escritura, el alta propia y (desde 0148) cancelar la propia');
 select is((select array_agg(p.policyname::text order by p.policyname) from pg_policies p
             where p.schemaname = 'public' and p.tablename = 'transferencia_item' and p.cmd <> 'SELECT'),
           array['transferencia_item_insert_propia'], 'transferencia_item: igual');
@@ -215,8 +216,8 @@ select is(pg_temp.push(pg_temp.u('b1'), 'b6', 'transferencia_stock', 'insert',
             jsonb_build_object('id', pg_temp.u('13'), 'origen_id', pg_temp.u('b1'), 'destino_id', pg_temp.u('b3'),
                                'estado', 'PENDIENTE_AUTORIZACION')) ->> 'outcome', 'accepted',
           'con b3, que comparte Actual: accepted (la comparte alguna campaña, no hace falta la de la coordinadora)');
-select is(pg_temp.err_dml(pg_temp.u('b1'), format($$ update public.transferencia_stock set estado = 'CANCELADO' where id = %L $$, pg_temp.u('11'))),
-          '42501', 'el teléfono no actualiza la transferencia (cancelarla no está pedido)');
+select is(pg_temp.err_dml(pg_temp.u('b1'), format($$ update public.transferencia_stock set monto_deuda = 1 where id = %L $$, pg_temp.u('11'))),
+          '42501', 'el teléfono no actualiza la transferencia más que para cancelarla (0148: supabase/tests/0148_*)');
 select is(pg_temp.err_dml(pg_temp.u('b1'), format($$ delete from public.transferencia_stock where id = %L $$, pg_temp.u('11'))),
           '42501', 'ni la borra');
 
