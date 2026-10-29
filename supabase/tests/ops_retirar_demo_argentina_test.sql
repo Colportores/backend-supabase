@@ -140,8 +140,6 @@ values (pg_temp.u('d0'), pg_temp.u('c9'), pg_temp.u('c8'), 'COBRANZA', now() + i
         pg_temp.u('cc'), 2500);
 insert into public.deposito (id, colportor_id, monto, fecha, destino, concepto, campania_id)
 values (pg_temp.u('d1'), pg_temp.u('a3'), 1500, public.hoy_montevideo(), 'RETIRO_COORDINADOR', 'CASA_EDITORA', pg_temp.u('c2'));
-insert into public.deposito_cobro (id, deposito_id, cobranza_id, colportor_id)
-values (pg_temp.u('d2'), pg_temp.u('d1'), pg_temp.u('cf'), pg_temp.u('a3'));
 
 -- Qué es de AR y qué es de Uruguay, tabla por tabla (tabla, columna que la identifica, ids).
 create temp table t_ar (tabla text, pk text, ids uuid[]) on commit drop;
@@ -162,7 +160,7 @@ insert into t_ar values
   ('venta', 'id', array[pg_temp.u('cc')]), ('venta_item', 'id', array[pg_temp.u('cd')]),
   ('entrega', 'id', array[pg_temp.u('ce')]), ('cobranza', 'id', array[pg_temp.u('cf')]),
   ('agenda', 'id', array[pg_temp.u('d0')]), ('deposito', 'id', array[pg_temp.u('d1')]),
-  ('deposito_cobro', 'id', array[pg_temp.u('d2')]), ('usuario', 'id', array[pg_temp.u('a3')]),
+  ('usuario', 'id', array[pg_temp.u('a3')]),
   ('usuario_rol', 'usuario_id', array[pg_temp.u('a3')]),
   ('cuenta_colportor', 'usuario_id', array[pg_temp.u('a3')]);
 -- Lo que los triggers armaron solos y también tiene que caer (se busca por su dueño, sin ids fijos).
