@@ -18,19 +18,25 @@
 --       - La MISMA entrega, con su fecha de alta y su cantidad: si se había dado de baja, vuelve a vivir; si solo
 --         había bajado su cantidad, recupera las unidades que perdió.
 --       - Si esa entrega ya no puede recibirlo (entre una cosa y otra se entregó o se dio de baja por su cuenta), lo
---         que se quitó vuelve como una entrega pendiente NUEVA de esa venta y ese libro: nunca se pierde una venta.
+--         que se quitó vuelve como una entrega pendiente NUEVA de esa venta y ese libro, con la fecha prevista de la
+--         original: nunca se pierde una venta.
 --         Nada se descuenta del stock por esto (una entrega pendiente no es una entrega hecha).
 --     Deja el evento `entrega_pendiente_restituida_por_anulacion` (ids y números, con `entrega_id` = la entrega de la
 --     que se había quitado y, si hubo que crear otra, `entrega_nueva_id`). Lo que cada devolución restituye es lo
---     que quitó menos lo ya restituido de esa misma devolución: anular dos veces (o reabrir y volver a anular) no
+--     que quitó menos lo ya restituido de esa misma devolución: anular dos veces no
 --     duplica nada.
 --   · Las devoluciones anteriores a esta migración dejaron un evento sin `entrega_id`: no hay de qué fila restituir
 --     y se saltean (datos simulados hasta diciembre, sin migración de corrección).
 --   · Las entregas del libro en esa venta se toman con candado (por id, como al registrar la devolución): una
 --     devolución nueva y esta anulación a la vez no se pisan.
 --   · Nunca rechaza: la anulación de la devolución entra siempre. El stock se resta como hasta ahora.
+--   · Una devolución anulada no se reabre (decisión del 03/11, revisión de este PR): un UPDATE que le devuelve
+--     `deleted_at` a null vuelve `invalid` con `42501` y el aviso «Una devolución anulada no se reabre: registrá una
+--     nueva.». Reabrirla dejaba una devolución viva junto a las entregas pendientes ya restituidas y sin volver a
+--     sumar el stock. Cambiarle la hora a la baja (de una fecha a otra) sigue pasando sin efectos.
 --
--- Lo que cambia para el teléfono: nada en el contrato. Las entregas que vuelven suben su `sync_version` y bajan por
+-- Lo que cambia para el teléfono: el `update` que reabre una devolución anulada vuelve `invalid` 42501 (el móvil no
+-- tiene esa acción hoy). Nada más en el contrato. Las entregas que vuelven suben su `sync_version` y bajan por
 -- el pull como cualquier cambio de servidor (la fila recuperada reaparece en «Entregas pendientes»).
 --
 -- Forward-only: esta migración no se edita una vez aplicada. Se escribe sobre el CUERPO de 0148.
@@ -137,8 +143,8 @@ begin
       else
         -- Ya no puede recibirlo (se entregó, se tocó o no está): vuelve como una entrega pendiente nueva.
         v_nueva := public.uuid_generate_v7();
-        insert into public.entrega (id, venta_id, producto_id, cantidad, pendiente)
-        values (v_nueva, new.venta_id, q.prod_id, q.cant, true);
+        insert into public.entrega (id, venta_id, producto_id, cantidad, pendiente, fecha_prevista)
+        values (v_nueva, new.venta_id, q.prod_id, q.cant, true, p.fecha_prevista);
       end if;
 
       perform auditoria.registrar(
@@ -255,3 +261,33 @@ comment on function public.tg_devolucion_devuelve_stock() is
   'entra anulada no mueve nada. UPDATE que anula (deleted_at de null a una fecha): resta lo que sumó con '
   'SALIDA_DEVOLUCION_ANULADA y devuelve a pendiente lo que quitó (la misma entrega, o una nueva si ya no puede '
   'recibirlo; evento entrega_pendiente_restituida_por_anulacion), sin duplicar si se anula dos veces. Nunca rechaza.';
+
+-- ----------------------------------------------------------------------------
+-- Una devolución anulada no se reabre
+-- ----------------------------------------------------------------------------
+
+create function public.tg_devolucion_no_se_reabre()
+returns trigger
+language plpgsql
+volatile
+set search_path = ''
+as $$
+begin
+  if old.deleted_at is not null and new.deleted_at is null then
+    raise exception 'Una devolución anulada no se reabre: registrá una nueva.'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.tg_devolucion_no_se_reabre() is
+  'BEFORE UPDATE OF deleted_at de devolucion (0153, #226): una devolución anulada no vuelve a estar viva (42501): '
+  'reabrirla dejaría una devolución viva con las entregas pendientes ya restituidas y sin volver a sumar el stock. '
+  'Pasar de una fecha de baja a otra no es reabrirla y pasa.';
+
+revoke all on function public.tg_devolucion_no_se_reabre() from public, anon, authenticated, service_role;
+
+create trigger devolucion_no_se_reabre
+  before update of deleted_at on public.devolucion
+  for each row execute function public.tg_devolucion_no_se_reabre();

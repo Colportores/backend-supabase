@@ -237,11 +237,15 @@ select is(pg_temp.dev('d4', '74', '11', 2, '84'), 'ok', 'devolver 2 de una pendi
 select is(pg_temp.pend('74'), '1/1', 'queda una pendiente de 1');
 update public.entrega set pendiente = false, fecha_entrega = now() where id = pg_temp.u('e7');
 select is(pg_temp.stock('b1', '11'), '9', 'se entrega esa 1: el stock baja a 9');
+-- La entrega tenía una fecha acordada (la prevista): la pendiente nueva la hereda.
+update public.entrega set fecha_prevista = '2026-10-09 15:00+00' where id = pg_temp.u('e7');
 select pg_temp.anular('d4');
 select is(pg_temp.pend('74'), '1/2', 'anular: los 2 quitados vuelven a estar pendientes, en una entrega nueva');
 select is((select (e.cantidad = 1 and not e.pendiente and e.deleted_at is null)::text from public.entrega e where e.id = pg_temp.u('e7')),
           'true', 'la que ya se entregó queda como estaba');
 select is(pg_temp.stock('b1', '11'), '9', 'y la entrega nueva, pendiente, no toca el stock');
+select is((select e.fecha_prevista::text from public.entrega e where e.venta_id = pg_temp.u('74') and e.pendiente and e.deleted_at is null),
+          '2026-10-09 15:00:00+00', 'la entrega nueva lleva la fecha prevista de la original');
 select is((select a.metadata ->> 'entrega_id' = pg_temp.u('e7')::text
               and (a.metadata ->> 'entrega_nueva_id')::uuid = (select e.id from public.entrega e
                                                               where e.venta_id = pg_temp.u('74') and e.pendiente and e.deleted_at is null)
@@ -265,21 +269,27 @@ select is((select string_agg(e.cantidad::text, ',' order by e.cantidad) from pub
             where e.venta_id = pg_temp.u('75') and e.deleted_at is null), '1,2', 'una fila con 2 (la original) y otra con 1');
 
 -- ---------------------------------------------------------------------------
--- 6. Anular dos veces no duplica
+-- 6. Anular dos veces no duplica; reabrir una anulada se rechaza
 -- ---------------------------------------------------------------------------
 select is(pg_temp.dev('d5', '76', '11', 3, '86'), 'ok', 'venta 76: devolver los 3 de una pendiente de 3');
 select is(pg_temp.pend('76'), '0/0', 'sale de la pendiente');
 select pg_temp.anular('d5');
 select is(pg_temp.pend('76'), '1/3', 'anulada: vuelve');
--- La devolución se reabre y se vuelve a anular (no devuelve nada de nuevo a pendiente: ya se restituyó).
-update public.devolucion set deleted_at = null where id = pg_temp.u('d5');
-select pg_temp.anular('d5');
-select is(pg_temp.pend('76') || ' · ' || (select count(*)::int from public.entrega where venta_id = pg_temp.u('76')), '1/3 · 1',
-          'anular otra vez la misma devolución no duplica la entrega');
-select is(pg_temp.eventos('entrega_pendiente_restituida_por_anulacion', 'd5'), 1, 'ni el evento');
--- Tocar una devolución ya anulada (otra columna, otra hora) no hace nada.
+-- Anular otra vez (la misma baja o con otra hora) no hace nada.
 update public.devolucion set deleted_at = now() + interval '1 minute' where id = pg_temp.u('d5');
-select is(pg_temp.pend('76'), '1/3', 'cambiarle la hora a una anulada no mueve nada');
+select is(pg_temp.pend('76') || ' · ' || (select count(*)::int from public.entrega where venta_id = pg_temp.u('76')), '1/3 · 1',
+          'anular otra vez la misma devolución (o cambiarle la hora a la baja) no duplica la entrega');
+select is(pg_temp.eventos('entrega_pendiente_restituida_por_anulacion', 'd5'), 1, 'ni el evento');
+-- Reabrir una devolución anulada se rechaza (42501), por SQL y como cualquier rol; no cambia nada.
+select is(pg_temp.error_de(format($q$ update public.devolucion set deleted_at = null where id = %L $q$, pg_temp.u('d5'))),
+          '42501 ', 'reabrir una devolución anulada: 42501 (como el servidor)');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select throws_ok(format($q$ update public.devolucion set deleted_at = null where id = %L $q$, pg_temp.u('d5')),
+                 '42501', 'Una devolución anulada no se reabre: registrá una nueva.',
+                 'y como la colportora: con el aviso de qué hacer');
+select pg_temp.actuar_como_servidor();
+select is((select (d.deleted_at is not null)::text from public.devolucion d where d.id = pg_temp.u('d5')) || ' · ' || pg_temp.pend('76')
+          || ' · ' || pg_temp.stock('b1', '11'), 'true · 1/3 · 10', 'la devolución sigue anulada y no cambió la pendiente ni el stock');
 
 -- ---------------------------------------------------------------------------
 -- 7. Sin nada que restituir
