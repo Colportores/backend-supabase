@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0161 · RPC «mi deuda con la casa editora»: el total y cada pedido con su pagado y su saldo
+-- 0164 · RPC «mi deuda con la casa editora»: el total y cada pedido con su pagado y su saldo
 --        (backend-supabase#235, BACK-HU-CTA-002; desbloquea front-colportores-mobile#441, vista 33B;
 --        decisiones de Cristian del 03/11 «Pagado ped.» y «Leer deuda», front-colportores-mobile#441)
 --
@@ -163,7 +163,7 @@ end;
 $$;
 
 comment on function public.mi_deuda_con_la_casa_editora() is
-  'Vista 33B, HU-CTA-002 (0161, backend-supabase#235): la deuda de la colportora autenticada con la casa editora. '
+  'Vista 33B, HU-CTA-002 (0164, backend-supabase#235): la deuda de la colportora autenticada con la casa editora. '
   'Devuelve jsonb: deuda_total (la real, cuenta_colportor), suma_de_saldos, depositos_validados y pedidos (solo '
   'los de saldo > 0, el más viejo primero, con monto, pagado, saldo y lineas). Los depósitos validados a la casa '
   'editora pagan primero el pedido más viejo (decisión «Pagado ped.», 03/11); los pedidos son los AUTORIZADO, '

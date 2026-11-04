@@ -1,4 +1,4 @@
--- pgTAP · migración 0161 (backend-supabase#235, BACK-HU-CTA-002; decisiones de Cristian del 03/11 «Pagado ped.» y
+-- pgTAP · migración 0164 (backend-supabase#235, BACK-HU-CTA-002; decisiones de Cristian del 03/11 «Pagado ped.» y
 -- «Leer deuda»): el RPC `mi_deuda_con_la_casa_editora()`.
 --   1. La forma: existe, devuelve jsonb, es DEFINER y estable; EXECUTE solo para `authenticated`; las claves de la
 --      respuesta y las de cada pedido son exactamente las del contrato (ni clientes ni cobros).
