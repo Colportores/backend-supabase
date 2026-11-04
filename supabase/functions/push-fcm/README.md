@@ -1,8 +1,10 @@
 # push-fcm
 
-Edge Function (Deno) que manda por FCM los avisos push que la base dejó en su cola. Backend-supabase#237, HU-NOT-003, ADR-014.
+Edge Function (Deno) que manda por FCM los avisos push que la base dejó en su cola. Backend-supabase#237, HU-NOT-003,
+ADR-014.
 
-La base decide **qué** avisos hay, **a quién** y **con qué datos**; la función solo los entrega a Firebase Cloud Messaging (API HTTP v1, sin el Admin SDK) y le cuenta a la base cómo salió cada uno. No lleva lógica de negocio.
+La base decide **qué** avisos hay, **a quién** y **con qué datos**; la función solo los entrega a Firebase Cloud
+Messaging (API HTTP v1, sin el Admin SDK) y le cuenta a la base cómo salió cada uno. No lleva lógica de negocio.
 
 ## Cómo encaja
 
@@ -16,66 +18,83 @@ trigger / job (pg_cron) ──► push.evento (cola, misma transacción que el c
                                                         └──► FCM v1  messages:send
 ```
 
-- **Cola `push.evento`** (migración `0162`): un aviso por evento y usuario, con clave única (idempotencia). Tiene demora (`enviar_desde`), vigencia (`vence_en`), reserva de 2 minutos (`reservado_hasta`, con `for update skip locked`) y reintentos con espera creciente (1, 2, 4, 8, 16 y 30 min; a los 6 intentos queda `AGOTADO`).
-- **Disparadores** (en la misma transacción que el cambio, así que un `rollback` no deja avisos): pedido autorizado, ticket validado, ticket rechazado y primera campaña asignada. Los programados (`0163`): cuotas pendientes y agenda de mañana.
+- **Cola `push.evento`** (migración `0162`): un aviso por evento y usuario, con clave única (idempotencia). Tiene demora
+  (`enviar_desde`), vigencia (`vence_en`), reserva de 2 minutos (`reservado_hasta`, con `for update skip locked`) y
+  reintentos con espera creciente (1, 2, 4, 8, 16 y 30 min; a los 6 intentos queda `AGOTADO`).
+- **Disparadores** (en la misma transacción que el cambio, así que un `rollback` no deja avisos): pedido autorizado,
+  ticket validado, ticket rechazado y primera campaña asignada. Los programados (`0163`): cuotas pendientes y agenda de
+  mañana.
 - **`push.despertar()`** (`0163`) llama a esta función por `pg_net` cuando hay avisos listos.
 
 ## Contrato
 
-`POST /functions/v1/push-fcm` con el encabezado `x-push-clave: <PUSH_CLAVE>`. Sin JWT de usuario (`verify_jwt = false`): se autentica con la clave compartida, comparada en tiempo constante.
+`POST /functions/v1/push-fcm` con el encabezado `x-push-clave: <PUSH_CLAVE>`. Sin JWT de usuario (`verify_jwt = false`):
+se autentica con la clave compartida, comparada en tiempo constante.
 
-| Respuesta | Cuándo |
-|---|---|
-| `200` `{tomados, enviados, reintentos, tokens_invalidos, descartados, sin_contar}` | Corrió (también si no había nada: todo en 0). |
-| `401` `no_autorizado` | Falta `x-push-clave` o no coincide. No toca la cola. |
-| `405` `metodo` | No es POST. |
-| `502` `no_se_pudo_leer` | La base no contestó al pedir los avisos y no se mandó ninguno. |
-| `503` `sin_configurar` | Falta un secreto (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PUSH_CLAVE` o `FCM_CUENTA_DE_SERVICIO`). El log dice **solo el nombre** de lo que falta. |
+| Respuesta                                                                          | Cuándo                                                                                                                                                   |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `200` `{tomados, enviados, reintentos, tokens_invalidos, descartados, sin_contar}` | Corrió (también si no había nada: todo en 0).                                                                                                            |
+| `401` `no_autorizado`                                                              | Falta `x-push-clave` o no coincide. No toca la cola.                                                                                                     |
+| `405` `metodo`                                                                     | No es POST.                                                                                                                                              |
+| `502` `no_se_pudo_leer`                                                            | La base no contestó al pedir los avisos y no se mandó ninguno.                                                                                           |
+| `503` `sin_configurar`                                                             | Falta un secreto (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PUSH_CLAVE` o `FCM_CUENTA_DE_SERVICIO`). El log dice **solo el nombre** de lo que falta. |
 
-Da hasta 4 vueltas de 50 avisos por despertar y manda 10 a la vez; lo que quede lo toma el próximo despertar (un minuto después).
+Da hasta 4 vueltas de 50 avisos por despertar y manda 10 a la vez; lo que quede lo toma el próximo despertar (un minuto
+después).
 
 ### Lo que usa de la base
 
-| RPC (`public`, solo `service_role`) | Para qué |
-|---|---|
-| `push_tomar_pendientes(p_max integer default 50)` → `(evento_id, token, datos, intento)` | Toma y reserva los avisos listos, vigentes y con token. Descarta en el acto los que ya no aplican (la cuenta se suspendió, el pedido se deshizo, etc.). |
-| `push_resultado(p_evento_id, p_resultado, p_token, p_error)` → `boolean` | `ENVIADO`, `REINTENTAR`, `TOKEN_INVALIDO` o `DESCARTAR`. Con `TOKEN_INVALIDO` borra `usuario.fcm_token` (solo si sigue siendo ese token) y no reintenta. |
+| RPC (`public`, solo `service_role`)                                                      | Para qué                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `push_tomar_pendientes(p_max integer default 50)` → `(evento_id, token, datos, intento)` | Toma y reserva los avisos listos, vigentes y con token. Descarta en el acto los que ya no aplican (la cuenta se suspendió, el pedido se deshizo, etc.).  |
+| `push_resultado(p_evento_id, p_resultado, p_token, p_error)` → `boolean`                 | `ENVIADO`, `REINTENTAR`, `TOKEN_INVALIDO` o `DESCARTAR`. Con `TOKEN_INVALIDO` borra `usuario.fcm_token` (solo si sigue siendo ese token) y no reintenta. |
 
-`contrato_test.ts` ata estos nombres, firmas, resultados, tipos y claves del payload a las migraciones: si cambian, el CI lo avisa.
+`contrato_test.ts` ata estos nombres, firmas, resultados, tipos y claves del payload a las migraciones: si cambian, el
+CI lo avisa.
 
 ### Cómo se clasifica la respuesta de FCM
 
-| FCM | Resultado |
-|---|---|
-| `200` | `ENVIADO` |
-| `UNREGISTERED`, `SENDER_ID_MISMATCH`, o `400 INVALID_ARGUMENT` que nombra al *registration token* | `TOKEN_INVALIDO` (se borra el token, no se reintenta) |
-| `401`, `403`, `404` sin `UNREGISTERED`, `408`, `429`, `5xx`, error de red o de autenticación con Google | `REINTENTAR` |
-| Otro `4xx` (mensaje mal armado) y payload fuera de contrato | `DESCARTAR` |
+| FCM                                                                                                     | Resultado                                             |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `200`                                                                                                   | `ENVIADO`                                             |
+| `UNREGISTERED`, `SENDER_ID_MISMATCH`, o `400 INVALID_ARGUMENT` que nombra al _registration token_       | `TOKEN_INVALIDO` (se borra el token, no se reintenta) |
+| `401`, `403`, `404` sin `UNREGISTERED`, `408`, `429`, `5xx`, error de red o de autenticación con Google | `REINTENTAR`                                          |
+| Otro `4xx` (mensaje mal armado) y payload fuera de contrato                                             | `DESCARTAR`                                           |
 
-Un `404` o `403` sin el código de token **no** borra nada: suele ser un proyecto o una cuenta de servicio mal configurados, y borrar tokens por eso dejaría a todos sin push.
+Un `404` o `403` sin el código de token **no** borra nada: suele ser un proyecto o una cuenta de servicio mal
+configurados, y borrar tokens por eso dejaría a todos sin push.
 
 ## Payload
 
-Mensaje de **solo datos** (sin bloque `notification`): el texto lo arma la app con sus textos locales (R-NO02: nada de nombres, montos ni direcciones en el servidor ni en Google). Todos los valores son texto; la función frena cualquier clave que no sea de esta tabla o cuyo valor de `*_id` no sea un UUID.
+Mensaje de **solo datos** (sin bloque `notification`): el texto lo arma la app con sus textos locales (R-NO02: nada de
+nombres, montos ni direcciones en el servidor ni en Google). Todos los valores son texto; la función frena cualquier
+clave que no sea de esta tabla o cuyo valor de `*_id` no sea un UUID.
 
-| `type` | Claves además de `type` y `event_id` | Cuándo sale |
-|---|---|---|
-| `pedido_autorizado` | `pedido_id` | Al autorizarse el pedido, con 15 s de demora (la ventana de «Deshacer»); si se deshace antes, no sale. |
-| `ticket_validado` | `ticket_id` | Al validar el ticket. |
-| `ticket_rechazado` | `ticket_id` | Al rechazar el ticket. |
+| `type`                | Claves además de `type` y `event_id`   | Cuándo sale                                                                                                                                                                                                            |
+| --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pedido_autorizado`   | `pedido_id`                            | Al autorizarse el pedido, con 15 s de demora (la ventana de «Deshacer»); si se deshace antes, no sale.                                                                                                                 |
+| `ticket_validado`     | `ticket_id`                            | Al validar el ticket.                                                                                                                                                                                                  |
+| `ticket_rechazado`    | `ticket_id`                            | Al rechazar el ticket.                                                                                                                                                                                                 |
 | `asignacion_campania` | `campania_id`, `zona_id` (si hay zona) | La cuenta pasa de PENDIENTE_ASIGNACION a ACTIVA: su primera inscripción viva en una campaña no terminada (cuenta no suspendida). `zona_id` sólo si la inscripción ya tiene zona. Un cambio de zona posterior no avisa. |
-| `cuota_pendiente` | `agenda_id` | Cita de cobranza programada que pasó hace exactamente 3 días y cuya venta sigue con saldo; una vez por cita, el job corre a diario a las 09:00 de Montevideo. |
-| `agenda_manana` | — | La noche anterior (20:00 de Montevideo) a quien tiene citas programadas para mañana; vence a las 4 horas. |
+| `cuota_pendiente`     | `agenda_id`                            | Cita de cobranza programada que pasó hace exactamente 3 días y cuya venta sigue con saldo; una vez por cita, el job corre a diario a las 09:00 de Montevideo.                                                          |
+| `agenda_manana`       | —                                      | La noche anterior (20:00 de Montevideo) a quien tiene citas programadas para mañana; vence a las 4 horas.                                                                                                              |
 
-`event_id` es el id del aviso: la app lo usa para no mostrar dos veces el mismo si FCM lo reentrega. Android: `priority: HIGH`. iOS: `content-available: 1`, `apns-priority: 5`, `apns-push-type: background`.
+`event_id` es el id del aviso: la app lo usa para no mostrar dos veces el mismo si FCM lo reentrega. Android:
+`priority: HIGH`. iOS: `content-available: 1`, `apns-priority: 5`, `apns-push-type: background`.
 
-> **«Push fondo» (pregunta abierta para Cristian):** mientras no se decida, solo se mandan mensajes de datos. Con la app cerrada del todo en iOS o con ahorro de batería en Android, el sistema puede demorar o no entregar un mensaje de datos; si se decide mostrar la notificación desde el servidor, habrá que sumar `notification` (con el texto que defina producto) y revisar R-NO02.
+> **«Push fondo» (pregunta abierta para Cristian):** mientras no se decida, solo se mandan mensajes de datos. Con la app
+> cerrada del todo en iOS o con ahorro de batería en Android, el sistema puede demorar o no entregar un mensaje de
+> datos; si se decide mostrar la notificación desde el servidor, habrá que sumar `notification` (con el texto que defina
+> producto) y revisar R-NO02.
 
 ## Puesta en marcha
 
-Todo esto lo hace una persona con acceso al proyecto de Firebase y al de Supabase, una vez por environment. **Nada de esto va al repo.**
+Todo esto lo hace una persona con acceso al proyecto de Firebase y al de Supabase, una vez por environment. **Nada de
+esto va al repo.**
 
-1. **Firebase.** En el proyecto de la app: Configuración → Cuentas de servicio → *Generar nueva clave privada*. Es un JSON con `project_id`, `client_email` y `private_key`. La cuenta necesita el rol *Firebase Cloud Messaging API Admin* (o `cloudmessaging.messages.create`) y la API *Firebase Cloud Messaging API (V1)* habilitada.
+1. **Firebase.** En el proyecto de la app: Configuración → Cuentas de servicio → _Generar nueva clave privada_. Es un
+   JSON con `project_id`, `client_email` y `private_key`. La cuenta necesita el rol _Firebase Cloud Messaging API Admin_
+   (o `cloudmessaging.messages.create`) y la API _Firebase Cloud Messaging API (V1)_ habilitada.
 2. **Secretos de la función** (el runtime ya pone `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`):
    ```bash
    supabase secrets set PUSH_CLAVE="$(openssl rand -hex 32)" FCM_CUENTA_DE_SERVICIO="$(cat cuenta-de-servicio.json)" --project-ref <ref>
@@ -86,17 +105,23 @@ Todo esto lo hace una persona con acceso al proyecto de Firebase y al de Supabas
    select vault.create_secret('https://<ref>.supabase.co/functions/v1/push-fcm', 'push_fcm_url');
    select vault.create_secret('<el mismo PUSH_CLAVE>', 'push_fcm_clave');
    ```
-   Mientras falte alguno de los dos, `push.despertar()` no hace nada (y los avisos esperan en la cola, vigentes hasta su `vence_en`). Para rotar la clave: `vault.update_secret` y `supabase secrets set` con el mismo valor nuevo.
+   Mientras falte alguno de los dos, `push.despertar()` no hace nada (y los avisos esperan en la cola, vigentes hasta su
+   `vence_en`). Para rotar la clave: `vault.update_secret` y `supabase secrets set` con el mismo valor nuevo.
 4. **Publicar la función.** Lo hace `deploy.yml` junto con las demás (`supabase functions deploy --use-api`).
-5. **Extensiones.** `pg_net` y `pg_cron` las crea la migración `0163` si el proyecto las permite; en Supabase se habilitan desde Database → Extensions si hiciera falta.
+5. **Extensiones.** `pg_net` y `pg_cron` las crea la migración `0163` si el proyecto las permite; en Supabase se
+   habilitan desde Database → Extensions si hiciera falta.
 
-Verificar: `select * from cron.job where jobname like 'push-%';` (cuatro trabajos), y después de un cambio que dispare un aviso, `select estado, intentos, ultimo_error from push.evento order by creado_en desc limit 5;` (como `service_role`/`postgres`).
+Verificar: `select * from cron.job where jobname like 'push-%';` (cuatro trabajos), y después de un cambio que dispare
+un aviso, `select estado, intentos, ultimo_error from push.evento order by creado_en desc limit 5;` (como
+`service_role`/`postgres`).
 
 ## Operación
 
 - Un aviso `AGOTADO` o `DESCARTADO` queda en `push.evento` 14 días y después lo purga `push-purgar`.
-- Los logs son una línea JSON por hecho (`push-fcm.no_enviado`, `push-fcm.sin_contar`, …) con el resultado y un código corto. **Nunca** salen tokens, claves, la cuenta de servicio ni datos del aviso.
-- Si FCM aceptó un aviso pero la función no pudo contárselo a la base (`sin_contar`), el aviso vuelve a la cola a los 2 minutos y puede llegar dos veces; la app lo descarta por `event_id`.
+- Los logs son una línea JSON por hecho (`push-fcm.no_enviado`, `push-fcm.sin_contar`, …) con el resultado y un código
+  corto. **Nunca** salen tokens, claves, la cuenta de servicio ni datos del aviso.
+- Si FCM aceptó un aviso pero la función no pudo contárselo a la base (`sin_contar`), el aviso vuelve a la cola a los 2
+  minutos y puede llegar dos veces; la app lo descarta por `event_id`.
 
 ## Desarrollo
 
@@ -106,4 +131,5 @@ deno task check   # tipos, lint y formato
 deno task test    # fetch falso de Google y FCM + contrato contra las migraciones; sin red ni base
 ```
 
-La firma del JWT (RS256 por WebCrypto), la caché del token de acceso (se renueva un minuto antes de vencer) y la clasificación de respuestas están en `fcm.ts`; el flujo de la cola, en `handler.ts`.
+La firma del JWT (RS256 por WebCrypto), la caché del token de acceso (se renueva un minuto antes de vencer) y la
+clasificación de respuestas están en `fcm.ts`; el flujo de la cola, en `handler.ts`.
