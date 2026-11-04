@@ -13,6 +13,7 @@
 --      baja que no se tocan; otra campaña de la misma ciudad que no se toca; nada se borra.
 --   5. La auditoría: un evento por cambio efectivo, con el actor, la fila y los importes; ninguno por
 --      SIN_CAMBIO. Un segundo guardado igual no cambia nada.
+--      El tramo nuevo respeta el fin del vigente que reemplaza (K: sin futuro; L: con hueco hasta uno futuro).
 --   6. La coherencia con precios_de_la_ciudad() (0037).
 begin;
 select * from no_plan();
@@ -139,7 +140,9 @@ insert into public.producto (id, nombre, tipo, es_bonificable, deleted_at) value
   (pg_temp.u('18'), 'G para quitar t170',            'LIBRO', false, null),
   (pg_temp.u('19'), 'H para quitar el mismo dia t170', 'LIBRO', false, null),
   (pg_temp.u('1a'), 'I sin excepcion para quitar t170', 'LIBRO', false, null),
-  (pg_temp.u('1b'), 'J limites del precio t170',   'LIBRO', false, null);
+  (pg_temp.u('1b'), 'J limites del precio t170',   'LIBRO', false, null),
+  (pg_temp.u('1c'), 'K vigente con fin sin futuro t170', 'LIBRO', false, null),
+  (pg_temp.u('1d'), 'L vigente con fin y hueco t170', 'LIBRO', false, null);
 insert into public.coleccion (id, nombre, deleted_at) values
   (pg_temp.u('d1'), 'Col con excepcion t170', null),
   (pg_temp.u('d2'), 'Col sin excepcion t170', null),
@@ -154,7 +157,8 @@ insert into public.precio_general (id, producto_id, coleccion_id, precio_venta, 
 -- Excepciones por ciudad de la campaña (precio_por_ciudad), en f1 salvo que se diga:
 --   31 B 25000 desde -30 · 32 C 26000 desde hoy · 33 D 21000 (-100 a -31, vencida) · 34 E 5000 desde -20
 --   dada de baja · 35 F 25000 (-30 a +9) y 36 F 30000 desde +10 (el futuro) · 37 G 25000 desde -30 ·
---   38 H 27000 desde hoy · 39 colección d1 45000 desde -30 · 3a B en f4 (OTRA campaña) 29000 desde -30.
+--   38 H 27000 desde hoy · 39 colección d1 45000 desde -30 · 3a B en f4 (OTRA campaña) 29000 desde -30 ·
+--   3b K 25000 (-30 a +9, sin tramo futuro) · 3c L 25000 (-30 a +5) y 3d L 30000 desde +20 (hueco de +6 a +19).
 insert into public.precio_por_ciudad (id, producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta, deleted_at) values
   (pg_temp.u('31'), pg_temp.u('12'), null, pg_temp.u('f1'), 25000, pg_temp.h() - 30,  null,              null),
   (pg_temp.u('32'), pg_temp.u('13'), null, pg_temp.u('f1'), 26000, pg_temp.h(),       null,              null),
@@ -165,7 +169,10 @@ insert into public.precio_por_ciudad (id, producto_id, coleccion_id, campania_ci
   (pg_temp.u('37'), pg_temp.u('18'), null, pg_temp.u('f1'), 25000, pg_temp.h() - 30,  null,              null),
   (pg_temp.u('38'), pg_temp.u('19'), null, pg_temp.u('f1'), 27000, pg_temp.h(),       null,              null),
   (pg_temp.u('39'), null, pg_temp.u('d1'), pg_temp.u('f1'), 45000, pg_temp.h() - 30,  null,              null),
-  (pg_temp.u('3a'), pg_temp.u('12'), null, pg_temp.u('f4'), 29000, pg_temp.h() - 30,  null,              null);
+  (pg_temp.u('3a'), pg_temp.u('12'), null, pg_temp.u('f4'), 29000, pg_temp.h() - 30,  null,              null),
+  (pg_temp.u('3b'), pg_temp.u('1c'), null, pg_temp.u('f1'), 25000, pg_temp.h() - 30,  pg_temp.h() + 9,  null),
+  (pg_temp.u('3c'), pg_temp.u('1d'), null, pg_temp.u('f1'), 25000, pg_temp.h() - 30,  pg_temp.h() + 5,  null),
+  (pg_temp.u('3d'), pg_temp.u('1d'), null, pg_temp.u('f1'), 30000, pg_temp.h() + 20,  null,              null);
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma y los privilegios
@@ -391,6 +398,23 @@ select is((select p.sync_version from public.precio_por_ciudad p where p.id = pg
           'la fila corregida subió su sync_version (el teléfono la vuelve a bajar)');
 select is((select p.sync_version from public.precio_por_ciudad p where p.id = pg_temp.u('31')), 0::bigint,
           'y la que no cambió (SIN_CAMBIO) no se tocó');
+
+-- El tramo nuevo respeta el fin del vigente que reemplaza (no queda sin fin ni tapa el hueco del general).
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(pg_temp.guardar('f1', jsonb_build_array(pg_temp.c('PRODUCTO','1c','31000'), pg_temp.c('PRODUCTO','1d','31000'))),
+          'CAMBIADA,CAMBIADA', 'K y L: el vigente termina antes de hoy+10 y de hoy+20, y se cambia');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.tramos('f1', '1c'), '25000:-30:-1 | 31000:0:9',
+          'K: el vigente terminaba en +9 y sin tramo futuro: el nuevo termina en +9, no queda sin fin');
+select is(pg_temp.tramos('f1', '1d'), '25000:-30:-1 | 31000:0:5 | 30000:20:~',
+          'L: el vigente terminaba en +5 y hay un futuro en +20: el nuevo termina en +5 y el hueco de +6 a +19 sigue libre');
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is((select r.precio_modificado from public.precios_de_la_ciudad(pg_temp.u('f1'), pg_temp.h() + 10) r where r.nombre = 'K vigente con fin sin futuro t170'),
+          null, 'K: pasado su fin ya no rige ninguna excepción');
+select is((select r.precio_modificado from public.precios_de_la_ciudad(pg_temp.u('f1'), pg_temp.h() + 10) r where r.nombre = 'L vigente con fin y hueco t170'),
+          null, 'L: en el hueco (+10) no rige ninguna excepción (rige el general, si hay)');
+select is((select r.precio_modificado from public.precios_de_la_ciudad(pg_temp.u('f1'), pg_temp.h() + 20) r where r.nombre = 'L vigente con fin y hueco t170'),
+          30000, 'L: desde +20 rige el futuro, que no se tocó');
 
 -- Coherencia con la lectura (0037): precio_modificado / vigente / origen después de guardar.
 select pg_temp.actuar_como(pg_temp.u('a1'));

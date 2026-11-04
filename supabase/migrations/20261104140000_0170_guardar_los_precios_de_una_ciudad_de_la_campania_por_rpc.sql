@@ -321,6 +321,13 @@ begin
            and p.deleted_at is null
            and p.valido_desde > v_hoy;
 
+        -- Y tampoco se pasa del fin que ya tenía el vigente que reemplaza: si terminaba antes (hasta
+        -- un tramo futuro, o a secas), el nuevo termina ahí y el hueco sigue siendo del general.
+        -- `least` ignora los null: sin fin en ninguno de los dos, el tramo nuevo queda sin fin.
+        if v_hay_vig then
+          v_hasta := least(v_hasta, v_vig.valido_hasta);
+        end if;
+
         insert into public.precio_por_ciudad
           (producto_id, coleccion_id, campania_ciudad_id, precio_venta, valido_desde, valido_hasta, created_by)
         values
