@@ -411,6 +411,16 @@ verify_jwt = true
 import_map = "./functions/foto-ticket/deno.json"
 entrypoint = "./functions/foto-ticket/index.ts"
 
+# Avisos push por FCM (backend-supabase#237, HU-NOT-003, ADR-014). La despierta pg_cron por pg_net cada minuto si hay avisos listos
+# (migración 0163), así que no lleva JWT de usuario: se autentica con la clave compartida PUSH_CLAVE en `x-push-clave`. Lee y
+# actualiza la cola por dos RPC que solo ejecuta service_role. Secretos: PUSH_CLAVE y FCM_CUENTA_DE_SERVICIO (JSON de la cuenta
+# de servicio de Firebase), con `supabase secrets set` (README de la función).
+[functions.push-fcm]
+enabled = true
+verify_jwt = false
+import_map = "./functions/push-fcm/deno.json"
+entrypoint = "./functions/push-fcm/index.ts"
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

@@ -23,6 +23,8 @@ drop schema if exists sync cascade;
 drop schema if exists ruteo cascade;
 -- Y la auditoria de la nube (0073): su propio schema, con una FK contra public.usuario.
 drop schema if exists auditoria cascade;
+-- Y la cola de avisos push (0162): su propio schema, con FKs contra public.usuario.
+drop schema if exists push cascade;
 -- auth es de la imagen y no se dropea, pero sus filas sobreviven al reset y
 -- chocan con los fixtures de los tests, que insertan usuarios con id fijo.
 -- El trigger on_auth_user_created se va con `public`, así que esto no recrea perfiles.

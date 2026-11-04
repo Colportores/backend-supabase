@@ -35,7 +35,8 @@ jobs:
       - run: npm test
 
   # Pruebas de las Edge Functions: el informe PDF (supabase/functions/informe-reportes, backend-supabase#144) y la foto del
-  # ticket en R2 (supabase/functions/foto-ticket, backend-supabase#182). El nombre del job no cambia (el ruleset lo exige):
+  # ticket en R2 (supabase/functions/foto-ticket, backend-supabase#182) y los avisos push por FCM (supabase/functions/push-fcm,
+  # backend-supabase#237). El nombre del job no cambia (el ruleset lo exige):
   # sigue siendo el de la primera. Para cada función:
   # tipos, lint, formato y sus pruebas con Deno, contra un `fetch` falso y contra las migraciones (el contrato de
   # las RPC que lee). No necesita Docker, base ni credenciales. Deno es la misma versión con la que se probó y se
@@ -61,6 +62,11 @@ jobs:
         working-directory: supabase/functions/foto-ticket
       - run: deno task test
         working-directory: supabase/functions/foto-ticket
+      # La tercera (backend-supabase#237): los avisos push por FCM. Mismo Deno, mismos pasos.
+      - run: deno task check
+        working-directory: supabase/functions/push-fcm
+      - run: deno task test
+        working-directory: supabase/functions/push-fcm
 
   # Un solo pull por run (y casi nunca): deja en la caché de Actions las imágenes que bajan `migraciones` y
   # `storage` (scripts/ci-imagenes.txt) y los dos jobs las restauran de ahí con `docker load`, sin tocar
