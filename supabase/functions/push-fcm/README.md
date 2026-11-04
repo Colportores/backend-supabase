@@ -22,8 +22,8 @@ trigger / job (pg_cron) ──► push.evento (cola, misma transacción que el c
   (`enviar_desde`), vigencia (`vence_en`), reserva de 2 minutos (`reservado_hasta`, con `for update skip locked`) y
   reintentos con espera creciente (1, 2, 4, 8, 16 y 30 min; a los 6 intentos queda `AGOTADO`).
 - **Disparadores** (en la misma transacción que el cambio, así que un `rollback` no deja avisos): pedido autorizado,
-  ticket validado, ticket rechazado y primera campaña asignada. Los programados (`0163`): cuotas pendientes y agenda de
-  mañana.
+  ticket validado, ticket rechazado y primera campaña asignada. Los programados (`0163`, a la hora de cada usuario desde
+  la `0166`): cuotas pendientes y agenda de mañana.
 - **`push.despertar()`** (`0163`) llama a esta función por `pg_net` cuando hay avisos listos.
 
 ## Contrato
@@ -66,26 +66,36 @@ configurados, y borrar tokens por eso dejaría a todos sin push.
 
 ## Payload
 
-Mensaje de **solo datos** (sin bloque `notification`): el texto lo arma la app con sus textos locales (R-NO02: nada de
-nombres, montos ni direcciones en el servidor ni en Google). Todos los valores son texto; la función frena cualquier
-clave que no sea de esta tabla o cuyo valor de `*_id` no sea un UUID.
+Los **datos** (`data`) de cada aviso y un **título fijo** por tipo (decisión de Cristian, 04/11, «Título fijo del
+servidor»): el servidor no escribe nada más. El texto completo lo arma la app con sus textos locales cuando se abre
+(R-NO02: nada de nombres, montos ni direcciones en el servidor ni en Google). Todos los valores de `data` son texto; la
+función frena cualquier clave que no sea de esta tabla o cuyo valor de `*_id` no sea un UUID.
 
-| `type`                | Claves además de `type` y `event_id`   | Cuándo sale                                                                                                                                                                                                            |
-| --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pedido_autorizado`   | `pedido_id`                            | Al autorizarse el pedido, con 15 s de demora (la ventana de «Deshacer»); si se deshace antes, no sale.                                                                                                                 |
-| `ticket_validado`     | `ticket_id`                            | Al validar el ticket.                                                                                                                                                                                                  |
-| `ticket_rechazado`    | `ticket_id`                            | Al rechazar el ticket.                                                                                                                                                                                                 |
-| `asignacion_campania` | `campania_id`, `zona_id` (si hay zona) | La cuenta pasa de PENDIENTE_ASIGNACION a ACTIVA: su primera inscripción viva en una campaña no terminada (cuenta no suspendida). `zona_id` sólo si la inscripción ya tiene zona. Un cambio de zona posterior no avisa. |
-| `cuota_pendiente`     | `agenda_id`                            | Cita de cobranza programada que pasó hace exactamente 3 días y cuya venta sigue con saldo; una vez por cita, el job corre a diario a las 09:00 de Montevideo.                                                          |
-| `agenda_manana`       | —                                      | La noche anterior (20:00 de Montevideo) a quien tiene citas programadas para mañana; vence a las 4 horas.                                                                                                              |
+| `type`                | Título (fijo)                | Claves además de `type` y `event_id`   | Cuándo sale                                                                                                                                                                                                            |
+| --------------------- | ---------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pedido_autorizado`   | «Tu pedido fue autorizado»   | `pedido_id`                            | Al autorizarse el pedido, con 15 s de demora (la ventana de «Deshacer»); si se deshace antes, no sale.                                                                                                                 |
+| `ticket_validado`     | «Tu ticket fue validado»     | `ticket_id`                            | Al validar el ticket.                                                                                                                                                                                                  |
+| `ticket_rechazado`    | «Tu ticket fue rechazado»    | `ticket_id`                            | Al rechazar el ticket.                                                                                                                                                                                                 |
+| `asignacion_campania` | «Te asignaron a una campaña» | `campania_id`, `zona_id` (si hay zona) | La cuenta pasa de PENDIENTE_ASIGNACION a ACTIVA: su primera inscripción viva en una campaña no terminada (cuenta no suspendida). `zona_id` sólo si la inscripción ya tiene zona. Un cambio de zona posterior no avisa. |
+| `cuota_pendiente`     | «Tenés una cuota por cobrar» | `agenda_id`                            | Cita de cobranza programada que cumple 3 días y cuya venta sigue con saldo; una vez por cita, a la `hora_cuota` de cada usuario (por defecto 09:00 de Montevideo, ver abajo).                                          |
+| `agenda_manana`       | «Mañana tenés visitas»       | —                                      | A quien tiene citas programadas para mañana, desde su `hora_agenda` (por defecto 20:00 de Montevideo); vence a las 4 horas de esa hora, y nunca pasada la medianoche.                                                  |
 
-`event_id` es el id del aviso: la app lo usa para no mostrar dos veces el mismo si FCM lo reentrega. Android:
-`priority: HIGH`. iOS: `content-available: 1`, `apns-priority: 5`, `apns-push-type: background`.
+`event_id` es el id del aviso: la app lo usa para no mostrar dos veces el mismo si FCM lo reentrega.
 
-> **«Push fondo» (pregunta abierta para Cristian):** mientras no se decida, solo se mandan mensajes de datos. Con la app
-> cerrada del todo en iOS o con ahorro de batería en Android, el sistema puede demorar o no entregar un mensaje de
-> datos; si se decide mostrar la notificación desde el servidor, habrá que sumar `notification` (con el texto que defina
-> producto) y revisar R-NO02.
+**Cómo llega con la app cerrada:** Android lleva `notification: { title }` y `priority: HIGH`; iOS lleva `aps.alert`
+(`title`), `apns-push-type: alert`, `apns-priority: 10` y `content-available: 1` (la app también recibe los datos). Sin
+cuerpo: el título es todo lo que escribe el servidor. Un tipo que no tiene título (la función ya lo frena antes) saldría
+como mensaje de solo datos (`apns-push-type: background`, prioridad 5). `contrato_test.ts` ata los títulos a los seis
+tipos de la cola: sumar un tipo sin título falla en CI.
+
+### La hora de cada usuario
+
+La hora de `cuota_pendiente` y de `agenda_manana` la elige cada usuario en Configuración › Notificaciones (decisión de
+Cristian, 04/11, «Hora avisos», front-colportores-mobile#516). Vive en `usuario.notif_preferences` (jsonb) como
+`hora_cuota` y `hora_agenda`, `"HH:MM"` en hora de Montevideo (por defecto `09:00` y `20:00`), y se guarda con la RPC
+`guardar_mis_preferencias_de_avisos(p_preferencias jsonb)` (el objeto entero, `null` = valores por defecto). Los
+trabajos de `pg_cron` corren cada 15 minutos y cada pasada anota el aviso de quien ya pasó su hora y no lo recibió;
+cambiar la hora después de recibirlo no lo repite. Detalle en la migración `0166`.
 
 ## Puesta en marcha
 

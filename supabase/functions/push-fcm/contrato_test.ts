@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 
+import { TITULOS } from "./fcm.ts";
 import { CLAVES_DE_ID } from "./handler.ts";
 
 /**
@@ -95,6 +96,8 @@ Deno.test("contrato · los seis tipos de aviso de la base son los que la funció
     x[1]
   ).sort();
   assertEquals(delHandler, tipos);
+  // Y cada uno tiene su título fijo (backend-supabase#242): ni uno sin título ni un título de un tipo que no existe.
+  assertEquals(Object.keys(TITULOS).sort(), tipos);
 });
 
 Deno.test("contrato · las claves del payload que arma la base son las que la función permite", async () => {

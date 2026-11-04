@@ -1,7 +1,8 @@
 /**
  * FCM HTTP v1 sin el SDK Admin (ADR-014, backend-supabase#237): firma el JWT de la cuenta de servicio de Google con
  * WebCrypto, lo cambia por un token de acceso de OAuth2 y manda cada mensaje a `messages:send`. Solo manda `data`
- * (el tipo, el `event_id` y UUIDs): el texto lo arma la app (R-NO02). Nada de esto toca la base ni el teléfono.
+ * (el tipo, el `event_id` y UUIDs) y un título FIJO por tipo, sin datos de nadie: el texto completo lo arma la app al
+ * abrir (R-NO02). Nada de esto toca la base ni el teléfono.
  */
 
 /** Lo que usa de la cuenta de servicio del proyecto de Firebase (el JSON que baja la consola, sin lo demás). */
@@ -125,17 +126,43 @@ export function clasificarRespuesta(estado: number, cuerpo: unknown): ResultadoD
   return { resultado: "DESCARTAR", codigo: nombre };
 }
 
-/** El mensaje: solo `data` (todo texto) más lo que hace falta para que llegue con la app cerrada. */
+/**
+ * El título fijo de cada tipo de aviso (decisión de Cristian, 04/11, «Título fijo del servidor», backend-supabase#242).
+ * Es lo único que el servidor escribe: sin nombres, montos, direcciones ni ids (R-NO02), porque lo ve cualquiera que
+ * mire el teléfono bloqueado. La app arma el texto completo con su base cuando se abre. Las claves son los seis tipos
+ * de `push.evento` (`contrato_test.ts` lo ata a las migraciones).
+ */
+export const TITULOS: Readonly<Record<string, string>> = {
+  pedido_autorizado: "Tu pedido fue autorizado",
+  ticket_validado: "Tu ticket fue validado",
+  ticket_rechazado: "Tu ticket fue rechazado",
+  asignacion_campania: "Te asignaron a una campaña",
+  cuota_pendiente: "Tenés una cuota por cobrar",
+  agenda_manana: "Mañana tenés visitas",
+};
+
+/**
+ * El mensaje: los datos (el tipo, el `event_id` y UUIDs) más el título fijo del tipo, para que se vea con la app
+ * cerrada. Android con `notification`; iOS con `alert` (un aviso de solo datos llega como «silencioso»). Los datos
+ * viajan igual, y `content-available` también, así la app los recibe aunque el sistema ya haya mostrado el título.
+ * Un tipo sin título (la función ya los frena antes) sale como mensaje de solo datos.
+ */
 export function armarMensaje(token: string, datos: Record<string, string>) {
+  const titulo = TITULOS[datos.type];
+  const conTitulo = titulo !== undefined;
   return {
     message: {
       token,
       data: datos,
-      android: { priority: "HIGH" },
-      // iOS: un aviso de solo datos llega como «silencioso» (content-available) y con prioridad 5.
+      android: conTitulo ? { priority: "HIGH", notification: { title: titulo } } : { priority: "HIGH" },
       apns: {
-        headers: { "apns-priority": "5", "apns-push-type": "background" },
-        payload: { aps: { "content-available": 1 } },
+        // iOS: con título es una alerta (prioridad 10); sin título, un aviso de fondo (prioridad 5).
+        headers: conTitulo
+          ? { "apns-priority": "10", "apns-push-type": "alert" }
+          : { "apns-priority": "5", "apns-push-type": "background" },
+        payload: {
+          aps: conTitulo ? { alert: { title: titulo }, "content-available": 1 } : { "content-available": 1 },
+        },
       },
     },
   };
