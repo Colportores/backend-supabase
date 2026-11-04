@@ -207,7 +207,6 @@ begin
   update public.cobranza set tarjeta_tipo = 'DEBITO', tarjeta_marca = 'Visa', numero_aprobacion = '123456'
    where id in (pg_temp.uc(42), pg_temp.uc(45), pg_temp.uc(46));
   update public.cobranza set referencia_transferencia = '88213', banco_origen = 'BROU' where id = pg_temp.uc(43);
-  update public.cobranza set numero_cuota = 1 where id = pg_temp.uc(44);
   -- el borde
   perform pg_temp.cb(40, '71', now() - interval '72 hours');
   perform pg_temp.cb(41, '71', now() - interval '72 hours 1 second');
@@ -390,11 +389,10 @@ select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA' w
 select is(pg_temp.error_de($$ update public.cobranza set numero_aprobacion = '999999' where id = pg_temp.uc(42) $$), 'CB007', 'ni la aprobación');
 select is(pg_temp.error_de($$ update public.cobranza set referencia_transferencia = '1' where id = pg_temp.uc(43) $$), 'CB007', 'ni la referencia de la transferencia');
 select is(pg_temp.error_de($$ update public.cobranza set banco_origen = 'Itaú' where id = pg_temp.uc(43) $$), 'CB007', 'ni el banco');
-select is(pg_temp.error_de($$ update public.cobranza set numero_cuota = 2 where id = pg_temp.uc(44) $$), 'CB007', 'ni el número de cuota');
 select is(pg_temp.error_de($$ update public.cobranza set tarjeta_tipo = tarjeta_tipo, tarjeta_marca = tarjeta_marca, numero_aprobacion = numero_aprobacion,
-                                     referencia_transferencia = referencia_transferencia, banco_origen = banco_origen, numero_cuota = numero_cuota
+                                     referencia_transferencia = referencia_transferencia, banco_origen = banco_origen
                               where id = pg_temp.uc(42) $$), 'ok', 'el reenvío idéntico con esos datos pasa');
-select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA', numero_aprobacion = '999999', numero_cuota = 2 where id = pg_temp.uc(45) $$), 'ok',
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA', numero_aprobacion = '999999' where id = pg_temp.uc(45) $$), 'ok',
           'dentro del plazo se corrigen junto con el monto y el medio');
 select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA' where id = pg_temp.uc(46) $$), 'CB007', 'con el ticket validado, la marca tampoco');
 -- El borde: 72 h inclusive.

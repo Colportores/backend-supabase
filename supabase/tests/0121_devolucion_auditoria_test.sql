@@ -76,7 +76,7 @@ create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb de
 returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta,
                             'productos_devueltos', coalesce(p_items, pg_temp.items('11', '1')),
-                            'dinero_retenido', 0, 'fecha_devolucion', '2026-10-05T12:00:00Z');
+                            'fecha_devolucion', '2026-10-05T12:00:00Z');
 $$;
 -- Un job de push de la entidad; devuelve el resultado.
 create or replace function pg_temp.push1(p_op uuid, p_tipo text, p_payload jsonb, p_version bigint default null)
@@ -177,14 +177,14 @@ select ok((select pg_get_triggerdef(t.oid) ~ 'AFTER UPDATE OF deleted_at ON publ
           'el de la baja mira solo deleted_at y solo cuando pasa de null a una fecha');
 select is((select count(*)::int from pg_trigger t
             where t.tgrelid = 'public.devolucion'::regclass and not t.tgisinternal),
-          8, 'devolucion tiene 8 triggers: los 2 de auditoría de siempre, el de los productos, estos 2, el que devuelve el stock (0136), el del tope por renglón (0142) y el que no deja reabrir una anulada (0153)');
+          9, 'devolucion tiene 9 triggers: los 2 de auditoría de siempre, el de los productos, estos 2, el que devuelve el stock (0136), el del tope por renglón (0142), el que no deja reabrir una anulada (0153) y el de la venta con saldo (0157)');
 
 -- ---------------------------------------------------------------------------
 -- 2. El alta deja devolucion_registrada
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
-insert into public.devolucion (id, venta_id, productos_devueltos, dinero_retenido, monto_reembolsado, fecha_devolucion)
-values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.items('11', '2', '12', '1'), 50000, 190000, '2026-10-05T12:00:00Z');
+insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
+values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.items('11', '2', '12', '1'), '2026-10-05T12:00:00Z');
 select pg_temp.actuar_como_servidor();
 
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d1')), 1, 'registrar una devolución deja un evento');
@@ -192,28 +192,25 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 0, 'y ninguno 
 select is(pg_temp.quien('devolucion_registrada', pg_temp.u('d1')), pg_temp.u('b1')::text || '|null|devolucion',
           'el actor es la colportora que la sube, sin target, sobre la tabla devolucion');
 select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1')) - 'fecha_devolucion',
-          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3,
-                             'dinero_retenido', 50000, 'monto_reembolsado', 190000),
-          'el detalle lleva la venta, cuántos productos y unidades y los dos montos en centavos');
+          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3),
+          'el detalle lleva la venta y cuántos productos y unidades; ningún monto (0157)');
 select is((pg_temp.detalle('devolucion_registrada', pg_temp.u('d1')) ->> 'fecha_devolucion')::timestamptz,
           '2026-10-05T12:00:00Z'::timestamptz, 'y la fecha del teléfono');
 select is((select array_agg(k order by k) from jsonb_object_keys(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1'))) k),
-          array['dinero_retenido', 'fecha_devolucion', 'monto_reembolsado', 'productos_distintos', 'unidades_devueltas',
-                'venta_id'],
-          'exactamente esas seis claves: ningún texto libre, dato del cliente ni lista de productos');
+          array['fecha_devolucion', 'productos_distintos', 'unidades_devueltas', 'venta_id'],
+          'exactamente esas cuatro claves: ningún monto, texto libre, dato del cliente ni lista de productos');
 select ok(auditoria.metadata_sin_datos_personales(pg_temp.detalle('devolucion_registrada', pg_temp.u('d1'))),
           'el detalle pasa la red de seguridad de 0073 (sin @ ni claves de datos personales)');
 
--- Sin reembolso (la mayoría): el monto va en null, no desaparece ni se inventa un 0.
+-- Otra devolución, otro evento.
 select pg_temp.actuar_como(pg_temp.u('b1'));
 insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
 values (pg_temp.u('d2'), pg_temp.u('71'), pg_temp.items('11', '1'), '2026-10-06T12:00:00Z');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d2')), 1, 'otra devolución, otro evento');
-select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d2')) -> 'monto_reembolsado', 'null'::jsonb,
-          'sin reembolso: monto_reembolsado queda en null');
-select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d2')) -> 'dinero_retenido', '0'::jsonb,
-          'y la retención en 0');
+select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d2')) ? 'monto_reembolsado'
+          or pg_temp.detalle('devolucion_registrada', pg_temp.u('d2')) ? 'dinero_retenido', false,
+          'y ningún monto en el detalle');
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d1')), 1, 'el evento de la primera no se tocó');
 
 -- Una devolución que se rechaza (CHECK, FK) no deja evento: el AFTER no llega a correr.
@@ -240,8 +237,8 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 0, 'y no deja 
 
 -- Otra columna de una devolución viva: no es una anulación.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas(format($$update public.devolucion set dinero_retenido = 60000 where id = %L$$, pg_temp.u('d1'))), 1,
-          'b1 corrige la retención de su devolución');
+select is(pg_temp.filas(format($$update public.devolucion set fecha_devolucion = '2026-10-05T12:30:00Z' where id = %L$$, pg_temp.u('d1'))), 1,
+          'b1 corrige la fecha de su devolución');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 0, 'corregir una devolución no es anularla: sin evento');
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d1')), 1, 'ni un segundo «registrada»');
@@ -255,20 +252,20 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 1, 'anular dej
 select is(pg_temp.quien('devolucion_anulada', pg_temp.u('d1')), pg_temp.u('b1')::text || '|null|devolucion',
           'con la colportora de actor, sin target, sobre la tabla devolucion');
 select is(pg_temp.detalle('devolucion_anulada', pg_temp.u('d1')) - 'fecha_devolucion',
-          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3,
-                             'dinero_retenido', 60000, 'monto_reembolsado', 190000),
-          'el detalle es el de la devolución tal como quedó (con la retención ya corregida)');
+          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3),
+          'el detalle es el de la devolución tal como quedó');
+select is((pg_temp.detalle('devolucion_anulada', pg_temp.u('d1')) ->> 'fecha_devolucion')::timestamptz,
+          '2026-10-05T12:30:00Z'::timestamptz, 'con la fecha ya corregida');
 select is((select array_agg(k order by k) from jsonb_object_keys(pg_temp.detalle('devolucion_anulada', pg_temp.u('d1'))) k),
-          array['dinero_retenido', 'fecha_devolucion', 'monto_reembolsado', 'productos_distintos', 'unidades_devueltas',
-                'venta_id'],
-          'las mismas seis claves, sin texto libre');
+          array['fecha_devolucion', 'productos_distintos', 'unidades_devueltas', 'venta_id'],
+          'las mismas cuatro claves, sin texto libre');
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d1')), 1, 'el «registrada» sigue siendo uno (el registro solo se agrega)');
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d2')), 0, 'la d2 no se anuló: sin evento');
 
 -- Repetir la baja, tocar otra columna de una anulada o reactivarla: nada se suma.
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select pg_temp.filas(format($$update public.devolucion set deleted_at = '2026-10-08T10:00:00Z' where id = %L$$, pg_temp.u('d1')));
-select pg_temp.filas(format($$update public.devolucion set dinero_retenido = 1 where id = %L$$, pg_temp.u('d1')));
+select pg_temp.filas(format($$update public.devolucion set fecha_devolucion = '2026-10-05T12:45:00Z' where id = %L$$, pg_temp.u('d1')));
 select throws_ok(format($$update public.devolucion set deleted_at = null where id = %L$$, pg_temp.u('d1')), '42501',
                  'Una devolución anulada no se reabre: registrá una nueva.', 'reactivarla se rechaza (0153)');
 select pg_temp.actuar_como_servidor();
@@ -282,8 +279,6 @@ select pg_temp.filas(format($$update public.devolucion set deleted_at = now() wh
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d2')), 1, 'anular la d2 deja su propio evento');
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 1, 'y el de la d1 sigue siendo uno');
-select is(pg_temp.detalle('devolucion_anulada', pg_temp.u('d2')) -> 'monto_reembolsado', 'null'::jsonb,
-          'con el reembolso en null donde no lo hubo');
 
 -- ---------------------------------------------------------------------------
 -- 4. Registrada y anulada sin conexión: sube todo junto
@@ -367,8 +362,7 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d7')), 1, 'la de 120 renglones deja su «registrada»');
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d7')), 1, 'y su «anulada»');
 select is(pg_temp.detalle('devolucion_registrada', pg_temp.u('d7')) - 'fecha_devolucion',
-          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 120, 'unidades_devueltas', 240,
-                             'dinero_retenido', 0, 'monto_reembolsado', null),
+          jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 120, 'unidades_devueltas', 240),
           'con los totales (120 productos, 240 unidades)');
 select ok((select length(a.metadata::text) < 400 from auditoria.audit_log a
             where a.event_type = 'devolucion_registrada' and a.fila_id = pg_temp.u('d7')),
