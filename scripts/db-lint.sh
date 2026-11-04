@@ -5,9 +5,10 @@
 # ahí, y lintear solo public dejaba el RPC de ingesta fuera del control de CI.
 # `ruteo` (0036, las calles de OSM y el ruteo) también tiene PL/pgSQL propio.
 # `auditoria` (0073, el audit_log) tiene el suyo.
+# `push` (0162, la cola de avisos push) también.
 set -euo pipefail
 
 : "${DB_URL:?Definir DB_URL (postgresql://user:pass@host:port/db)}"
 
 cd "$(dirname "$0")/.."
-supabase db lint --db-url "$DB_URL" --schema public,sync,ruteo,auditoria --level warning
+supabase db lint --db-url "$DB_URL" --schema public,sync,ruteo,auditoria,push --level warning
