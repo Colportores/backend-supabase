@@ -385,14 +385,17 @@ values (pg_temp.u('01'), 'CASA', 'Push 01', '1', -34.91, -56.2, pg_temp.u('c1'),
 insert into public.espacio (id, ubicacion_id, numero_depto, created_by) values (pg_temp.u('11'), pg_temp.u('01'), null, pg_temp.u('a1'));
 insert into public.espacio_persona (id, espacio_id, persona_id, created_by)
 values (pg_temp.u('21'), pg_temp.u('11'), pg_temp.u('d1'), pg_temp.u('a1'));
--- Ventas de Ana: 51 con saldo (1000,00 y un cobro de 100,00), 52 saldada, 53 con el cobro dado de baja.
+-- Ventas de Ana: 51 con saldo (1000,00 y un cobro de 100,00), 52 saldada, 53 con el cobro dado de baja,
+-- 54 con el único cobro ANULADO (no cuenta como cobrado: la venta sigue debiendo todo).
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)
 select pg_temp.u(x.v), pg_temp.u('21'), 'P-' || x.v, x.monto, now(), pg_temp.u('a1'), pg_temp.u('a1')
-  from (values ('51', 100000), ('52', 20000), ('53', 30000)) x(v, monto);
+  from (values ('51', 100000), ('52', 20000), ('53', 30000), ('54', 40000)) x(v, monto);
 insert into public.cobranza (id, venta_id, monto, medio, fecha, deleted_at, created_by) values
   (pg_temp.u('71'), pg_temp.u('51'), 10000, 'EFECTIVO', now(), null, pg_temp.u('a1')),
   (pg_temp.u('72'), pg_temp.u('52'), 20000, 'EFECTIVO', now(), null, pg_temp.u('a1')),
   (pg_temp.u('73'), pg_temp.u('53'), 30000, 'EFECTIVO', now(), now(), pg_temp.u('a1'));
+insert into public.cobranza (id, venta_id, monto, medio, fecha, anulado_at, motivo_anulacion, created_by)
+values (pg_temp.u('74'), pg_temp.u('54'), 40000, 'EFECTIVO', now(), now(), 'Monto equivocado', pg_temp.u('a1'));
 
 -- Citas (todas de Ana, en el espacio 11). Columnas: id, tipo, día, estado, venta, baja.
 create or replace function pg_temp.cita(p_id text, p_tipo text, p_dia integer, p_estado text, p_venta text default null,
@@ -413,14 +416,16 @@ select pg_temp.cita('87', 'COBRANZA', -3, 'PROGRAMADA', null);            -- sí
 select pg_temp.cita('88', 'COBRANZA', -3, 'PROGRAMADA', '51', true);      -- no: la cita está dada de baja
 select pg_temp.cita('89', 'ENTREVISTA', -3, 'PROGRAMADA');                -- no: no es una cobranza
 select pg_temp.cita('8a', 'COBRANZA', -3, 'CANCELADA', '51');             -- no: cancelada
+select pg_temp.cita('8b', 'COBRANZA', -3, 'PROGRAMADA', '54');            -- sí: el único cobro está ANULADO
 -- Mañana: 91 programada (entrevista), 92 programada (cobranza), 93 cancelada.
 select pg_temp.cita('91', 'ENTREVISTA', 1, 'PROGRAMADA');
 select pg_temp.cita('92', 'COBRANZA', 1, 'PROGRAMADA', '51');
 select pg_temp.cita('93', 'ENTREVISTA', 1, 'CANCELADA');
 
-select is(push.encolar_cuotas_pendientes(), 3, 'la tarea anota las 3 citas de cobranza que cumplen 3 días sin cobro');
+select is(push.encolar_cuotas_pendientes(), 4, 'la tarea anota las 4 citas de cobranza que cumplen 3 días sin cobro');
 select is((select array_agg(entidad_id order by entidad_id) from push.evento where tipo = 'cuota_pendiente'),
-          array[pg_temp.u('81'), pg_temp.u('86'), pg_temp.u('87')], 'son la 81, la 86 y la 87');
+          array[pg_temp.u('81'), pg_temp.u('86'), pg_temp.u('87'), pg_temp.u('8b')],
+          'son la 81, la 86, la 87 y la 8b (el cobro anulado no cuenta como cobrado)');
 select ok((select bool_and(usuario_id = pg_temp.u('a1')) from push.evento where tipo = 'cuota_pendiente'), 'todas para su colportora');
 select is(push.encolar_cuotas_pendientes(), 0, 'correr la tarea otra vez no duplica nada: una vez por cita');
 select is(push.encolar_cuotas_pendientes(public.hoy_montevideo() + 1), 1,

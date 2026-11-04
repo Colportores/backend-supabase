@@ -75,7 +75,7 @@ begin
        -- El día de la cita fue hace exactamente 3 días. El rango deja usar el índice por fecha.
        and a.fecha_programada >= ((p_hoy - 3)::timestamp at time zone 'America/Montevideo')
        and a.fecha_programada <  ((p_hoy - 2)::timestamp at time zone 'America/Montevideo')
-       -- «Sin cobro»: la venta de la cuota todavía debe algo (venta menos sus cobros vivos, como AG002).
+       -- «Sin cobro»: la venta de la cuota todavía debe algo (venta menos sus cobros vivos y no anulados, como AG002).
        and (a.venta_id is null
             or exists (
               select 1
@@ -84,7 +84,8 @@ begin
                  and v.deleted_at is null
                  and v.monto_total > coalesce((select sum(c.monto)
                                                  from public.cobranza c
-                                                where c.venta_id = v.id and c.deleted_at is null), 0)))
+                                                where c.venta_id = v.id and c.deleted_at is null
+                                                  and c.anulado_at is null), 0)))
   ), nuevos as (
     insert into push.evento (usuario_id, tipo, entidad_id, clave)
     select c.colportor_id, 'cuota_pendiente', c.id, 'cuota_pendiente:' || c.id
