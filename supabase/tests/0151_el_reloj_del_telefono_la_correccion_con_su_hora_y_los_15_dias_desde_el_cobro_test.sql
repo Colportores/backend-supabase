@@ -130,9 +130,12 @@ select pg_temp.u(x.s), r.id
   from (values ('d1', 'COORDINADOR'), ('d2', 'COORDINADOR'), ('a1', 'ADMIN'),
                ('b1', 'COLPORTOR'), ('b4', 'COLPORTOR'), ('b6', 'COLPORTOR'), ('b7', 'COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
+-- c4: su fin se cuenta desde el día de Montevideo de los cobros «de hoy» (hasta 3 h atrás), no desde hoy a secas. Entre
+-- las 00:00 y las 03:00 de Montevideo esos cobros caen en el día anterior y, con fin = hoy - 16, la gracia de c4 (fin + 15
+-- días) todavía estaba abierta al cobrar: el escenario «gracia ya vencida al cobrar» solo se rompía a esas horas (CI, 03/11).
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('c1'), 'c1 en curso', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('d1')),
-  (pg_temp.u('c4'), 'c4 hace 16 dias', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo() - 16, pg_temp.u('d2')),
+  (pg_temp.u('c4'), 'c4 hace 16 dias', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo(now() - interval '3 hours') - 16, pg_temp.u('d2')),
   (pg_temp.u('c5'), 'c5 vieja', 'VERANO', public.hoy_montevideo() - 120, public.hoy_montevideo() - 60, pg_temp.u('d1')),
   (pg_temp.u('c6'), 'c6 en curso', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('d2'));
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
