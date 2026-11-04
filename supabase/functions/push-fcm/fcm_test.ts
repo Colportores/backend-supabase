@@ -8,6 +8,7 @@ import {
   type CuentaDeServicio,
   firmarJwt,
   leerCuentaDeServicio,
+  TITULOS,
   URL_DEL_TOKEN_DE_ACCESO,
 } from "./fcm.ts";
 
@@ -149,17 +150,72 @@ Deno.test("clasificarRespuesta · cada respuesta de FCM tiene su destino", () =>
   assertEquals(clasificarRespuesta(502, "<html>Bad gateway</html>"), { resultado: "REINTENTAR", codigo: "HTTP_502" });
 });
 
-Deno.test("armarMensaje · solo datos, con lo que hace falta para llegar con la app cerrada", () => {
+const TIPOS_DE_AVISO = [
+  "pedido_autorizado",
+  "ticket_validado",
+  "ticket_rechazado",
+  "asignacion_campania",
+  "cuota_pendiente",
+  "agenda_manana",
+];
+const ID_A = "01920000-0000-7000-8000-00000000a1a1";
+const ID_B = "01920000-0000-7000-8000-00000000b2b2";
+
+Deno.test("armarMensaje · los datos viajan y el título fijo hace que se vea con la app cerrada", () => {
   const datos = { type: "agenda_manana", event_id: "01920000-0000-7000-8000-000000000001" };
   const { message } = armarMensaje("token-123", datos);
   assertEquals(message.token, "token-123");
-  assertEquals(message.data, datos);
+  assertEquals(message.data, datos, "los datos siguen siendo los mismos: el tipo, el event_id y UUIDs");
+  // Android con notification.
   assertEquals(message.android.priority, "HIGH");
+  assertEquals(message.android.notification, { title: "Mañana tenés visitas" });
+  // iOS con alert: ya no es un aviso de fondo.
+  assertEquals(message.apns.payload.aps.alert, { title: "Mañana tenés visitas" });
   assertEquals(message.apns.payload.aps["content-available"], 1);
-  assertEquals(message.apns.headers["apns-priority"], "5");
-  // «Push fondo» (pregunta abierta para Cristian): mientras tanto, nada de título ni cuerpo del servidor.
-  assert(!("notification" in message), "sin bloque notification: el texto lo arma la app");
+  assertEquals(message.apns.headers["apns-push-type"], "alert");
+  assertEquals(message.apns.headers["apns-priority"], "10");
+  // Sin bloque notification de nivel superior: cada plataforma lleva el suyo.
+  assert(!("notification" in message));
+});
+
+Deno.test("armarMensaje · cada tipo tiene su título fijo y ninguno lleva datos de nadie (R-NO02)", () => {
+  assertEquals(
+    Object.keys(TITULOS).sort(),
+    [...TIPOS_DE_AVISO].sort(),
+    "un título por cada tipo de aviso, y solo esos",
+  );
+  const esperados: Record<string, string> = {
+    pedido_autorizado: "Tu pedido fue autorizado",
+    ticket_validado: "Tu ticket fue validado",
+    ticket_rechazado: "Tu ticket fue rechazado",
+    asignacion_campania: "Te asignaron a una campaña",
+    cuota_pendiente: "Tenés una cuota por cobrar",
+    agenda_manana: "Mañana tenés visitas",
+  };
+  for (const tipo of TIPOS_DE_AVISO) {
+    const conA = armarMensaje("t", { type: tipo, event_id: ID_A, pedido_id: ID_A, agenda_id: ID_A }).message;
+    const conB = armarMensaje("t", { type: tipo, event_id: ID_B, pedido_id: ID_B, agenda_id: ID_B }).message;
+    const titulo = conA.android.notification?.title;
+    assertEquals(titulo, esperados[tipo], `el título de ${tipo}`);
+    // El mismo título con otros datos: no depende de nadie.
+    assertEquals(conB.android.notification?.title, titulo, `${tipo}: el título no cambia con los datos`);
+    assertEquals(conA.apns.payload.aps.alert?.title, titulo, `${tipo}: el mismo título en iOS`);
+    // Ni el id, ni un número, ni un monto o un nombre propio: solo texto fijo.
+    assert(!/[0-9]/.test(titulo!), `${tipo}: el título no lleva números`);
+    assert(!titulo!.includes(ID_A.slice(-4)) && !titulo!.includes("$"), `${tipo}: el título no lleva ids ni montos`);
+    // Lo que se manda a Google, fuera de `data`, no contiene ningún dato del aviso.
+    const { data: _data, ...sinDatos } = conA;
+    const texto = JSON.stringify(sinDatos);
+    assert(!texto.includes(ID_A) && !texto.includes("a1a1"), `${tipo}: fuera de data no viaja ningún id`);
+  }
+});
+
+Deno.test("armarMensaje · un tipo desconocido sale de solo datos, sin título inventado", () => {
+  const { message } = armarMensaje("t", { type: "tipo_nuevo", event_id: ID_A });
+  assertEquals(message.data, { type: "tipo_nuevo", event_id: ID_A });
   assert(!("notification" in message.android) && !("alert" in message.apns.payload.aps));
+  assertEquals(message.apns.headers["apns-push-type"], "background");
+  assertEquals(message.apns.headers["apns-priority"], "5");
 });
 
 /** Un `fetch` falso de Google: el token de acceso y el envío. */

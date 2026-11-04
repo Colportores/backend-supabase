@@ -9,7 +9,8 @@
 --      vencido) y no se pisa con un segundo despertar.
 --   6. push_resultado: enviado, reintento con espera creciente hasta agotarse, token inválido (borra el token
 --      solo si sigue siendo el mismo), descartar, y lo que ya no está pendiente no se toca.
---   7. Cuota pendiente (3 días vencida) y agenda de mañana.
+--   7. Cuota pendiente (3 días vencida) y agenda de mañana, a la hora por defecto (09:00 y 20:00; la hora que
+--      elige cada usuario está en 0166_la_hora_de_los_avisos_test.sql).
 --   8. El despertar de la Edge Function y la purga.
 -- Va en una transacción.
 begin;
@@ -44,6 +45,10 @@ end $$;
 -- El mediodía de Montevideo, hoy + n días.
 create or replace function pg_temp.dia(p_n integer) returns timestamptz language sql as $$
   select ((public.hoy_montevideo() + p_n)::timestamp + interval '12 hours') at time zone 'America/Montevideo';
+$$;
+-- Hoy (Montevideo) a cierta hora: el «ahora» con el que se prueban las dos tareas programadas (0166) a cualquier hora real.
+create or replace function pg_temp.a_las(p_hora text) returns timestamptz language sql as $$
+  select (public.hoy_montevideo()::timestamp + p_hora::time) at time zone 'America/Montevideo';
 $$;
 -- Los avisos de un usuario de cierto tipo (como postgres).
 create or replace function pg_temp.avisos(p_usuario text, p_tipo text) returns integer language sql as $$
@@ -117,10 +122,10 @@ select is((select count(*)::int from cron.job
             where jobname in ('push-despertar', 'push-cuotas-pendientes', 'push-agenda-manana', 'push-purgar')), 4,
           'las cuatro tareas de pg_cron están agendadas');
 select is((select schedule from cron.job where jobname = 'push-despertar'), '* * * * *', 'el despertar corre cada minuto');
-select is((select schedule from cron.job where jobname = 'push-cuotas-pendientes'), '0 12 * * *',
-          'las cuotas se miran a las 09:00 de Montevideo');
-select is((select schedule from cron.job where jobname = 'push-agenda-manana'), '0 23 * * *',
-          'la agenda de mañana se avisa a las 20:00 de Montevideo');
+select is((select schedule from cron.job where jobname = 'push-cuotas-pendientes'), '*/15 * * * *',
+          'las cuotas se miran cada 15 minutos: cada usuario elige su hora (0166)');
+select is((select schedule from cron.job where jobname = 'push-agenda-manana'), '*/15 * * * *',
+          'la agenda de mañana también: cada usuario elige su hora (0166)');
 select throws_ok($$insert into push.evento (usuario_id, tipo, clave) values (null, 'agenda_manana', 'x')$$, '23502',
                  null, 'un aviso sin destinataria no entra');
 select throws_ok(format($$insert into push.evento (usuario_id, tipo, clave) values (%L, 'agenda_manana', 'k1'), (%L, 'agenda_manana', 'k1')$$,
@@ -422,14 +427,14 @@ select pg_temp.cita('91', 'ENTREVISTA', 1, 'PROGRAMADA');
 select pg_temp.cita('92', 'COBRANZA', 1, 'PROGRAMADA', '51');
 select pg_temp.cita('93', 'ENTREVISTA', 1, 'CANCELADA');
 
-select is(push.encolar_cuotas_pendientes(), 4, 'la tarea anota las 4 citas de cobranza que cumplen 3 días sin cobro');
+select is(push.encolar_cuotas_pendientes(pg_temp.a_las('10:00')), 4, 'la tarea anota las 4 citas de cobranza que cumplen 3 días sin cobro');
 select is((select array_agg(entidad_id order by entidad_id) from push.evento where tipo = 'cuota_pendiente'),
           array[pg_temp.u('81'), pg_temp.u('86'), pg_temp.u('87'), pg_temp.u('8b')],
           'son la 81, la 86, la 87 y la 8b (el cobro anulado no cuenta como cobrado)');
 select ok((select bool_and(usuario_id = pg_temp.u('a1')) from push.evento where tipo = 'cuota_pendiente'), 'todas para su colportora');
-select is(push.encolar_cuotas_pendientes(), 0, 'correr la tarea otra vez no duplica nada: una vez por cita');
-select is(push.encolar_cuotas_pendientes(public.hoy_montevideo() + 1), 1,
-          'el día se recibe por argumento: con p_hoy = mañana cumple 3 días la cita 82');
+select is(push.encolar_cuotas_pendientes(pg_temp.a_las('10:00')), 0, 'correr la tarea otra vez no duplica nada: una vez por cita');
+select is(push.encolar_cuotas_pendientes(pg_temp.a_las('10:00') + interval '1 day'), 1,
+          'el instante se recibe por argumento: mañana a las 10:00 cumple 3 días la cita 82');
 delete from push.evento where entidad_id = pg_temp.u('82');
 select is((select push.datos_del_aviso(e) from push.evento e where e.entidad_id = pg_temp.u('81')),
           jsonb_build_object('type', 'cuota_pendiente', 'event_id', (select id::text from push.evento where entidad_id = pg_temp.u('81')),
@@ -443,19 +448,19 @@ select is((select count(*)::int from public.push_tomar_pendientes(50) where dato
 select is(pg_temp.estado_de((select id from push.evento where entidad_id = pg_temp.u('81'))), 'DESCARTADO/YA_NO_APLICA', 'queda descartada por ya no aplicar');
 
 -- Agenda de mañana.
-select is(push.encolar_agenda_manana(), 1, 'la agenda de mañana anota un aviso por colportora, no uno por cita');
+select is(push.encolar_agenda_manana(pg_temp.a_las('21:00')), 1, 'la agenda de mañana anota un aviso por colportora, no uno por cita');
 select is(pg_temp.avisos('a1', 'agenda_manana'), 1, 'es el de Ana (tiene 2 citas programadas mañana)');
 select is((select entidad_id from push.evento where tipo = 'agenda_manana'), null, 'sin id de entidad');
 select is((select push.datos_del_aviso(e) from push.evento e where e.tipo = 'agenda_manana'),
           jsonb_build_object('type', 'agenda_manana', 'event_id', (select id::text from push.evento where tipo = 'agenda_manana')),
           'el payload es solo type y event_id: la app cuenta las citas en su base');
-select is((select vence_en from push.evento where tipo = 'agenda_manana'), now() + interval '4 hours',
-          'vale 4 horas: pasada la noche el «mañana» ya es hoy');
-select is(push.encolar_agenda_manana(), 0, 'correrla otra vez el mismo día no repite el aviso');
-select is(push.encolar_agenda_manana(public.hoy_montevideo() + 1), 0, 'pasado mañana no hay citas programadas');
+select is((select vence_en from push.evento where tipo = 'agenda_manana'), pg_temp.a_las('24:00'),
+          'vale 4 horas desde las 20:00 (la hora por defecto): pasada la noche el «mañana» ya es hoy');
+select is(push.encolar_agenda_manana(pg_temp.a_las('21:00')), 0, 'correrla otra vez el mismo día no repite el aviso');
+select is(push.encolar_agenda_manana(pg_temp.a_las('21:00') + interval '1 day'), 0, 'pasado mañana no hay citas programadas');
 update public.agenda set estado = 'CANCELADA' where id in (pg_temp.u('91'), pg_temp.u('92'));
 delete from push.evento where tipo = 'agenda_manana';
-select is(push.encolar_agenda_manana(), 0, 'si todas las citas de mañana se cancelaron, no hay aviso');
+select is(push.encolar_agenda_manana(pg_temp.a_las('21:00')), 0, 'si todas las citas de mañana se cancelaron, no hay aviso');
 
 -- ---------------------------------------------------------------------------
 -- 8. El despertar de la Edge Function y la purga
