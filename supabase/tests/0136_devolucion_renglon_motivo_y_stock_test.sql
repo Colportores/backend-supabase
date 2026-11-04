@@ -68,7 +68,7 @@ returns jsonb language sql as $$
 $$;
 create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb) returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta, 'productos_devueltos', p_items,
-                            'dinero_retenido', 0, 'fecha_devolucion', '2026-10-05T12:00:00Z');
+                            'fecha_devolucion', '2026-10-05T12:00:00Z');
 $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
@@ -246,7 +246,7 @@ select is(pg_temp.ins('f3', '71', jsonb_build_array(pg_temp.el('13', 2, '83'))),
 select is(pg_temp.stock('13') || '/' || pg_temp.entradas('f3'), '2/2', 'entra a su stock como cualquier libro');
 
 -- No descuenta nada más: modificar la devolución no mueve el stock.
-update public.devolucion set dinero_retenido = 100 where id = pg_temp.u('f1');
+update public.devolucion set fecha_devolucion = fecha_devolucion + interval '1 minute' where id = pg_temp.u('f1');
 update public.devolucion set productos_devueltos = jsonb_build_array(pg_temp.el('11', 1, '81')) where id = pg_temp.u('f1');
 select is(pg_temp.stock('11') || '/' || pg_temp.stock('12') || '/' || pg_temp.movs('f1'), '15/1/2',
           'modificarla después no mueve el stock (ni suma ni resta)');
@@ -343,7 +343,7 @@ delete from public.devolucion;
 update public.stock set cantidad_disponible = 10 where usuario_id = pg_temp.u('b1') and producto_id = pg_temp.u('11');
 select is(pg_temp.ins('d1', '71', jsonb_build_array(pg_temp.el('11', 2, '81'), pg_temp.el('12', 1, '82'))), 'ok', 'una devolución de 2 y 1');
 select is(pg_temp.stock('11') || '/' || pg_temp.stock('12'), '12/1', 'sube el stock');
-update public.devolucion set dinero_retenido = 5 where id = pg_temp.u('d1');
+update public.devolucion set fecha_devolucion = fecha_devolucion + interval '1 minute' where id = pg_temp.u('d1');
 select is(pg_temp.stock('11') || '/' || pg_temp.stock('12'), '12/1', 'cambiarle otra cosa no lo mueve');
 update public.devolucion set deleted_at = now() where id = pg_temp.u('d1');
 select is(pg_temp.stock('11') || '/' || pg_temp.stock('12'), '10/0', 'anularla devuelve el stock a como estaba');
@@ -358,7 +358,7 @@ select is((select array(select k from jsonb_object_keys(a.metadata) k order by k
           array['cantidad','producto_id','stock_antes','stock_despues'], 'solo con ids y números');
 -- Idempotente: anularla otra vez, o tocar una anulada, no resta de nuevo.
 update public.devolucion set deleted_at = now() + interval '1 minute' where id = pg_temp.u('d1');
-update public.devolucion set dinero_retenido = 7 where id = pg_temp.u('d1');
+update public.devolucion set fecha_devolucion = fecha_devolucion + interval '2 minutes' where id = pg_temp.u('d1');
 select is(pg_temp.stock('11') || '/' || pg_temp.stock('12') || '/' || pg_temp.movs('d1'), '10/0/4', 'no resta dos veces');
 -- El stock puede quedar en negativo (S46) si el colportor ya lo usó.
 select is(pg_temp.ins('d2', '71', jsonb_build_array(pg_temp.el('11', 3, '81'))), 'ok', 'otra devolución (3)');

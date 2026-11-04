@@ -90,7 +90,7 @@ create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb de
 returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta,
                             'productos_devueltos', coalesce(p_items, pg_temp.ren('11', '1')),
-                            'dinero_retenido', 0, 'fecha_devolucion', '2026-10-05T12:00:00Z');
+                            'fecha_devolucion', '2026-10-05T12:00:00Z');
 $$;
 -- Un job de push de la entidad; devuelve el resultado.
 create or replace function pg_temp.push1(p_op uuid, p_tipo text, p_payload jsonb, p_version bigint default null)
@@ -129,8 +129,8 @@ insert into public.espacio_persona (id, espacio_id, persona_id, created_by) valu
   (pg_temp.u('51'), pg_temp.u('e1'), pg_temp.u('c2'), pg_temp.u('b1')),
   (pg_temp.u('53'), pg_temp.u('e2'), pg_temp.u('c4'), pg_temp.u('b2'));
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by, motivo_monto_manual) values
-  (pg_temp.u('71'), pg_temp.u('51'), 'T-8171', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1'), 'fixture: ítems que no cuadran con el total (0150)'),
-  (pg_temp.u('72'), pg_temp.u('53'), 'T-8172', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'), 'fixture: ítems que no cuadran con el total (0150)');
+  (pg_temp.u('71'), pg_temp.u('51'), 'T-8171', 5100000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1'), 'fixture: ítems que no cuadran con el total (0150)'),
+  (pg_temp.u('72'), pg_temp.u('53'), 'T-8172', 5100000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'), 'fixture: ítems que no cuadran con el total (0150)');
 
 -- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
@@ -146,18 +146,14 @@ insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unita
 -- ---------------------------------------------------------------------------
 select has_table('public', 'devolucion', 'existe la tabla');
 select columns_are('public', 'devolucion',
-  array['id', 'venta_id', 'productos_devueltos', 'dinero_retenido', 'monto_reembolsado', 'fecha_devolucion',
+  array['id', 'venta_id', 'productos_devueltos', 'fecha_devolucion',
         'colportor_id', 'created_at', 'updated_at', 'created_by', 'deleted_at', 'sync_version', 'xmin_w', 'motivo'],
-  'las columnas: la devolución, la plata, el motivo (0136, opcional y acotado) y las de siempre');
+  'las columnas: la devolución, el motivo (0136, opcional y acotado) y las de siempre; sin plata (0157)');
+select hasnt_column('public', 'devolucion', 'dinero_retenido', 'sin dinero retenido (0157: nunca queda plata a favor)');
+select hasnt_column('public', 'devolucion', 'monto_reembolsado', 'y sin monto reembolsado');
 select col_is_pk('public', 'devolucion', 'id', 'la clave es un uuid');
 select col_type_is('public', 'devolucion', 'productos_devueltos', 'jsonb', 'productos_devueltos es jsonb (ADR-002)');
 select col_not_null('public', 'devolucion', 'productos_devueltos', 'y es obligatorio');
-select col_type_is('public', 'devolucion', 'dinero_retenido', 'integer', 'dinero_retenido en centavos (integer, como monto_total)');
-select col_not_null('public', 'devolucion', 'dinero_retenido', 'dinero_retenido es obligatorio');
-select col_default_is('public', 'devolucion', 'dinero_retenido', '0', 'y vale 0 si no retiene nada');
-select col_type_is('public', 'devolucion', 'monto_reembolsado', 'integer', 'monto_reembolsado en centavos');
-select col_is_null('public', 'devolucion', 'monto_reembolsado', 'monto_reembolsado es opcional: la mayoría no devuelve plata');
-select col_hasnt_default('public', 'devolucion', 'monto_reembolsado', 'y sin default');
 select col_type_is('public', 'devolucion', 'fecha_devolucion', 'timestamp with time zone', 'fecha_devolucion timestamptz');
 select col_not_null('public', 'devolucion', 'fecha_devolucion', 'fecha_devolucion es obligatoria (la fecha va del teléfono)');
 select col_hasnt_default('public', 'devolucion', 'fecha_devolucion', 'y sin default: el servidor no la inventa');
@@ -170,7 +166,7 @@ select col_type_is('public', 'devolucion', 'xmin_w', 'xid8', 'xmin_w xid8, como 
 select is((select count(*)::int from pg_constraint
             where conrelid = 'public.devolucion'::regclass and contype = 'c'
               and conname in ('devolucion_productos_validos', 'devolucion_dinero_retenido_no_negativo',
-                              'devolucion_monto_reembolsado_no_negativo')), 3, 'los tres CHECK están');
+                              'devolucion_monto_reembolsado_no_negativo')), 1, 'queda el CHECK de los productos y se fueron los dos de la plata');
 select has_index('public', 'devolucion', 'devolucion_delta_idx', array['colportor_id', 'xmin_w', 'id'],
                  'el delta: el dueño primero, para que entre en el Index Cond');
 select has_index('public', 'devolucion', 'devolucion_venta_idx', array['venta_id'], 'índice por la venta (la FK)');
@@ -221,8 +217,10 @@ select ok(not ('colportor_id' = any (sync.columnas_escribibles('devolucion'))),
           'colportor_id no es escribible por el cliente: lo fija el servidor');
 select ok(not ('sync_version' = any (sync.columnas_escribibles('devolucion'))), 'ni sync_version');
 select ok(sync.columnas_escribibles('devolucion') @>
-            array['venta_id', 'productos_devueltos', 'dinero_retenido', 'monto_reembolsado', 'fecha_devolucion', 'deleted_at'],
-          'la venta, los productos, la plata, la fecha y la baja sí');
+            array['venta_id', 'productos_devueltos', 'fecha_devolucion', 'deleted_at'],
+          'la venta, los productos, la fecha y la baja sí');
+select ok(not ('dinero_retenido' = any (sync.columnas_escribibles('devolucion')))
+          and not ('monto_reembolsado' = any (sync.columnas_escribibles('devolucion'))), 'y la plata ya no se escribe');
 
 select is((select has_function_privilege('authenticated', 'public.productos_devueltos_validos(jsonb)', 'execute')), true,
           'authenticated ejecuta productos_devueltos_validos (la llama un CHECK)');
@@ -285,17 +283,7 @@ select is(public.productos_devueltos_validos(jsonb_build_array(
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
                               values (pg_temp.u('d0'), pg_temp.u('71'), pg_temp.ren('11', '1', '12', '2'),
                                       '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
-          'ok', 'una devolución mínima: sin reembolso y sin retención');
-select is((select array[dinero_retenido::text, coalesce(monto_reembolsado::text, '-')]
-             from public.devolucion where id = pg_temp.u('d0')), array['0', '-'],
-          'dinero_retenido 0 y sin reembolso: así sale la mayoría');
-select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, dinero_retenido, monto_reembolsado,
-                                                              fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), 50000, 190000, '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
-          'ok', 'con retención y reembolso en el momento');
-select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, monto_reembolsado, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.ren('13', '1'), 0, '2026-10-05 12:00+00', pg_temp.u('b1')) $$),
-          'ok', 'un reembolso de 0 no se rechaza (el teléfono no queda atascado)');
+          'ok', 'una devolución mínima: los productos y la fecha');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
                               values (pg_temp.u('71'), pg_temp.ren('11', '1'), '2026-10-05 12:00+00', pg_temp.u('b1')),
                                      (pg_temp.u('71'), pg_temp.ren('11', '1'), '2026-10-06 12:00+00', pg_temp.u('b1')) $$),
@@ -323,15 +311,6 @@ select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
                               values (pg_temp.u('71'), pg_temp.ren('11', '1', '99', '1'), now(), pg_temp.u('b1')) $$),
           '23503 devolucion_producto_existe', 'un producto que no existe: 23503, como una FK');
-select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, dinero_retenido, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), -1, now(), pg_temp.u('b1')) $$),
-          '23514 devolucion_dinero_retenido_no_negativo', 'una retención negativa: 23514');
-select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, monto_reembolsado, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), -1, now(), pg_temp.u('b1')) $$),
-          '23514 devolucion_monto_reembolsado_no_negativo', 'un reembolso negativo: 23514');
-select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, dinero_retenido, fecha_devolucion, colportor_id)
-                              values (pg_temp.u('71'), pg_temp.ren('11', '1'), null, now(), pg_temp.u('b1')) $$) like '23502%', true,
-          'dinero_retenido null: not null (0 es 0)');
 select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos_devueltos, fecha_devolucion, colportor_id)
                               values (pg_temp.u('71'), pg_temp.ren('11', '1'), null, pg_temp.u('b1')) $$) like '23502%', true,
           'sin fecha: not null');
@@ -357,13 +336,12 @@ select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos =
 -- 4. La RLS contra la tabla
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, dinero_retenido, monto_reembolsado, fecha_devolucion)
-                              values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.ren('11', '1'), 0, 190000, '2026-10-04 10:00+00') $$),
+select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
+                              values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.ren('11', '1'), '2026-10-04 10:00+00') $$),
           'ok', 'b1 guarda una devolución de su venta, sin mandar colportor_id');
 select is((select colportor_id from public.devolucion where id = pg_temp.u('d1')), pg_temp.u('b1'),
           'colportor_id sale del JWT, sin que nadie lo mande');
 select is((select created_by from public.devolucion where id = pg_temp.u('d1')), pg_temp.u('b1'), 'y created_by también');
-select is((select monto_reembolsado from public.devolucion where id = pg_temp.u('d1')), 190000, 'el reembolso en el momento se guarda');
 select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d1')), '2026-10-04 10:00+00'::timestamptz,
           'la fecha es la del teléfono, no la de ahora');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
@@ -404,7 +382,7 @@ select is(pg_temp.error_de($$ insert into public.devolucion (venta_id, productos
 
 -- Lo ajeno no se toca: ni modificar, ni dar de baja, ni borrar.
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is(pg_temp.filas($$ update public.devolucion set dinero_retenido = 1 where id = pg_temp.u('d1') $$), 0,
+select is(pg_temp.filas($$ update public.devolucion set fecha_devolucion = now() where id = pg_temp.u('d1') $$), 0,
           'b2 no modifica la devolución de b1 (la fila ni se ve)');
 select is(pg_temp.filas($$ update public.devolucion set deleted_at = now() where id = pg_temp.u('d1') $$), 0, 'ni la da de baja');
 select is(pg_temp.error_de($$ delete from public.devolucion where id = pg_temp.u('d2') $$), '42501 ',
@@ -421,8 +399,8 @@ select is((select array[colportor_id::text, venta_id::text] from public.devoluci
 
 -- Lo propio: corregir y dar de baja (la anulación de una devolución).
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas($$ update public.devolucion set monto_reembolsado = 100000 where id = pg_temp.u('d1') $$), 1,
-          'b1 corrige el reembolso de la suya');
+select is(pg_temp.filas($$ update public.devolucion set fecha_devolucion = '2026-10-04 11:00+00' where id = pg_temp.u('d1') $$), 1,
+          'b1 corrige la fecha de la suya');
 select is((select sync_version from public.devolucion where id = pg_temp.u('d1')), 1::bigint, 'y sube sync_version (el teléfono ve el cambio)');
 select is(pg_temp.filas($$ update public.devolucion set deleted_at = now() where id = pg_temp.u('d1') $$), 1,
           'b1 da de baja la suya: tombstone');
@@ -436,11 +414,10 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 create temp table r_alta as
   select pg_temp.push1(pg_temp.op('01'), 'insert',
                        pg_temp.dev(pg_temp.u('d3'), pg_temp.u('71'), pg_temp.ren('11', '2', '12', '1'))
-                         || jsonb_build_object('monto_reembolsado', 190000, 'colportor_id', pg_temp.u('b2'))) as r;
+                         || jsonb_build_object('colportor_id', pg_temp.u('b2'))) as r;
 select is((select r ->> 'outcome' from r_alta), 'accepted', 'el push de una devolución se acepta');
 select is((select colportor_id from public.devolucion where id = pg_temp.u('d3')), pg_temp.u('b1'),
           'el dueño es quien sube (JWT): el colportor_id del payload se descarta');
-select is((select monto_reembolsado from public.devolucion where id = pg_temp.u('d3')), 190000, 'el reembolso llegó');
 select is((select productos_devueltos from public.devolucion where id = pg_temp.u('d3')),
           pg_temp.ren('11', '2', '12', '1'), 'y los productos, tal cual');
 
@@ -450,28 +427,28 @@ select is((select pg_temp.push1(pg_temp.op('02'), 'insert', pg_temp.dev(pg_temp.
           'duplicate', 'el mismo id con otro client_op_id (un reintento tras reinstalar): duplicate');
 select pg_temp.actuar_como_servidor();
 select is((select count(*)::int from public.devolucion where id = pg_temp.u('d3')), 1, 'una sola fila');
-select is((select monto_reembolsado from public.devolucion where id = pg_temp.u('d3')), 190000, 'y el reintento no la pisó');
 
--- Sin reembolso: la mayoría.
+-- Un teléfono viejo que todavía manda la plata: el push la descarta y la devolución entra.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is((select pg_temp.push1(pg_temp.op('03'), 'insert', pg_temp.dev(pg_temp.u('d4'), pg_temp.u('71'))) ->> 'outcome'),
-          'accepted', 'una devolución sin reembolso (el campo ni viaja) se acepta');
-select is((select monto_reembolsado from public.devolucion where id = pg_temp.u('d4')), null, 'y queda sin reembolso');
+select is((select pg_temp.push1(pg_temp.op('03'), 'insert',
+                                pg_temp.dev(pg_temp.u('d4'), pg_temp.u('71'))
+                                  || jsonb_build_object('dinero_retenido', 0, 'monto_reembolsado', 1000)) ->> 'outcome'),
+          'accepted', 'una devolución con los campos viejos de la plata se acepta (se descartan)');
 
 -- Modificar: LWW por sync_version.
 select is((select pg_temp.push1(pg_temp.op('04'), 'update',
-                                jsonb_build_object('id', pg_temp.u('d3'), 'dinero_retenido', 50000), 0) ->> 'outcome'),
-          'accepted', 'b1 corrige la retención con la versión que tiene');
-select is((select dinero_retenido from public.devolucion where id = pg_temp.u('d3')), 50000, 'quedó cambiada');
+                                jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', '2026-10-06T12:00:00Z'), 0) ->> 'outcome'),
+          'accepted', 'b1 corrige la fecha con la versión que tiene');
+select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d3')), '2026-10-06 12:00+00'::timestamptz, 'quedó cambiada');
 select is((select pg_temp.push1(pg_temp.op('05'), 'update',
-                                jsonb_build_object('id', pg_temp.u('d3'), 'dinero_retenido', 1), 0) ->> 'outcome'),
+                                jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', '2026-10-07T12:00:00Z'), 0) ->> 'outcome'),
           'conflict', 'con una versión vieja es conflict (gana el servidor)');
-select is((select dinero_retenido from public.devolucion where id = pg_temp.u('d3')), 50000, 'y no se pisó');
+select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d3')), '2026-10-06 12:00+00'::timestamptz, 'y no se pisó');
 
 -- Lo ajeno por push: no existe para quien sube.
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is((select pg_temp.push1(pg_temp.op('06'), 'update',
-                                jsonb_build_object('id', pg_temp.u('d3'), 'dinero_retenido', 1), 1) ->> 'code'),
+                                jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', '2026-10-07T12:00:00Z'), 1) ->> 'code'),
           'FILA_INEXISTENTE', 'b2 intenta modificar la de b1: FILA_INEXISTENTE (para él no existe)');
 select is((select pg_temp.push1(pg_temp.op('07'), 'delete', jsonb_build_object('id', pg_temp.u('d3')), 1) ->> 'outcome'),
           'invalid', 'ni darla de baja');
@@ -481,8 +458,8 @@ select is((select pg_temp.push1(pg_temp.op('09'), 'insert', pg_temp.dev(pg_temp.
           '42501', 'con 42501');
 select pg_temp.actuar_como_servidor();
 select is((select count(*)::int from public.devolucion where id = pg_temp.u('d5')), 0, 'y no escribió nada');
-select is((select array[dinero_retenido::text, deleted_at::text] from public.devolucion where id = pg_temp.u('d3')),
-          array['50000', null], 'la fila de b1 no cambió ni se dio de baja');
+select is((select array[(fecha_devolucion = '2026-10-06 12:00+00')::text, deleted_at::text] from public.devolucion where id = pg_temp.u('d3')),
+          array['true', null], 'la fila de b1 no cambió ni se dio de baja');
 
 -- La baja propia (tombstone), por push.
 select pg_temp.actuar_como(pg_temp.u('b1'));
@@ -506,12 +483,6 @@ select is((select pg_temp.push1(pg_temp.op('14'), 'insert',
 select is((select pg_temp.push1(pg_temp.op('15'), 'insert',
                                 pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71')) - 'fecha_devolucion') ->> 'code'),
           '23502', 'sin fecha: invalid 23502');
-select is((select pg_temp.push1(pg_temp.op('16'), 'insert',
-                                pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71')) || jsonb_build_object('dinero_retenido', -5)) ->> 'code'),
-          '23514', 'una retención negativa: invalid 23514');
-select is((select pg_temp.push1(pg_temp.op('17'), 'insert',
-                                pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71')) || jsonb_build_object('monto_reembolsado', -5)) ->> 'code'),
-          '23514', 'un reembolso negativo: invalid 23514');
 select is((select pg_temp.push1(pg_temp.op('18'), 'insert',
                                 pg_temp.dev(pg_temp.u('d6'), pg_temp.u('71')) || jsonb_build_object('productos_devueltos', '{"a": 1}'::jsonb)) ->> 'outcome'),
           'invalid', 'productos que no son un arreglo: invalid');
