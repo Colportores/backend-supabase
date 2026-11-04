@@ -318,7 +318,7 @@ update public.stock set cantidad_disponible = 10 where usuario_id = pg_temp.u('b
 select is(pg_temp.push(pg_temp.u('b1'), 'ee', 'devolucion', 'insert',
             jsonb_build_object('id', pg_temp.u('d9'), 'venta_id', pg_temp.u('80'),
                                'productos_devueltos', jsonb_build_array(pg_temp.el('11', 3, '90')),
-                               'dinero_retenido', 0, 'fecha_devolucion', '2026-10-05T12:00:00Z')) ->> 'outcome',
+                               'fecha_devolucion', '2026-10-05T12:00:00Z')) ->> 'outcome',
           'accepted', 'el push de la devolución de los 3: accepted');
 select is(pg_temp.stock('b1', '11') || ' · ' || pg_temp.pend('80'), '11 · 0/0', 'vuelve 1 al stock y la pendiente de 2 sale');
 select is(pg_temp.push(pg_temp.u('b1'), 'ef', 'devolucion', 'update',

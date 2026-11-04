@@ -231,7 +231,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.cuentas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          (select array(select k from unnest(array['alquiler_trasladado','alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
+          (select array(select k from unnest(array['alquiler_trasladado','alquiler_a_favor','alquiler_por_decidir','alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
                 'alquiler_ultimo_pago_fecha','apellido','ciudad_id','ciudad_nombre','colportor_id',
                 'de_baja','deuda_total','dinero_depositado','dinero_en_mano','dinero_por_cobrar',
                 'departamento','nombre','ultimo_deposito_fecha','ultimo_deposito_monto']) k

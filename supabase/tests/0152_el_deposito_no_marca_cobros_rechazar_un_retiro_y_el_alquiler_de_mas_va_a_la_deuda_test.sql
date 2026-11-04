@@ -240,7 +240,7 @@ select ok(not (sync.columnas_escribibles('deposito') && array['rechazado_en', 'r
           'el teléfono no escribe el rechazo');
 select has_column('public', 'cuenta_colportor', 'alquiler_trasladado', 'cuenta_colportor.alquiler_trasladado existe');
 select has_column('public', 'cuenta_alquiler', 'alquiler_trasladado', 'cuenta_alquiler.alquiler_trasladado existe');
-select hasnt_column('public', 'cuenta_alquiler', 'alquiler_a_favor', 'y alquiler_a_favor se fue (se renombró)');
+select has_column('public', 'cuenta_alquiler', 'alquiler_a_favor', 'y alquiler_a_favor vuelve con otro sentido: lo que el coordinador dejó a favor (0159)');
 select is((select has_function_privilege(r, f, 'execute')), r = 'authenticated', format('%s: %s', f, r))
   from unnest(array['public.rechazar_retiro(uuid,text)']) f, unnest(array['anon', 'authenticated']) r;
 select is((select has_function_privilege(r, f, 'execute')), false, format('interna %s: %s', f, r))
@@ -423,10 +423,11 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.cuenta('b4'), '-10000|360000|110000', 'la deuda con la casa editora queda a favor (-10000) y registra 110000 trasladados');
 -- Un ticket de alquiler pendiente o rechazado no traslada.
 select is(pg_temp.fila('b4', 'e1'), '360000|0|110000', 'la fila no cuenta lo pendiente (t6, 5000)');
--- La baja: quien se da de baja no debe nada, todo lo pagado se traslada; al reactivarla vuelve a deber y el traslado se deshace.
+-- La baja: quien se da de baja no debe nada y todo lo pagado queda por decidir por el coordinador (0159: ya no se traslada solo);
+-- al reactivarla vuelve a deber y el sobrante se traslada otra vez.
 update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b4');
-select is(pg_temp.fila('b4', 'e1'), '360000|0|360000', 'de baja: debe 0 y se traslada todo lo pagado');
-select is(pg_temp.cuenta('b4'), '-260000|360000|360000', 'la deuda con la casa editora baja los 250000 de más');
+select is(pg_temp.fila('b4', 'e1'), '360000|0|0', 'de baja: debe 0 y no se traslada nada: lo pagado queda por decidir (0159)');
+select is(pg_temp.cuenta('b4'), '100000|360000|0', 'la deuda vuelve a la de antes de los traslados: no se mueve nada hasta que el coordinador decida');
 update public.campania_colportor set deleted_at = null where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b4');
 select is(pg_temp.fila('b4', 'e1'), '360000|0|110000', 'reactivada: vuelve a deber el alquiler (regla R7) y el traslado se deshace');
 select is(pg_temp.cuenta('b4'), '-10000|360000|110000', 'la deuda vuelve a lo de antes: nada desaparece sin explicación');
@@ -448,14 +449,14 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.panel('e1', 'b3'), '0|260000|0|0|10000|250000',
           'el retiro rechazado deja de contar como por validar (0), y lo pagado y lo trasladado no cambian');
 select is(pg_temp.cuenta('b3'), '-110000|360000|10000', 'la cuenta de b3 no cambia por el rechazo');
--- Una campaña que no cobra alquiler: todo lo pagado pasa a la deuda con la casa editora.
+-- Una campaña que no cobra alquiler: lo pagado queda por decidir por el coordinador (0159), no pasa solo a la deuda.
 select pg_temp.actuar_como(pg_temp.u('c2'));
-select is(pg_temp.pt('15'), '1000||0|1000|||||1000', 'e2 no cobra alquiler: la vista previa dice que los 1000 pasan a la casa editora');
-select is(pg_temp.vt('15'), 'VALIDADO|1000|0|1000||1000|f', 'c2 valida el de b2');
+select is(pg_temp.pt('15'), '1000||0|1000|||||0', 'e2 no cobra alquiler: la vista previa dice que no se mueve nada (los 1000 quedan por decidir, 0159)');
+select is(pg_temp.vt('15'), 'VALIDADO|1000|0|1000||0|f', 'c2 valida el de b2');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.fila('b2', 'e2'), '1000|n|1000', 'sin alquiler en la campaña: debe n (no cobra) y se traslada todo');
-select is(pg_temp.cuenta('b2'), '-1000|1000|1000', 'b2: la deuda queda a favor 1000');
-select is(pg_temp.panel('e2', 'b2'), '0|1000|0||1000|n', 'el panel de e2 lo lee (debe vacío: no cobra)');
+select is(pg_temp.fila('b2', 'e2'), '1000|n|0', 'sin alquiler en la campaña: debe n (no cobra) y nada se traslada solo');
+select is(pg_temp.cuenta('b2'), '0|1000|0', 'b2: la deuda no se mueve');
+select is(pg_temp.panel('e2', 'b2'), '0|1000|0||0|n', 'el panel de e2 lo lee (debe vacío: no cobra)');
 
 select * from finish();
 rollback;

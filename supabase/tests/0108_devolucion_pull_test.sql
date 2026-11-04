@@ -63,10 +63,10 @@ returns text language sql as $$
            'client_op_id', p_op, 'entity', 'devolucion', 'op', p_tipo,
            'sync_version', p_version, 'payload', p_payload)))) -> 'results' -> 0 ->> 'outcome';
 $$;
-create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb, p_retenido int default 0)
+create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb)
 returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta, 'productos_devueltos', p_items,
-                            'dinero_retenido', p_retenido, 'fecha_devolucion', '2026-10-05T12:00:00Z');
+                            'fecha_devolucion', '2026-10-05T12:00:00Z');
 $$;
 -- El renglón de la venta de b1 (71) con ese libro; item72() el de la venta de b2 (0136: tres claves).
 create or replace function pg_temp.item(p_producto text, p_cantidad int) returns jsonb language sql as $$
@@ -117,8 +117,8 @@ insert into public.espacio_persona (id, espacio_id, persona_id, created_by) valu
   (pg_temp.u('51'), pg_temp.u('e1'), pg_temp.u('c2'), pg_temp.u('b1')),
   (pg_temp.u('53'), pg_temp.u('e2'), pg_temp.u('c4'), pg_temp.u('b2'));
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by, motivo_monto_manual) values
-  (pg_temp.u('71'), pg_temp.u('51'), 'T-8271', 450000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1'), 'fixture: ítems que no cuadran con el total (0150)'),
-  (pg_temp.u('72'), pg_temp.u('53'), 'T-8272', 260000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'), 'fixture: ítems que no cuadran con el total (0150)');
+  (pg_temp.u('71'), pg_temp.u('51'), 'T-8271', 5100000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1'), 'fixture: ítems que no cuadran con el total (0150)'),
+  (pg_temp.u('72'), pg_temp.u('53'), 'T-8272', 5100000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'), 'fixture: ítems que no cuadran con el total (0150)');
 
 -- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
@@ -139,15 +139,14 @@ alter table public.devolucion disable trigger devolucion_devuelve_stock;
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.push1(pg_temp.op('01'), 'insert',
-                        pg_temp.dev(pg_temp.u('d1'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('11', 2), pg_temp.item('12', 1)))
-                          || jsonb_build_object('monto_reembolsado', 190000)),
-          'accepted', 'b1 sube una devolución de dos productos con un reembolso en el momento');
+                        pg_temp.dev(pg_temp.u('d1'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('11', 2), pg_temp.item('12', 1)))),
+          'accepted', 'b1 sube una devolución de dos productos');
 select is(pg_temp.push1(pg_temp.op('02'), 'insert',
-                        pg_temp.dev(pg_temp.u('d2'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('11', 1)), 50000)),
-          'accepted', 'b1 sube otra con una retención y sin reembolso');
+                        pg_temp.dev(pg_temp.u('d2'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('11', 1)))),
+          'accepted', 'b1 sube otra de un producto');
 select is(pg_temp.push1(pg_temp.op('03'), 'insert',
                         pg_temp.dev(pg_temp.u('d3'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('12', 1)))),
-          'accepted', 'y una tercera sin plata de por medio');
+          'accepted', 'y una tercera');
 select pg_temp.actuar_como(pg_temp.u('b2'));
 select is(pg_temp.push1(pg_temp.op('04'), 'insert',
                         pg_temp.dev(pg_temp.u('d4'), pg_temp.u('72'), jsonb_build_array(pg_temp.item72('11', 1)))),
@@ -160,9 +159,9 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 create temp table pull_b1 as
 select sync.pull(array['devolucion'], '{}'::jsonb, 1000) as d;
 select is(pg_temp.ids(d), array['d1', 'd2', 'd3'], 'b1 baja sus tres devoluciones y nada más (no la d4 de b2)') from pull_b1;
-select is(pg_temp.col(d, 'monto_reembolsado'), array['190000', '-', '-'],
-          'con el reembolso en el momento donde lo hubo, y sin él (null) donde no') from pull_b1;
-select is(pg_temp.col(d, 'dinero_retenido'), array['0', '50000', '0'], 'y la retención') from pull_b1;
+select ok((select not jsonb_path_exists(d, '$.rows.devolucion[*].dinero_retenido')
+                  and not jsonb_path_exists(d, '$.rows.devolucion[*].monto_reembolsado') from pull_b1),
+          'ya no bajan los campos de la plata (0157)');
 select is(pg_temp.col(d, 'venta_id'), array[pg_temp.u('71')::text, pg_temp.u('71')::text, pg_temp.u('71')::text],
           'de la venta que corresponde') from pull_b1;
 select is((select (e -> 'productos_devueltos')
@@ -195,15 +194,18 @@ select is((select sync.pull(array['devolucion'], d -> 'watermark', 1000) -> 'row
 -- ---------------------------------------------------------------------------
 -- 3. Los cambios llegan por el delta
 -- ---------------------------------------------------------------------------
--- b1 corrige la retención de la d2 y da de baja la d3.
-select is(pg_temp.push1(pg_temp.op('05'), 'update', jsonb_build_object('id', pg_temp.u('d2'), 'dinero_retenido', 60000), 0),
-          'accepted', 'b1 corrige la retención de la d2');
+-- b1 corrige la fecha de la d2 y da de baja la d3.
+select is(pg_temp.push1(pg_temp.op('05'), 'update', jsonb_build_object('id', pg_temp.u('d2'), 'fecha_devolucion', '2026-10-08T12:00:00Z'), 0),
+          'accepted', 'b1 corrige la fecha de la d2');
 select is(pg_temp.push1(pg_temp.op('06'), 'delete', jsonb_build_object('id', pg_temp.u('d3')), 0),
           'accepted', 'y da de baja la d3');
 create temp table delta_b1 as
 select sync.pull(array['devolucion'], d -> 'watermark', 1000) as d from pull_b1;
 select is(pg_temp.ids(d), array['d2', 'd3'], 'el delta trae solo lo que cambió: d2 y d3') from delta_b1;
-select is(pg_temp.col(d, 'dinero_retenido'), array['60000', '0'], 'la d2 con la retención corregida') from delta_b1;
+select is((select (e ->> 'fecha_devolucion')::timestamptz
+              from delta_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
+             where e ->> 'id' = pg_temp.u('d2')::text),
+           '2026-10-08T12:00:00Z'::timestamptz, 'la d2 con la fecha corregida') from delta_b1;
 select is((select (e ->> 'deleted_at') is not null
              from delta_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
             where e ->> 'id' = pg_temp.u('d3')::text), true,
