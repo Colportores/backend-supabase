@@ -31,8 +31,8 @@ select is((select array(select indexname::text from pg_indexes
           'y los índices que los respaldan');
 select is((select array(select tgname::text from pg_trigger
                           where tgrelid = 'public.cuenta_colportor'::regclass and not tgisinternal order by tgname)),
-          array['cuenta_colportor_auditoria_insert', 'cuenta_colportor_auditoria_update'],
-          'los dos triggers de auditoría llevan el nombre nuevo');
+          array['cuenta_colportor_auditoria_insert', 'cuenta_colportor_auditoria_update', 'cuenta_colportor_historial_deuda'],
+          'los dos triggers de auditoría llevan el nombre nuevo (y el del historial de la deuda, 0168)');
 select is((select array(select policyname::text from pg_policies
                          where schemaname = 'public' and tablename = 'cuenta_colportor' order by policyname)),
           array['cuenta_colportor_select'],
