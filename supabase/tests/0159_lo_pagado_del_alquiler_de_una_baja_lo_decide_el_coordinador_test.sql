@@ -2,8 +2,9 @@
 --   1. La forma: alquiler_decision, las columnas nuevas de cuenta_alquiler, privilegios y RLS.
 --   2. Lo pagado por quien está de baja, o en una campaña sin alquiler, queda POR DECIDIR y no mueve la deuda; el
 --      sobrante de una inscripción viva sigue pasando solo a la deuda («Alquiler fav»).
---   3. decidir_alquiler_pagado(): permisos, errores, decidir por monto y acumulando, trasladar baja la deuda, dejar a favor
---      no la toca, el reintento sin monto no hace nada, auditoría, concurrencia de dos decisiones seguidas.
+--   3. decidir_alquiler_pagado(): permisos, errores, una decisión por todo lo pagado (0167: a cuenta baja la deuda, se lo
+--      queda el coordinador no la toca), el reintento no hace nada, un pago nuevo vuelve a dejar algo por decidir,
+--      auditoría. (Devolver, con sus pagos anulados, se prueba en el test de la 0167.)
 --   4. Reactivar a la persona deshace lo decidido (R7) y darla de baja otra vez decide de nuevo; la vista previa de validar.
 -- Va en una transacción.
 begin;
@@ -50,11 +51,11 @@ exception when others then
   return sqlerrm;
 end $$;
 -- Lo que devuelve la RPC, en una línea: «decision|decidido|por_decidir|trasladado|a_favor|ya_estaba».
-create or replace function pg_temp.dec(p_us text, p_camp text, p_decision text, p_monto bigint default null)
+create or replace function pg_temp.dec(p_us text, p_camp text, p_decision text)
 returns text language plpgsql as $$
 declare r record;
 begin
-  select * into r from public.decidir_alquiler_pagado(pg_temp.u(p_us), pg_temp.u(p_camp), p_decision, p_monto);
+  select * into r from public.decidir_alquiler_pagado(pg_temp.u(p_us), pg_temp.u(p_camp), p_decision);
   return format('%s|%s|%s|%s|%s|%s', r.decision, r.monto_decidido, r.por_decidir, r.trasladado, r.a_favor, r.ya_estaba);
 end $$;
 -- La fila guardada: «pagado|debe|trasladado|a_favor|por_decidir» (SECURITY DEFINER: sin RLS).
@@ -157,15 +158,20 @@ select is((select count(*)::int from sync.entidad where tabla = 'public.alquiler
 select is(pg_temp.error_de($$ insert into public.alquiler_decision (usuario_id, campania_id, decision, monto)
                               values (pg_temp.u('b2'), pg_temp.u('e1'), 'OTRA', 1) $$), '23514', 'una decisión desconocida: CHECK');
 select is(pg_temp.error_de($$ insert into public.alquiler_decision (usuario_id, campania_id, decision, monto)
-                              values (pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR', 0) $$), '23514', 'monto 0: CHECK');
+                              values (pg_temp.u('b2'), pg_temp.u('e1'), 'SE_LO_QUEDA_EL_COORDINADOR', 0) $$), '23514', 'monto 0: CHECK');
+select is(pg_temp.error_de($$ insert into public.alquiler_decision (usuario_id, campania_id, decision, monto)
+                              values (pg_temp.u('b2'), pg_temp.u('e1'), 'TRASLADAR_A_LA_DEUDA', 1) $$), '23514',
+          'los nombres de antes de la 0167 ya no valen: CHECK');
 select is(pg_temp.error_de($$ insert into public.cuenta_alquiler (usuario_id, campania_id, alquiler_por_decidir)
                               values (pg_temp.u('b4'), pg_temp.u('e2'), -1) $$), '23514', 'por decidir negativo: CHECK');
-select is((select has_function_privilege(r, 'public.decidir_alquiler_pagado(uuid,uuid,text,bigint)', 'execute')),
+select is((select has_function_privilege(r, 'public.decidir_alquiler_pagado(uuid,uuid,text)', 'execute')),
           r = 'authenticated', format('decidir_alquiler_pagado: %s', r))
   from unnest(array['anon', 'authenticated', 'service_role']) r;
 select is((select p.prosecdef and p.provolatile = 'v' from pg_proc p
-            where p.oid = 'public.decidir_alquiler_pagado(uuid,uuid,text,bigint)'::regprocedure),
+            where p.oid = 'public.decidir_alquiler_pagado(uuid,uuid,text)'::regprocedure),
           true, 'es SECURITY DEFINER y VOLATILE');
+select hasnt_function('public', 'decidir_alquiler_pagado', array['uuid', 'uuid', 'text', 'bigint'],
+                      'ya no recibe monto: se decide todo lo pagado (0167)');
 
 -- ---------------------------------------------------------------------------
 -- 2. Qué queda por decidir y qué sigue pasando solo
@@ -200,52 +206,47 @@ select is(pg_temp.fila('b2', 'e1'), '40000|0|0|0|40000', 'lo pendiente no cuenta
 -- ---------------------------------------------------------------------------
 -- Permisos.
 select pg_temp.actuar_como_anon();
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           '42501', 'anon: sin permiso');
 select pg_temp.actuar_como(pg_temp.u('b4'));
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           '42501', 'una colportora no decide');
 select pg_temp.actuar_como(pg_temp.u('c2'));
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           'AQ001', 'el coordinador de otra campaña: AQ001 (no revela si existe)');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b3'), pg_temp.u('e2'), 'DEJAR_A_FAVOR', 1) $$),
-          'ok', 'pero sí el de la suya (e2)');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b3'), pg_temp.u('e2'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b3'), pg_temp.u('e2'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           'AQ001', 'c1 no decide en la campaña de c2');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('99'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('99'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           'AQ001', 'una campaña que no existe: AQ001');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('99'), pg_temp.u('e1'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('99'), pg_temp.u('e1'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           'AQ001', 'una persona que no está en la campaña: AQ001');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('c1'), pg_temp.u('e1'), 'DEJAR_A_FAVOR') $$),
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('c1'), pg_temp.u('e1'), 'SE_LO_QUEDA_EL_COORDINADOR') $$),
           '42501', 'c1 no decide lo de su propio alquiler');
 -- Errores de datos.
 select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'REGALARLO') $$),
           'AQ002', 'una decisión desconocida: AQ002');
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'TRASLADAR_A_LA_DEUDA') $$),
+          'AQ002', 'el nombre de antes de la 0167 tampoco: AQ002');
 select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), null) $$),
           'AQ002', 'sin decisión: AQ002');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR', 0) $$),
-          'AQ003', 'monto 0: AQ003');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR', -5) $$),
-          'AQ003', 'monto negativo: AQ003');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR', 40001) $$),
-          'AQ003', 'más de lo que queda: AQ003');
-select ok(pg_temp.mensaje_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR', 40001) $$)
-          like 'El monto tiene que ser mayor que cero%', 'con un aviso que dice qué hacer');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b1'), pg_temp.u('e1'), 'TRASLADAR_A_LA_DEUDA') $$),
+select ok(pg_temp.mensaje_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'REGALARLO') $$)
+          like 'Elegí qué hacer con lo pagado%', 'con un aviso que dice qué hacer');
+select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b1'), pg_temp.u('e1'), 'A_CUENTA_PROXIMO_DEPOSITO') $$),
           'AQ004', 'la inscripción viva en una campaña que cobra no se decide: AQ004');
 select is(pg_temp.n_dec('b2', 'e1'), 0::bigint, 'ningún error dejó una decisión');
 select is(pg_temp.n_audit('b2'), 0::bigint, 'ni un evento');
+select is((select count(*)::int from public.deposito where anulado_at is not null), 0, 'ni anuló un pago');
 
--- Trasladar una parte baja la deuda.
-select is(pg_temp.dec('b2', 'e1', 'TRASLADAR_A_LA_DEUDA', 15000), 'TRASLADAR_A_LA_DEUDA|15000|25000|15000|0|f',
-          'c1 traslada 15000 de los 40000 de b2');
+-- A cuenta del próximo depósito: TODO lo pagado baja la deuda.
+select is(pg_temp.dec('b2', 'e1', 'A_CUENTA_PROXIMO_DEPOSITO'), 'A_CUENTA_PROXIMO_DEPOSITO|40000|0|40000|0|f',
+          'c1 deja a cuenta los 40000 de b2: todo de una vez');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.deuda('b2'), '485000|15000', 'la deuda de b2 baja 15000 y se lee trasladado');
-select is(pg_temp.fila('b2', 'e1'), '40000|0|15000|0|25000', 'la fila guardada queda al día: quedan 25000 por decidir');
+select is(pg_temp.deuda('b2'), '460000|40000', 'la deuda de b2 baja 40000 y se lee trasladado');
+select is(pg_temp.fila('b2', 'e1'), '40000|0|40000|0|0', 'la fila guardada queda al día: nada por decidir');
 select is(pg_temp.n_audit('b2'), 1::bigint, 'queda un evento en audit_log');
 select is((select a.metadata from auditoria.audit_log a where a.event_type = 'alquiler_pagado_decidido' and a.target_user_id = pg_temp.u('b2')),
-          jsonb_build_object('campania_id', pg_temp.u('e1'), 'decision', 'TRASLADAR_A_LA_DEUDA', 'monto', 15000,
+          jsonb_build_object('campania_id', pg_temp.u('e1'), 'decision', 'A_CUENTA_PROXIMO_DEPOSITO', 'monto', 40000,
                              'por_decidir_antes', 40000),
           'con la campaña, la decisión y los montos, sin texto libre');
 select is((select a.actor_user_id from auditoria.audit_log a where a.event_type = 'alquiler_pagado_decidido' and a.target_user_id = pg_temp.u('b2')),
@@ -256,65 +257,70 @@ select is((select a.tabla || '/' || (a.fila_id = (select ca.id from public.cuent
           'cuenta_alquiler/true', 'sobre la cuenta de alquiler de la persona');
 select is((select decidido_por from public.alquiler_decision where usuario_id = pg_temp.u('b2')), pg_temp.u('c1'),
           'y el registro dice quién decidió');
+select is(pg_temp.panel('e1', 'b2'), '0|40000|0|0', 'el panel lee: trasladado 40000 y nada por decidir');
 
--- Dejar a favor otra parte no toca la deuda.
-select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.dec('b2', 'e1', 'DEJAR_A_FAVOR', 10000), 'DEJAR_A_FAVOR|10000|15000|15000|10000|f', 'deja 10000 a favor');
-select pg_temp.actuar_como_servidor();
-select is(pg_temp.deuda('b2'), '485000|15000', 'la deuda no se movió');
-select is(pg_temp.fila('b2', 'e1'), '40000|0|15000|10000|15000', 'quedan 15000 por decidir');
-select is(pg_temp.panel('e1', 'b2'), '0|15000|10000|15000', 'el panel lee las tres cifras');
-
--- Sin monto: todo lo que queda. Un ADMIN también puede.
+-- El reintento (un doble toque, o lo decide otra persona un instante después): no hace nada, con ninguna decisión.
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is(pg_temp.dec('b2', 'e1', 'DEJAR_A_FAVOR'), 'DEJAR_A_FAVOR|15000|0|15000|25000|f', 'el ADMIN decide el resto: todo a favor');
--- El reintento (un doble toque): no hace nada.
-select is(pg_temp.dec('b2', 'e1', 'DEJAR_A_FAVOR'), 'DEJAR_A_FAVOR|0|0|15000|25000|t', 'el segundo toque no cambia nada: ya_estaba');
-select is(pg_temp.dec('b2', 'e1', 'TRASLADAR_A_LA_DEUDA'), 'TRASLADAR_A_LA_DEUDA|0|0|15000|25000|t',
-          'ni con la otra decisión: ya no queda nada por decidir');
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEJAR_A_FAVOR', 1) $$),
-          'AQ003', 'con un monto explícito, ya no hay de dónde: AQ003');
+select is(pg_temp.dec('b2', 'e1', 'A_CUENTA_PROXIMO_DEPOSITO'), 'A_CUENTA_PROXIMO_DEPOSITO|0|0|40000|0|t',
+          'el segundo toque no cambia nada: ya_estaba');
+select is(pg_temp.dec('b2', 'e1', 'SE_LO_QUEDA_EL_COORDINADOR'), 'SE_LO_QUEDA_EL_COORDINADOR|0|0|40000|0|t',
+          'ni con otra decisión: ya no queda nada por decidir (no se reparte en partes)');
+select is(pg_temp.dec('b2', 'e1', 'DEVOLVER_AL_COLPORTOR'), 'DEVOLVER_AL_COLPORTOR|0|0|40000|0|t', 'ni devolviendo');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.n_dec('b2', 'e1'), 3::bigint, 'tres decisiones registradas, no cinco');
-select is(pg_temp.n_audit('b2'), 3::bigint, 'y tres eventos');
-select is(pg_temp.deuda('b2'), '485000|15000', 'la deuda sigue en 485000');
-select is(pg_temp.fila('b2', 'e1'), '40000|0|15000|25000|0', 'todo decidido: 15000 a la deuda y 25000 a favor');
+select is(pg_temp.n_dec('b2', 'e1'), 1::bigint, 'una sola decisión registrada, no cuatro');
+select is(pg_temp.n_audit('b2'), 1::bigint, 'y un solo evento');
+select is(pg_temp.deuda('b2'), '460000|40000', 'la deuda no se movió otra vez');
 
--- Campaña sin alquiler: se traslada todo lo pagado.
-select pg_temp.actuar_como(pg_temp.u('c2'));
-select is(pg_temp.dec('b3', 'e2', 'TRASLADAR_A_LA_DEUDA'), 'TRASLADAR_A_LA_DEUDA|9999|0|9999|1|f',
-          'c2 traslada lo que queda de lo de b3 (9999: 1 ya se dejó a favor arriba)');
+-- Un pago nuevo (validado después) vuelve a dejar algo por decidir; el ADMIN se lo queda.
+insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino, concepto, campania_id, validado_en, validado_por) values
+  (pg_temp.u('27'), pg_temp.u('b2'), 10000, now(), null, 'RETIRO_COORDINADOR', 'ALQUILER', pg_temp.u('e1'), now(), pg_temp.u('c1'));
+select is(pg_temp.fila('b2', 'e1'), '50000|0|40000|0|10000', 'el pago nuevo de 10000 queda por decidir');
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is(pg_temp.dec('b2', 'e1', 'SE_LO_QUEDA_EL_COORDINADOR'), 'SE_LO_QUEDA_EL_COORDINADOR|10000|0|40000|10000|f',
+          'el ADMIN decide el resto: se lo queda el coordinador');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.deuda('b3'), '490001|9999', 'la deuda de b3 baja 9999');
+select is(pg_temp.deuda('b2'), '460000|40000', 'la deuda no se movió');
+select is(pg_temp.fila('b2', 'e1'), '50000|0|40000|10000|0', 'todo decidido: 40000 a la deuda y 10000 que se queda el coordinador');
+select is(pg_temp.panel('e1', 'b2'), '0|40000|10000|0', 'el panel lee las tres cifras');
+select is(pg_temp.n_dec('b2', 'e1'), 2::bigint, 'dos decisiones registradas');
+select is(pg_temp.n_audit('b2'), 2::bigint, 'y dos eventos');
+
+-- Campaña sin alquiler: se queda con todo lo pagado.
+select pg_temp.actuar_como(pg_temp.u('c2'));
+select is(pg_temp.dec('b3', 'e2', 'SE_LO_QUEDA_EL_COORDINADOR'), 'SE_LO_QUEDA_EL_COORDINADOR|10000|0|0|10000|f',
+          'c2 decide lo de b3 (su campaña, sin alquiler)');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.deuda('b3'), '500000|0', 'la deuda de b3 no se mueve');
+select is(pg_temp.fila('b3', 'e2'), '10000|n|0|10000|0', 'y la fila lo dice');
 
 -- Una persona ve lo que se decidió con su plata y la ajena no.
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is((select count(*)::int from public.alquiler_decision), 3, 'b2 lee sus tres decisiones');
+select is((select count(*)::int from public.alquiler_decision), 2, 'b2 lee sus dos decisiones');
 select pg_temp.actuar_como(pg_temp.u('b4'));
 select is((select count(*)::int from public.alquiler_decision), 0, 'b4 no lee las de otros');
 select pg_temp.actuar_como(pg_temp.u('c2'));
-select is((select count(*)::int from public.alquiler_decision), 2, 'c2 lee las de su campaña');
+select is((select count(*)::int from public.alquiler_decision), 1, 'c2 lee las de su campaña');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is((select count(*)::int from public.alquiler_decision), 3, 'c1 las de la suya');
+select is((select count(*)::int from public.alquiler_decision), 2, 'c1 las de la suya');
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
 -- 4. Reactivar y volver a dar de baja
 -- ---------------------------------------------------------------------------
 update public.campania_colportor set deleted_at = null where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
-select is(pg_temp.fila('b2', 'e1'), '40000|210000|0|0|0', 'reactivada: vuelve a deber 210000, nada trasladado ni a favor ni por decidir');
+select is(pg_temp.fila('b2', 'e1'), '50000|200000|0|0|0', 'reactivada: vuelve a deber 200000, nada trasladado ni a favor ni por decidir');
 select is(pg_temp.deuda('b2'), '500000|0', 'la deuda vuelve a la de antes: lo trasladado se devuelve (R7)');
 select is(pg_temp.n_dec('b2', 'e1', true), 0::bigint, 'las decisiones de antes se dieron de baja');
-select is(pg_temp.n_dec('b2', 'e1'), 3::bigint, 'pero siguen en el registro');
-select is(pg_temp.n_audit('b2'), 3::bigint, 'y en audit_log');
+select is(pg_temp.n_dec('b2', 'e1'), 2::bigint, 'pero siguen en el registro');
+select is(pg_temp.n_audit('b2'), 2::bigint, 'y en audit_log');
 update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
-select is(pg_temp.fila('b2', 'e1'), '40000|0|0|0|40000', 'si vuelve a darse de baja, lo pagado queda por decidir otra vez, desde cero');
+select is(pg_temp.fila('b2', 'e1'), '50000|0|0|0|50000', 'si vuelve a darse de baja, lo pagado queda por decidir otra vez, desde cero');
 select is(pg_temp.deuda('b2'), '500000|0', 'sin mover la deuda');
 
 -- Una campaña que pasa a cobrar alquiler: lo que b3 pagó cubre el alquiler y lo decidido deja de valer.
 update public.campania set alquiler_monto = 8000 where id = pg_temp.u('e2');
 select is(pg_temp.fila('b3', 'e2'), '10000|0|2000|0|0', 'e2 pasa a cobrar 8000: b3 pagó 10000, sobran 2000 que pasan solos a la deuda');
-select is(pg_temp.deuda('b3'), '498000|2000', 'y los 9999 de la decisión anterior se devuelven');
+select is(pg_temp.deuda('b3'), '498000|2000', 'y lo que se había quedado el coordinador deja de valer');
 select is(pg_temp.n_dec('b3', 'e2', true), 0::bigint, 'la decisión de b3 se dio de baja');
 
 -- Un depósito validado no se edita ni se da de baja (DP001): lo pagado nunca baja, así que lo decidido no puede pasarse.

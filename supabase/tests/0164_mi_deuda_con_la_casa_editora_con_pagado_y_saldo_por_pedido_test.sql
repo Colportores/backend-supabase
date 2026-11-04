@@ -197,8 +197,8 @@ select is((select has_function_privilege(r, 'public.mi_deuda_con_la_casa_editora
           format('EXECUTE de %s', r))
   from unnest(array['anon', 'authenticated', 'service_role']) r;
 select is((select array_agg(k order by k collate "C") from jsonb_object_keys(pg_temp.mi('b1')) k),
-          array['depositos_validados', 'deuda_total', 'pedidos', 'suma_de_saldos'],
-          'la respuesta tiene exactamente las cuatro claves del contrato');
+          array['depositos_validados', 'deuda_hace_7_dias', 'deuda_total', 'pedidos', 'suma_de_saldos', 'tarjetas_validadas'],
+          'la respuesta tiene exactamente las seis claves del contrato (0165 suma tarjetas_validadas, 0168 deuda_hace_7_dias)');
 select is((select array_agg(k order by k collate "C") from jsonb_object_keys(pg_temp.mi('b1') -> 'pedidos' -> 0) k),
           array['estado', 'fecha_pedido', 'lineas', 'monto', 'numero', 'pagado', 'pedido_id', 'saldo'],
           'cada pedido tiene exactamente sus ocho claves (ni clientes ni cobros)');
