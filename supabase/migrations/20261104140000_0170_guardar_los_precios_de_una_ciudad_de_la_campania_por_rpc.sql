@@ -63,11 +63,13 @@
 -- del producto o colección en esa ciudad (a lo sumo uno: las restricciones de no solapamiento de la
 -- 0027 lo garantizan):
 --
---   · precio con valor, SIN tramo vigente  -> CREADA: tramo nuevo desde hoy, sin fin.
+--   · precio con valor, SIN tramo vigente  -> CREADA: tramo nuevo desde hoy, sin fin (o hasta el día antes
+--     del primer tramo futuro, si hay).
 --   · precio con valor, igual al vigente   -> SIN_CAMBIO: no se escribe ni se audita nada.
 --   · precio con valor, distinto, y el tramo vigente empezó ANTES de hoy -> CAMBIADA: el vigente se
---     cierra ayer (valido_hasta = hoy - 1) y entra un tramo nuevo desde hoy, sin fin. La historia
---     queda en las filas.
+--     cierra ayer (valido_hasta = hoy - 1) y entra un tramo nuevo desde hoy que termina donde terminaba
+--     el vigente o, si es antes, el día antes del primer tramo futuro (sin fin si no hay ninguno de los
+--     dos). La historia queda en las filas.
 --   · precio con valor, distinto, y el tramo vigente empezó HOY -> CAMBIADA: se corrige el importe de
 --     esa fila (cerrarla ayer dejaría valido_hasta < valido_desde). Hoy hubo un solo precio; el
 --     anterior queda en audit_log.
