@@ -329,6 +329,8 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_contexto text;
 begin
   -- Lo que escribe el recalculo de la columna no vuelve a la tabla.
   if current_setting('colportores.acompaniante_espejo', true) = 'on' then
@@ -336,6 +338,22 @@ begin
   end if;
 
   perform set_config('colportores.acompaniante_columna', 'on', true);
+
+  -- Lo sube el motor de sync: el teléfono manda la jornada entera, con la columna que tenía en su última bajada (puede
+  -- estar vieja: el servidor la recalcula sin subir la versión). Esa columna no es un cambio de acompañante: la lista
+  -- (jornada_acompaniante) es la que manda. Solo se toma como la primera marca del teléfono de antes, y únicamente si la
+  -- jornada nunca tuvo filas; con filas (vigentes o de baja) el valor se ignora y la columna vuelve al primero de la lista.
+  get diagnostics v_contexto = pg_context;
+  if position('sync.aplicar_job_interno' in v_contexto) > 0 then
+    if new.acompaniante_id is not null
+       and not exists (select 1 from public.jornada_acompaniante a where a.jornada_id = new.id) then
+      insert into public.jornada_acompaniante (jornada_id, colportor_id, acompaniante_id, cargado_por, created_at)
+      values (new.id, new.colportor_id, new.acompaniante_id, new.acompaniamiento_cargado_por, clock_timestamp());
+    end if;
+    perform set_config('colportores.acompaniante_columna', 'off', true);
+    perform public.refrescar_acompaniante_de_la_jornada(new.id, true);
+    return null;
+  end if;
 
   if tg_op = 'UPDATE' and old.acompaniante_id is not null and old.acompaniante_id is distinct from new.acompaniante_id then
     update public.jornada_acompaniante a
@@ -360,4 +378,6 @@ $$;
 comment on function public.tg_jornada_acompaniamiento_detalle() is
   'AFTER INSERT o UPDATE de jornada.acompaniante_id (0176; antes 0043/0100): el teléfono de antes marca un solo '
   'acompañante en la jornada y este trigger lo anota en jornada_acompaniante (con su origen COLPORTOR); si cambia o '
-  'queda en null, da de baja al de antes. Después recalcula la columna desde la tabla.';
+  'queda en null, da de baja al de antes. Después recalcula la columna desde la tabla. Si lo escribe el motor de sync '
+  '(la jornada entera, con la columna de la última bajada del teléfono, que puede estar vieja), la lista manda: solo '
+  'anota la primera marca de una jornada que nunca tuvo filas y nunca da de baja ni revive a nadie.';

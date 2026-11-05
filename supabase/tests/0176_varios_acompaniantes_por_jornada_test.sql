@@ -9,6 +9,7 @@
 --   4. El teléfono de antes: sube jornada.acompaniante_id y queda anotado en la tabla; si lo cambia, el de antes se da de baja.
 --   5. La baja de un acompañante recalcula la columna y se lleva su origen y su nota.
 --   6. Lo que ve cada uno: solo las filas de sus jornadas.
+--   7. El teléfono sube la jornada entera: su columna vieja no da de baja ni revive a nadie (revisión de #255).
 
 begin;
 select * from no_plan();
@@ -270,6 +271,81 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 update public.jornada set total_visitas = coalesce(total_visitas, 0) + 1 where id = pg_temp.u('a1');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.vigentes('a1'), 'b2', 'tocar otra columna de la jornada no cambia sus acompañantes');
+
+-- ---------------------------------------------------------------------------
+-- 6. El teléfono manda la jornada entera: una columna vieja no pisa la lista (revisión de #255, ronda 1)
+-- ---------------------------------------------------------------------------
+insert into public.jornada (id, colportor_id, inicio, fin)
+select pg_temp.u(x.id), pg_temp.u('b1'),
+       (public.hoy_montevideo() - x.dias + time '09:00') at time zone 'America/Montevideo',
+       (public.hoy_montevideo() - x.dias + time '09:00') at time zone 'America/Montevideo' + interval '2 hours'
+  from (values ('a4', 8), ('a5', 9)) x(id, dias);
+-- El push de la jornada entera, como lo arma la app: con la columna que el teléfono tiene (p_acomp).
+create or replace function pg_temp.job_jornada(p_op text, p_jornada text, p_acomp uuid)
+returns jsonb language sql security definer as $$
+  select jsonb_build_object('client_op_id', pg_temp.u(p_op), 'entity', 'jornada', 'op', 'update',
+                            'sync_version', j.sync_version,
+                            'payload', jsonb_build_object('id', j.id, 'inicio', j.inicio, 'fin', j.fin,
+                                                          'acompaniante_id', p_acomp, 'created_at', now()))
+    from public.jornada j where j.id = pg_temp.u(p_jornada)
+$$;
+grant execute on function pg_temp.job_jornada(text, text, uuid) to authenticated;
+
+-- Escenario 1: la dueña sube b2 y b3 y después cierra la jornada con su columna local todavía en null.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table r6 as
+  select pg_temp.push(jsonb_build_array(pg_temp.job_acomp('b1', 'a4', pg_temp.u('b2')),
+                                        pg_temp.job_acomp('b2', 'a4', pg_temp.u('b3')))) as r;
+grant select on r6 to authenticated;
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.vigentes('a4'), 'b2,b3', 'a4 tiene dos acompañantes por la tabla');
+select is(pg_temp.columna('a4'), 'b2|null', 'y la columna es el primero');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table r7 as select pg_temp.push(jsonb_build_array(pg_temp.job_jornada('b3', 'a4', null))) as r;
+grant select on r7 to authenticated;
+select is((select pg_temp.res(r) from r7), 'accepted/-', 'el push de la jornada con la columna vieja (null) se acepta');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.vigentes('a4'), 'b2,b3', 'y no da de baja a nadie: sigue b2,b3');
+select is(pg_temp.columna('a4'), 'b2|null', 'la columna vuelve al primero de la lista');
+select is(pg_temp.detalle('a4'), 'b2=COLPORTOR/-,b3=COLPORTOR/-', 'con el origen y la nota de cada uno');
+select is((select count(*) from public.jornada_acompaniante where jornada_id = pg_temp.u('a4') and deleted_at is not null), 0::bigint,
+          'ninguna fila de baja');
+
+-- Escenario 2: sube b2 y b3, quita b2 (un delete de su fila) y después sube la jornada con la columna que bajó antes (b2).
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table r8 as
+  select pg_temp.push(jsonb_build_array(pg_temp.job_acomp('b4', 'a5', pg_temp.u('b2')),
+                                        pg_temp.job_acomp('b5', 'a5', pg_temp.u('b3')))) as r;
+grant select on r8 to authenticated;
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.vigentes('a5'), 'b2,b3', 'a5 tiene b2,b3');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table r9 as
+  select pg_temp.push(jsonb_build_array(jsonb_build_object(
+    'client_op_id', pg_temp.u('b6'), 'entity', 'jornada_acompaniante', 'op', 'delete', 'sync_version', 0,
+    'payload', jsonb_build_object('id', pg_temp.u('b4'))))) as r;
+grant select on r9 to authenticated;
+select is((select pg_temp.res(r) from r9), 'accepted/-', 'la dueña quita a b2 (delete de su fila)');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.vigentes('a5'), 'b3', 'queda b3');
+select is(pg_temp.columna('a5'), 'b3|null', 'y la columna pasa a b3');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table r10 as select pg_temp.push(jsonb_build_array(pg_temp.job_jornada('b7', 'a5', pg_temp.u('b2')))) as r;
+grant select on r10 to authenticated;
+select is((select pg_temp.res(r) from r10), 'accepted/-', 'el push de la jornada con la columna que bajó antes (b2) se acepta');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.vigentes('a5'), 'b3', 'y no revive a b2 ni da de baja a b3: sigue b3');
+select is(pg_temp.columna('a5'), 'b3|null', 'la columna sigue en b3');
+select is(pg_temp.detalle('a5'), 'b3=COLPORTOR/-', 'y el origen de b2 sigue fuera');
+
+-- La primera marca del teléfono de antes por el push (una jornada que nunca tuvo filas) sigue anotándose.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table r11 as select pg_temp.push(jsonb_build_array(pg_temp.job_jornada('b8', 'a2', pg_temp.u('b3')))) as r;
+grant select on r11 to authenticated;
+select is((select pg_temp.res(r) from r11), 'accepted/-', 'el teléfono de antes marca a b3 en una jornada sin filas');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.vigentes('a2'), 'b3', 'la primera marca queda anotada en la tabla');
+select is(pg_temp.detalle('a2'), 'b3=COLPORTOR/-', 'con su origen COLPORTOR');
 
 select * from finish();
 rollback;
