@@ -142,7 +142,8 @@ select has_trigger('public', 'parametro_global', 'parametro_global_auditoria_upd
 select is((select obj_description('public.parametro_global'::regclass, 'pg_class')) is not null, true, 'la tabla está documentada');
 
 -- La fila de referencia.
-select is((select count(*)::int from public.parametro_global), 1, 'hay una sola fila: la de referencia');
+select is((select count(*)::int from public.parametro_global where clave = 'dias_antiguedad_precios'), 1, 'hay una sola fila de días de antigüedad: la de referencia');
+select is((select count(*)::int from public.parametro_global), 2, 'y la otra clave es la versión vigente de los Términos (0182)');
 select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios'), 15,
           'los días de antigüedad de los precios valen 15 por defecto');
 select is((select deleted_at from public.parametro_global where clave = 'dias_antiguedad_precios'), null,
@@ -178,13 +179,13 @@ select is((select count(*)::int from public.parametro_global where clave = 'dias
 
 -- Los tombstones los ve quien lee (el teléfono necesita la baja para borrar su réplica).
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is((select count(*)::int from public.parametro_global), 2, 'un colportor ve la viva y el tombstone');
+select is((select count(*)::int from public.parametro_global where clave = 'dias_antiguedad_precios'), 2, 'un colportor ve la viva y el tombstone');
 select pg_temp.actuar_como_servidor();
 
 -- Volver a la fila de referencia: se borra la nueva (el servidor puede) y se revive la original.
 delete from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null;
 update public.parametro_global set deleted_at = null, valor = 15 where clave = 'dias_antiguedad_precios';
-select is((select valor from public.parametro_global where deleted_at is null), 15, 'de vuelta en 15');
+select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null), 15, 'de vuelta en 15');
 
 -- ===============================================================================
 -- 4. Quién lee y quién escribe
@@ -211,11 +212,11 @@ select is((select cmd collate "C" from pg_policies where schemaname = 'public' a
 
 -- Lee todo autenticado, cualquiera sea su rol.
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is((select valor from public.parametro_global where deleted_at is null), 15, 'el ADMIN lo lee');
+select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null), 15, 'el ADMIN lo lee');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is((select valor from public.parametro_global where deleted_at is null), 15, 'un coordinador lo lee');
+select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null), 15, 'un coordinador lo lee');
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is((select valor from public.parametro_global where deleted_at is null), 15,
+select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null), 15,
           'un colportor lo lee, sin estar inscripto en ninguna campaña');
 
 -- Ningún cliente escribe: ni el ADMIN (permission denied, 42501).
@@ -236,15 +237,15 @@ select throws_ok($$ insert into public.parametro_global (clave, valor) values ('
 select pg_temp.actuar_como_rol('anon');
 select throws_ok($$ select count(*) from public.parametro_global $$, '42501', null, 'anon ni siquiera lo lee');
 select pg_temp.actuar_como_servidor();
-select is((select valor from public.parametro_global where deleted_at is null), 15, 'y el valor sigue en 15');
+select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null), 15, 'y el valor sigue en 15');
 
 -- El servidor sí lo cambia, y el cambio sube la versión de sync (el delta lo lleva).
 select pg_temp.actuar_como_rol('service_role');
 select lives_ok($$ update public.parametro_global set valor = 20 where clave = 'dias_antiguedad_precios' $$,
                 'service_role cambia los días');
 select pg_temp.actuar_como_servidor();
-select is((select valor from public.parametro_global where deleted_at is null), 20, 'queda en 20');
-select is((select sync_version from public.parametro_global where deleted_at is null) >= 1, true,
+select is((select valor from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null), 20, 'queda en 20');
+select is((select sync_version from public.parametro_global where clave = 'dias_antiguedad_precios' and deleted_at is null) >= 1, true,
           'sync_version subió: el teléfono lo baja en el pull siguiente');
 
 -- ===============================================================================

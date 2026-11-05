@@ -243,7 +243,7 @@ select pg_temp.actuar_como_service_role();
 truncate public.parametro_global;
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.reg('parametro_global_vaciado', '{}'),
-          'parametro_global_vaciado|-|-|' || jsonb_build_object('filas', 1, 'rol', 'service_role')::text,
+          'parametro_global_vaciado|-|-|' || jsonb_build_object('filas', 2, 'rol', 'service_role')::text,
           'el TRUNCATE queda con las filas que había y el rol');
 select is((select tabla from auditoria.audit_log where event_type = 'parametro_global_vaciado'), 'parametro_global',
           'y nombra la tabla');
