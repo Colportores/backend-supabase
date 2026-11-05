@@ -85,7 +85,8 @@ select is(has_table_privilege('authenticated', 'public.cuenta_deuda_historial', 
           or has_table_privilege('authenticated', 'public.cuenta_deuda_historial', 'delete'), false,
           'authenticated no la escribe');
 select is(has_table_privilege('anon', 'public.cuenta_deuda_historial', 'select'), false, 'anon no la lee');
-select is((select count(*)::int from sync.entidad where tabla = 'public.cuenta_deuda_historial'::regclass), 0, 'no viaja por el sync');
+select is((select count(*)::int from sync.entidad where tabla = 'public.cuenta_deuda_historial'::regclass and not permite_push), 1,
+          'viaja por el sync desde la 0179, de solo bajada (el teléfono no la escribe)');
 select has_trigger('public', 'cuenta_colportor', 'cuenta_colportor_historial_deuda', 'cuenta_colportor tiene el trigger del historial');
 select is((select p.prosecdef from pg_proc p where p.oid = 'public.tg_cuenta_colportor_historial_deuda()'::regprocedure), true,
           'que es SECURITY DEFINER');

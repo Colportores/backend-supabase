@@ -342,7 +342,6 @@ select is(pg_temp.n('acompaniamiento_agregado'), 1::bigint, 'nada se sumó: el c
 
 -- Los errores no dejan registro (y salen antes que el cambio).
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(left(pg_temp.agregar('e1', 'f2'), 5), 'JO003', 'ya acompañada por otra persona: JO003');
 select is(left(pg_temp.agregar('e1', 'f3'), 5), 'JO002', 'jornada abierta: JO002');
 select is(left(pg_temp.agregar('e1', 'f7'), 5), 'JO001', 'colportor no inscripto: JO001');
 select is(left(pg_temp.agregar('e1', 'f0'), 5), 'JO001', 'jornada inexistente: JO001');
@@ -383,6 +382,14 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.agregar_y_fallar('e1', 'f8'), 'P0001', 'a1 agrega a la jornada f8 y la transacción falla después');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.n('acompaniamiento_agregado'), 2::bigint, 'al deshacerse el cambio, el registro se deshace con él');
+
+-- 0176/0177 (#254): una jornada ya acompañada por otra persona (f2, de a2) recibe a un segundo acompañante (antes: JO003).
+-- Es un alta más: deja su registro, con quién acompañó.
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(left(pg_temp.agregar('e1', 'f2'), 2), 'ok', 'una jornada ya acompañada por otra persona suma a un segundo acompañante');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.n('acompaniamiento_agregado'), 3::bigint, 'y deja su registro');
+select is((select acompaniante_id from public.jornada where id = pg_temp.u('f2')), pg_temp.u('a2'), 'la jornada sigue con a2 como primer acompañante (no se pisa)');
 select is((select acompaniante_id from public.jornada where id = pg_temp.u('f8')), null::uuid, 'y la jornada queda como estaba');
 
 -- Los retornos de agregar_acompaniamiento (0100: dos parámetros opcionales y dos columnas al final).

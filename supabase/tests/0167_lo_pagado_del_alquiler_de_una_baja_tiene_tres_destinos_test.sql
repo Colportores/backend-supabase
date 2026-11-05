@@ -5,7 +5,8 @@
 --   2. DEVOLVER_AL_COLPORTOR: los pagos validados quedan anulados (nunca borrados) y dejan de contar: no suman a lo pagado,
 --      ni a «Depositado», y el efectivo vuelve «en mano»; la deuda con la casa editora no se mueve; queda la decisión y el
 --      evento de auditoría; el doble toque no hace nada; lo anulado no se edita (DP007); no se deshace al reactivar.
---   3. AQ005: devolver cuando parte de lo pagado ya se decidió antes no anula nada; los otros dos destinos siguen sirviendo.
+--   3. Devolver cuando parte de lo pagado ya se decidió antes (0181): anula solo los pagos de después de la última decisión
+--      (el caso de Ana: 40000 a cuenta y 10000 nuevos); lo decidido antes no se toca.
 --   4. Campaña sin alquiler, nada por decidir (solo hay un pago por validar), alquiler vigente (AQ004), un pago nuevo después.
 -- Va en una transacción.
 begin;
@@ -243,28 +244,45 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.pagos('b1'), '2/3', 'y el pago nuevo no se anula');
 
 -- ---------------------------------------------------------------------------
--- 3. AQ005: devolver cuando parte de lo pagado ya se decidió
+-- 3. Devolver cuando parte de lo pagado ya se decidió (0181, #254: ya no hay AQ005)
 -- ---------------------------------------------------------------------------
+-- El caso de Ana: 40000 a cuenta del próximo depósito y 10000 nuevos después.
 select pg_temp.actuar_como(pg_temp.u('c1'));
 select is(pg_temp.dec('b2', 'e1', 'A_CUENTA_PROXIMO_DEPOSITO'), 'A_CUENTA_PROXIMO_DEPOSITO|40000|0|40000|0|f', 'b2: Luis deja a cuenta los 40000');
 select pg_temp.actuar_como_servidor();
+-- Un pago validado DESPUÉS de la decisión (clock_timestamp(): la decisión se guardó con la hora real).
 insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino, concepto, campania_id, validado_en, validado_por) values
-  (pg_temp.u('29'), pg_temp.u('b2'), 10000, now(), null, 'RETIRO_COORDINADOR', 'ALQUILER', pg_temp.u('e1'), now(), pg_temp.u('c1'));
+  (pg_temp.u('29'), pg_temp.u('b2'), 10000, now(), null, 'RETIRO_COORDINADOR', 'ALQUILER', pg_temp.u('e1'), clock_timestamp(), pg_temp.u('c1'));
 select is(pg_temp.fila('b2', 'e1'), '50000|0|40000|0|10000', 'b2 paga 10000 más: quedan por decidir');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.error_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEVOLVER_AL_COLPORTOR') $$),
-          'AQ005', 'devolver ahora no se puede: AQ005');
-select ok(pg_temp.mensaje_de($$ select * from public.decidir_alquiler_pagado(pg_temp.u('b2'), pg_temp.u('e1'), 'DEVOLVER_AL_COLPORTOR') $$)
-          like 'Una parte de lo que pagó ya se decidió antes%Dejá lo que falta%', 'con un aviso que dice qué hacer');
+select is(pg_temp.dec('b2', 'e1', 'DEVOLVER_AL_COLPORTOR'), 'DEVOLVER_AL_COLPORTOR|10000|0|40000|0|f',
+          'devolver ahora sí se puede: devuelve solo los 10000 nuevos y los 40000 siguen a cuenta');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.pagos('b2'), '0/2', 'no anuló ningún pago');
-select is(pg_temp.cuenta('b2'), '460000|40000|40000', 'ni tocó la cuenta');
-select is(pg_temp.n_dec('b2', 'e1'), 1::bigint, 'ni dejó otra decisión');
-select is(pg_temp.n_audit('b2'), 1::bigint, 'ni otro evento');
+select is(pg_temp.pagos('b2'), '1/2', 'anuló un solo pago (el nuevo), el otro sigue vigente');
+select is((select anulado_at is not null from public.deposito where id = pg_temp.u('29')), true, 'el que quedó anulado es el nuevo');
+select is((select anulado_at is null from public.deposito where id = pg_temp.u('23')), true, 'y el de los 40000, que ya se había decidido, no se tocó');
+select is(pg_temp.cuenta('b2'), '460000|40000|30000', 'la deuda sigue en 460000 y «Depositado» baja solo en 10000');
+select is(pg_temp.fila('b2', 'e1'), '40000|0|40000|0|0', 'la cuenta de alquiler: 40000 pagados, todo decidido');
+select is(pg_temp.n_dec('b2', 'e1', true), 2::bigint, 'dos decisiones vigentes: la de a cuenta y la de devolver');
+select is((select a.metadata from auditoria.audit_log a where a.event_type = 'alquiler_pagado_decidido' and a.target_user_id = pg_temp.u('b2')
+            and a.metadata ->> 'decision' = 'DEVOLVER_AL_COLPORTOR'),
+          jsonb_build_object('campania_id', pg_temp.u('e1'), 'decision', 'DEVOLVER_AL_COLPORTOR', 'monto', 10000,
+                             'por_decidir_antes', 10000, 'depositos_anulados', 1),
+          'el evento dice cuánto se devolvió (10000) y cuántos pagos se anularon (1)');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.dec('b2', 'e1', 'SE_LO_QUEDA_EL_COORDINADOR'), 'SE_LO_QUEDA_EL_COORDINADOR|10000|0|40000|10000|f',
-          'lo que falta sí se puede dejar o quedárselo');
+select is(pg_temp.dec('b2', 'e1', 'DEVOLVER_AL_COLPORTOR'), 'DEVOLVER_AL_COLPORTOR|0|0|40000|0|t', 'el doble toque no hace nada: ya_estaba');
 select pg_temp.actuar_como_servidor();
+select is(pg_temp.pagos('b2'), '1/2', 'y no anuló nada más');
+-- Otra vez: un tercer pago de 7000 después de devolver; devolver anula solo ese y deja el anterior (anulado) y los 40000 (a cuenta).
+insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino, concepto, campania_id, validado_en, validado_por) values
+  (pg_temp.u('2a'), pg_temp.u('b2'), 7000, now(), null, 'RETIRO_COORDINADOR', 'ALQUILER', pg_temp.u('e1'), clock_timestamp(), pg_temp.u('c1'));
+select pg_temp.actuar_como(pg_temp.u('c1'));
+select is(pg_temp.dec('b2', 'e1', 'DEVOLVER_AL_COLPORTOR'), 'DEVOLVER_AL_COLPORTOR|7000|0|40000|0|f',
+          'un tercer pago (7000): devolver anula solo ese; lo de antes no se vuelve a devolver ni se toca');
+select pg_temp.actuar_como_servidor();
+select is(pg_temp.pagos('b2'), '2/3', 'dos anulados (los dos devueltos) y el de los 40000 sigue vigente');
+select is(pg_temp.cuenta('b2'), '460000|40000|23000', '«Depositado» baja otros 7000 y la deuda sigue igual');
+select is(pg_temp.n_dec('b2', 'e1', true), 3::bigint, 'tres decisiones vigentes');
 
 -- ---------------------------------------------------------------------------
 -- 4. Otros casos

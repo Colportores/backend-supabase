@@ -34,9 +34,9 @@ select is(
   (select count(*) from information_schema.columns
     where table_schema = 'public' and table_name <> 'usuario'
       and column_name in ('nombre','apellido') and table_name not in
-      ('pais','ciudad','zona','campania','rol','producto','coleccion','carrera')),
+      ('pais','ciudad','zona','campania','rol','producto','coleccion','carrera','campania_coordinador')),
   0::bigint,
-  'nombre/apellido solo en usuario y catálogos (nunca en tablas del cliente final)'
+  'nombre/apellido solo en usuario y catálogos (y la copia del nombre de los coordinadores de la campaña, 0174) (nunca en tablas del cliente final)'
 );
 
 select col_hasnt_default('public', 'espacio_persona', 'persona_id', 'persona_id lo genera el dispositivo');

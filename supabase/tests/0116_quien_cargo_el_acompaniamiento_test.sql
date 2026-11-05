@@ -86,21 +86,21 @@ $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
 -- Staff: a1 Mariela Pereyra (coordinadora de En curso), a2 Nora Quiroga (de Otra), ad Samuel Soto (ADMIN).
--- Colportores de En curso (desde hace 200 días): b1 Ana Alfa, b2 Beto Bravo, b3 Carla Cruz.
+-- Colportores de En curso (desde hace 200 días): b1 Ana Alfa, b2 Beto Bravo, b3 Carla Cruz. b4 Dora Díaz no está inscripta.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'cargadopor116-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a1','a2','ad','b1','b2','b3']) s;
+  from unnest(array['a1','a2','ad','b1','b2','b3','b4']) s;
 
 update public.usuario u set nombre = x.n, apellido = x.a
   from (values ('a1','Mariela','Pereyra'), ('a2','Nora','Quiroga'), ('ad','Samuel','Soto'),
-               ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz')) x(s, n, a)
+               ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz'), ('b4','Dora','Díaz')) x(s, n, a)
  where u.id = pg_temp.u(x.s);
 
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
   from (values ('a1','COORDINADOR'), ('a2','COORDINADOR'), ('ad','ADMIN'),
-               ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR')) x(s, codigo)
+               ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
@@ -241,15 +241,16 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f3'), 'Carla|COORDINADOR|Samuel', 'y quien lo cargó sigue siendo el primero (el ADMIN), no a1');
 select is((select j.sync_version - a.sync_version from public.jornada j join antes a using (id) where j.id = pg_temp.u('f3')),
           1::bigint, 'ni subió la versión otra vez');
--- Quien lo cargó primero no cambia aunque el otro coordinador intente con otra persona: JO003.
+-- Quien lo cargó primero no cambia aunque otro coordinador sume a otra persona (0176/0177, #254): se agrega al lado, y la
+-- columna de la jornada sigue en el primero. Nora, coordinadora de otra campaña, se puede anotar (decisión del 05/11).
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.cod('e1', 'f3', 'b2'), 'JO003', 'con otra persona en una ya acompañada: JO003');
+select is(pg_temp.agregar('e1', 'f3', 'a2'), 'false|Nora', 'a1 suma a Nora (coordinadora de otra campaña) a la f3 ya acompañada');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('f3'), 'Carla|COORDINADOR|Samuel', 'y no se pisa nada');
+select is(pg_temp.guardado('f3'), 'Carla|COORDINADOR|Samuel', 'y no se pisa nada: la jornada sigue con el primero y quien lo cargó');
 
 -- Los errores y el que no tiene permiso no escriben la columna.
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.cod('e1', 'f5', 'a2'), 'JO005', 'un coordinador que no está inscripto: JO005');
+select is(pg_temp.cod('e1', 'f5', 'b4'), 'JO005', 'un colportor que no está inscripto: JO005');
 select is(pg_temp.cod('e1', 'f5', 'b1'), 'JO004', 'el dueño de la jornada: JO004');
 select is(pg_temp.cod('e1', 'f0'), 'JO001', 'una jornada que no existe: JO001');
 select pg_temp.actuar_como(pg_temp.u('a2'));
@@ -271,19 +272,19 @@ select is((select count(*) from public.jornada j join antes a using (id)
 select pg_temp.actuar_como(pg_temp.u('a1'));
 -- b1: f1 (a1 cargó), f2 (a1, con b2), f3 (el ADMIN), f4 (el ADMIN, él mismo), f7 (de antes: nadie), f5 y f6 libres.
 select is(pg_temp.historial('e1', 'b1'),
-          '-4|Beto|null|null;-7|Samuel|Samuel|Soto;-8|Carla|Samuel|Soto;-9|Beto|Mariela|Pereyra;-10|Mariela|Mariela|Pereyra',
+          '-4|Beto|null|null;-7|Samuel|Samuel|Soto;-8|Carla|Samuel|Soto;-8|Nora|Mariela|Pereyra;-9|Beto|Mariela|Pereyra;-10|Mariela|Mariela|Pereyra',
           'el historial trae el nombre y el apellido de quien cargó cada uno; null en lo de antes de la 0116');
 select is(pg_temp.jornadas('e1', 'b1'),
-          '-4|Beto|null;-5|null|null;-6|null|null;-7|Samuel|Samuel;-8|Carla|Samuel;-9|Beto|Mariela;-10|Mariela|Mariela',
+          '-4|Beto|null;-5|null|null;-6|null|null;-7|Samuel|Samuel;-8|Carla|Samuel;-8|Nora|Mariela;-9|Beto|Mariela;-10|Mariela|Mariela',
           'las jornadas cerradas de b1, también (las libres, sin quien cargó)');
 select is((select r.acompaniamiento_cargado_por from public.historial_de_acompaniamientos(pg_temp.u('e1'), pg_temp.u('b1')) r
             where r.jornada_id = pg_temp.u('f1')), pg_temp.u('a1'),
           'el historial devuelve el uuid de quien cargó: el panel lo compara con el suyo para decir «vos»');
 select is((select r.acompaniamiento_cargado_por from public.jornadas_cerradas_de_colportor(pg_temp.u('e1'), pg_temp.u('b1')) r
-            where r.jornada_id = pg_temp.u('f3')), pg_temp.u('ad'), 'y las jornadas cerradas, también');
+            where r.jornada_id = pg_temp.u('f3') and r.acompaniante_id = pg_temp.u('b3')), pg_temp.u('ad'), 'y las jornadas cerradas, también');
 -- Sin p_colportor_id: el historial de todos.
 select is((select count(*) from public.historial_de_acompaniamientos(pg_temp.u('e1')) r
-            where r.acompaniamiento_cargado_por is not null), 4::bigint, 'el historial de toda la campaña: cuatro con quien cargó');
+            where r.acompaniamiento_cargado_por is not null), 5::bigint, 'el historial de toda la campaña: cinco con quien cargó');
 -- Otro coordinador: sigue sin permiso.
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select throws_ok(format('select * from public.historial_de_acompaniamientos(%L)', pg_temp.u('e1')), '42501', null,

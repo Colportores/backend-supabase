@@ -27,8 +27,8 @@ select is((select array(select conname::text from pg_constraint
           'los cuatro constraints llevan el nombre nuevo (clave, único por usuario y las dos FK)');
 select is((select array(select indexname::text from pg_indexes
                          where schemaname = 'public' and tablename = 'cuenta_colportor' order by indexname)),
-          array['cuenta_colportor_pkey', 'cuenta_colportor_usuario_key'],
-          'y los índices que los respaldan');
+          array['cuenta_colportor_delta_idx', 'cuenta_colportor_pkey', 'cuenta_colportor_usuario_key'],
+          'y los índices que los respaldan (más el del delta del pull, 0179)');
 select is((select array(select tgname::text from pg_trigger
                           where tgrelid = 'public.cuenta_colportor'::regclass and not tgisinternal order by tgname)),
           array['cuenta_colportor_auditoria_insert', 'cuenta_colportor_auditoria_update', 'cuenta_colportor_historial_deuda'],
