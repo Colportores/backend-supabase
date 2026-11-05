@@ -22,13 +22,13 @@
 -- ## Qué es «la fecha del último cambio»
 --
 -- `updated_at` de `house_status` lo pone el servidor (`tg_auditoria_update`, 0002/0011) en CADA
--- UPDATE de la fila, cambie o no el color. Lo único que NO lo mueve es el republicado del servidor
--- (`colportores.republicar`, cuando se corrige la posición de la ubicación). Entonces, si el
--- teléfono vuelve a subir el `house_status` de una casa con el mismo color (por ejemplo, una
--- visita nueva que deja el mismo estado), la fecha se mueve aunque el color no haya cambiado: es la
--- fecha en que se tocó el estado, no necesariamente en que pasó a otro color. Eso no se adivina acá:
--- queda como pendiente de decisión (columna propia con el último cambio de color, o dejar la fecha
--- como está) en el archivo de pendientes de este issue.
+-- UPDATE de la fila. Lo único que NO lo mueve es el republicado del servidor
+-- (`colportores.republicar`, cuando se corrige la posición de la ubicación). La fecha se mueve,
+-- entonces, cuando cambia el color, el punto o el tipo de la casa (decisión del 05/11, regla R4:
+-- es un cálculo sobre lo que ya se guarda, «lo último que pasó»; no hay columna nueva). El
+-- teléfono no sube el `house_status` sin cambios (`house_status_updater_drift.dart`: compara
+-- color, punto y tipo), así que una visita que deja el mismo estado no mueve la fecha. Cambiar el
+-- punto o el tipo es un cambio real de la casa, y también cuenta como «último cambio».
 --
 -- ## Para otros repos
 --
