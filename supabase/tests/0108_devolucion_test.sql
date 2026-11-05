@@ -85,12 +85,18 @@ create or replace function pg_temp.ren72(variadic p text[]) returns jsonb langua
     from (select p[i] as p, p[i + 1]::int as n from generate_series(1, array_length(p, 1), 2) i) x;
 $$;
 
+-- «Hace 2 horas»: la fecha de las devoluciones que se anulan en este archivo (0172: anular exige las 24 h del teléfono
+-- y los 15 días de gracia con el reloj de verdad, y la fecha de una devolución no se cambia con sesión, DV004).
+create or replace function pg_temp.f() returns timestamptz language sql stable as $$
+  select date_trunc('second', now() - interval '2 hours');
+$$;
+
 -- El payload de una devolución tal como lo manda el teléfono.
 create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb default null)
 returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta,
                             'productos_devueltos', coalesce(p_items, pg_temp.ren('11', '1')),
-                            'fecha_devolucion', '2026-10-05T12:00:00Z');
+                            'fecha_devolucion', pg_temp.f());
 $$;
 -- Un job de push de la entidad; devuelve el resultado.
 create or replace function pg_temp.push1(p_op uuid, p_tipo text, p_payload jsonb, p_version bigint default null)
@@ -337,12 +343,12 @@ select is(pg_temp.error_de($$ update public.devolucion set productos_devueltos =
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion)
-                              values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.ren('11', '1'), '2026-10-04 10:00+00') $$),
+                              values (pg_temp.u('d1'), pg_temp.u('71'), pg_temp.ren('11', '1'), pg_temp.f()) $$),
           'ok', 'b1 guarda una devolución de su venta, sin mandar colportor_id');
 select is((select colportor_id from public.devolucion where id = pg_temp.u('d1')), pg_temp.u('b1'),
           'colportor_id sale del JWT, sin que nadie lo mande');
 select is((select created_by from public.devolucion where id = pg_temp.u('d1')), pg_temp.u('b1'), 'y created_by también');
-select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d1')), '2026-10-04 10:00+00'::timestamptz,
+select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d1')), pg_temp.f(),
           'la fecha es la del teléfono, no la de ahora');
 select is(pg_temp.error_de($$ insert into public.devolucion (id, venta_id, productos_devueltos, fecha_devolucion, colportor_id)
                               values (pg_temp.u('d9'), pg_temp.u('71'), pg_temp.ren('11', '1'), now(), pg_temp.u('b2')) $$),
@@ -399,8 +405,11 @@ select is((select array[colportor_id::text, venta_id::text] from public.devoluci
 
 -- Lo propio: corregir y dar de baja (la anulación de una devolución).
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas($$ update public.devolucion set fecha_devolucion = '2026-10-04 11:00+00' where id = pg_temp.u('d1') $$), 1,
-          'b1 corrige la fecha de la suya');
+-- (0172, DV004: con sesión la fecha de una devolución no se cambia; corrige otra cosa, los productos.)
+select is(pg_temp.error_de($$ update public.devolucion set fecha_devolucion = now() - interval '1 hour' where id = pg_temp.u('d1') $$),
+          'DV004 ', 'b1 no puede cambiar la fecha de la suya (DV004)');
+select is(pg_temp.filas($$ update public.devolucion set productos_devueltos = pg_temp.ren('11', '2') where id = pg_temp.u('d1') $$), 1,
+          'b1 corrige los productos de la suya');
 select is((select sync_version from public.devolucion where id = pg_temp.u('d1')), 1::bigint, 'y sube sync_version (el teléfono ve el cambio)');
 select is(pg_temp.filas($$ update public.devolucion set deleted_at = now() where id = pg_temp.u('d1') $$), 1,
           'b1 da de baja la suya: tombstone');
@@ -437,13 +446,17 @@ select is((select pg_temp.push1(pg_temp.op('03'), 'insert',
 
 -- Modificar: LWW por sync_version.
 select is((select pg_temp.push1(pg_temp.op('04'), 'update',
-                                jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', '2026-10-06T12:00:00Z'), 0) ->> 'outcome'),
-          'accepted', 'b1 corrige la fecha con la versión que tiene');
-select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d3')), '2026-10-06 12:00+00'::timestamptz, 'quedó cambiada');
+                                jsonb_build_object('id', pg_temp.u('d3'), 'productos_devueltos', pg_temp.ren('11', '3')), 0) ->> 'outcome'),
+          'accepted', 'b1 corrige los productos con la versión que tiene');
+select is((select productos_devueltos -> 0 ->> 'cantidad' from public.devolucion where id = pg_temp.u('d3')), '3', 'quedó cambiada');
 select is((select pg_temp.push1(pg_temp.op('05'), 'update',
-                                jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', '2026-10-07T12:00:00Z'), 0) ->> 'outcome'),
+                                jsonb_build_object('id', pg_temp.u('d3'), 'productos_devueltos', pg_temp.ren('11', '4')), 0) ->> 'outcome'),
           'conflict', 'con una versión vieja es conflict (gana el servidor)');
-select is((select fecha_devolucion from public.devolucion where id = pg_temp.u('d3')), '2026-10-06 12:00+00'::timestamptz, 'y no se pisó');
+select is((select productos_devueltos -> 0 ->> 'cantidad' from public.devolucion where id = pg_temp.u('d3')), '3', 'y no se pisó');
+-- La fecha tampoco se cambia por el push (DV004), y la baja que sigue se mide contra la fecha de siempre.
+select is((select pg_temp.push1(pg_temp.op('0b'), 'update',
+                                jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', '2026-10-07T12:00:00Z'), 1) ->> 'code'),
+          'DV004', 'cambiar la fecha por push: invalid DV004');
 
 -- Lo ajeno por push: no existe para quien sube.
 select pg_temp.actuar_como(pg_temp.u('b2'));
@@ -458,7 +471,7 @@ select is((select pg_temp.push1(pg_temp.op('09'), 'insert', pg_temp.dev(pg_temp.
           '42501', 'con 42501');
 select pg_temp.actuar_como_servidor();
 select is((select count(*)::int from public.devolucion where id = pg_temp.u('d5')), 0, 'y no escribió nada');
-select is((select array[(fecha_devolucion = '2026-10-06 12:00+00')::text, deleted_at::text] from public.devolucion where id = pg_temp.u('d3')),
+select is((select array[(fecha_devolucion = pg_temp.f())::text, deleted_at::text] from public.devolucion where id = pg_temp.u('d3')),
           array['true', null], 'la fila de b1 no cambió ni se dio de baja');
 
 -- La baja propia (tombstone), por push.

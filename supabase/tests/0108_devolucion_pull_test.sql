@@ -63,10 +63,15 @@ returns text language sql as $$
            'client_op_id', p_op, 'entity', 'devolucion', 'op', p_tipo,
            'sync_version', p_version, 'payload', p_payload)))) -> 'results' -> 0 ->> 'outcome';
 $$;
+-- «Hace 2 horas»: la fecha de las devoluciones (0172: anular exige las 24 h del teléfono con el reloj de verdad, y la
+-- fecha de una devolución no se cambia con sesión, DV004).
+create or replace function pg_temp.f() returns timestamptz language sql stable as $$
+  select date_trunc('second', now() - interval '2 hours');
+$$;
 create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb)
 returns jsonb language sql as $$
   select jsonb_build_object('id', p_id, 'venta_id', p_venta, 'productos_devueltos', p_items,
-                            'fecha_devolucion', '2026-10-05T12:00:00Z');
+                            'fecha_devolucion', pg_temp.f());
 $$;
 -- El renglón de la venta de b1 (71) con ese libro; item72() el de la venta de b2 (0136: tres claves).
 create or replace function pg_temp.item(p_producto text, p_cantidad int) returns jsonb language sql as $$
@@ -169,7 +174,7 @@ select is((select (e -> 'productos_devueltos')
             where e ->> 'id' = pg_temp.u('d1')::text),
           jsonb_build_array(pg_temp.item('11', 2), pg_temp.item('12', 1)),
           'los productos devueltos bajan como un arreglo, tal cual se subieron') from pull_b1;
-select is((select bool_and((e ->> 'fecha_devolucion')::timestamptz = '2026-10-05T12:00:00Z'::timestamptz)
+select is((select bool_and((e ->> 'fecha_devolucion')::timestamptz = pg_temp.f())
              from pull_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e), true,
           'con la fecha que registró el teléfono') from pull_b1;
 select is(pg_temp.col(d, 'colportor_id'), array[pg_temp.u('b1')::text, pg_temp.u('b1')::text, pg_temp.u('b1')::text],
@@ -194,18 +199,18 @@ select is((select sync.pull(array['devolucion'], d -> 'watermark', 1000) -> 'row
 -- ---------------------------------------------------------------------------
 -- 3. Los cambios llegan por el delta
 -- ---------------------------------------------------------------------------
--- b1 corrige la fecha de la d2 y da de baja la d3.
-select is(pg_temp.push1(pg_temp.op('05'), 'update', jsonb_build_object('id', pg_temp.u('d2'), 'fecha_devolucion', '2026-10-08T12:00:00Z'), 0),
-          'accepted', 'b1 corrige la fecha de la d2');
+-- b1 corrige los productos de la d2 y da de baja la d3.
+select is(pg_temp.push1(pg_temp.op('05'), 'update', jsonb_build_object('id', pg_temp.u('d2'), 'productos_devueltos', jsonb_build_array(pg_temp.item('11', 2))), 0),
+          'accepted', 'b1 corrige los productos de la d2');
 select is(pg_temp.push1(pg_temp.op('06'), 'delete', jsonb_build_object('id', pg_temp.u('d3')), 0),
           'accepted', 'y da de baja la d3');
 create temp table delta_b1 as
 select sync.pull(array['devolucion'], d -> 'watermark', 1000) as d from pull_b1;
 select is(pg_temp.ids(d), array['d2', 'd3'], 'el delta trae solo lo que cambió: d2 y d3') from delta_b1;
-select is((select (e ->> 'fecha_devolucion')::timestamptz
+select is((select e -> 'productos_devueltos' -> 0 ->> 'cantidad'
               from delta_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
              where e ->> 'id' = pg_temp.u('d2')::text),
-           '2026-10-08T12:00:00Z'::timestamptz, 'la d2 con la fecha corregida') from delta_b1;
+           '2', 'la d2 con los productos corregidos') from delta_b1;
 select is((select (e ->> 'deleted_at') is not null
              from delta_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
             where e ->> 'id' = pg_temp.u('d3')::text), true,
