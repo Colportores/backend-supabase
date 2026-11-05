@@ -201,7 +201,7 @@ grant select on incluidas_centro to authenticated;
 -- 1. Forma y privilegios
 -- ---------------------------------------------------------------------------
 select is((select pg_get_function_result('public.casas_de_zona(uuid,uuid,uuid,integer)'::regprocedure)),
-          'TABLE(ubicacion_id uuid, lat double precision, lon double precision, tipo text, estado text)',
+          'TABLE(ubicacion_id uuid, lat double precision, lon double precision, tipo text, estado text, ultimo_cambio timestamp with time zone)',
           'casas_de_zona(): la forma de la respuesta (sin dirección, sin personas, sin importes)');
 select is((select p.prosecdef from pg_proc p where p.oid = 'public.casas_de_zona(uuid,uuid,uuid,integer)'::regprocedure),
           true, 'casas_de_zona() es SECURITY DEFINER (el coordinador no lee ubicacion ni house_status)');
@@ -391,12 +391,50 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000049a1');
 select is((select array_agg(k order by k)
              from (select distinct jsonb_object_keys(to_jsonb(c)) k
                      from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c) x),
-  array['estado', 'lat', 'lon', 'tipo', 'ubicacion_id'],
-  'cada fila trae solo ubicacion_id, lat, lon, tipo y estado: ni calle ni número, ni personas, ni importes');
+  array['estado', 'lat', 'lon', 'tipo', 'ubicacion_id', 'ultimo_cambio'],
+  'cada fila trae solo ubicacion_id, lat, lon, tipo, estado y ultimo_cambio: ni calle ni número, ni personas, ni importes');
 select is((select count(*)::int
              from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
             where to_jsonb(c)::text ilike '%Mataojo%' or to_jsonb(c)::text like '%2044%'),
   0, 'la dirección de la casa 01 («Mataojo 2044») no viaja con el punto');
+select pg_temp.actuar_como_servidor();
+
+-- ---------------------------------------------------------------------------
+-- 5b. ultimo_cambio: el updated_at del house_status vivo (0173, #247)
+-- ---------------------------------------------------------------------------
+-- Fechas distintas por casa, para que se vea que cada punto trae la suya (el servidor pone
+-- updated_at = now() y now() no cambia dentro de la transacción: se fijan con los triggers del house_status apagados).
+select pg_temp.actuar_como_servidor();
+alter table public.house_status disable trigger user;
+update public.house_status set updated_at = timestamptz '2026-10-18 15:30:00+00'
+ where ubicacion_id = '01920000-0000-7000-8000-000000004901';
+update public.house_status set updated_at = timestamptz '2026-10-02 09:00:00+00'
+ where ubicacion_id = '01920000-0000-7000-8000-000000004902';
+-- Un house_status dado de baja (0a) tiene fecha, pero no cuenta: la casa viene sin estado.
+update public.house_status set updated_at = timestamptz '2026-09-01 08:00:00+00'
+ where ubicacion_id = '01920000-0000-7000-8000-00000000490a';
+alter table public.house_status enable trigger user;
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000049a1');
+select is((select c.ultimo_cambio from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
+            where c.ubicacion_id = '01920000-0000-7000-8000-000000004901'),
+  timestamptz '2026-10-18 15:30:00+00', 'una casa con estado trae el updated_at de su house_status (18/10)');
+select is((select c.ultimo_cambio from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
+            where c.ubicacion_id = '01920000-0000-7000-8000-000000004902'),
+  timestamptz '2026-10-02 09:00:00+00', 'cada casa trae la fecha de su propio estado, no la de otra');
+select is((select c.ultimo_cambio from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
+            where c.ubicacion_id = '01920000-0000-7000-8000-000000004908'),
+  null, 'una casa sin house_status («Sin visita») trae ultimo_cambio null');
+select is((select c.ultimo_cambio from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
+            where c.ubicacion_id = '01920000-0000-7000-8000-00000000490a'),
+  null, 'una casa con el house_status dado de baja también trae ultimo_cambio null');
+select is((select count(*)::int from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
+            where (c.estado is null) is distinct from (c.ultimo_cambio is null)),
+  0, 'ultimo_cambio es null exactamente cuando estado es null');
+select is((select count(*)::int from public.casas_de_zona('01920000-0000-7000-8000-0000000049e1', '01920000-0000-7000-8000-0000000049d1') c
+             join public.house_status h on h.ubicacion_id = c.ubicacion_id and h.deleted_at is null
+            where c.ultimo_cambio is distinct from h.updated_at),
+  0, 'en las diez casas de Centro, ultimo_cambio es siempre el updated_at del house_status');
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
