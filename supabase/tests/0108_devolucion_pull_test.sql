@@ -197,7 +197,10 @@ select is((select sync.pull(array['devolucion'], d -> 'watermark', 1000) -> 'row
 -- b1 corrige la fecha de la d2 y da de baja la d3.
 select is(pg_temp.push1(pg_temp.op('05'), 'update', jsonb_build_object('id', pg_temp.u('d2'), 'fecha_devolucion', '2026-10-08T12:00:00Z'), 0),
           'accepted', 'b1 corrige la fecha de la d2');
-select is(pg_temp.push1(pg_temp.op('06'), 'delete', jsonb_build_object('id', pg_temp.u('d3')), 0),
+-- (0172: la baja exige las 24 h del teléfono: la d3 se corrige antes a una hora reciente.)
+select is(pg_temp.push1(pg_temp.op('0a'), 'update', jsonb_build_object('id', pg_temp.u('d3'), 'fecha_devolucion', to_char(now() - interval '1 hour', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')), 0),
+          'accepted', 'b1 corrige la fecha de la d3');
+select is(pg_temp.push1(pg_temp.op('06'), 'delete', jsonb_build_object('id', pg_temp.u('d3')), 1),
           'accepted', 'y da de baja la d3');
 create temp table delta_b1 as
 select sync.pull(array['devolucion'], d -> 'watermark', 1000) as d from pull_b1;

@@ -399,7 +399,8 @@ select is((select array[colportor_id::text, venta_id::text] from public.devoluci
 
 -- Lo propio: corregir y dar de baja (la anulación de una devolución).
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas($$ update public.devolucion set fecha_devolucion = '2026-10-04 11:00+00' where id = pg_temp.u('d1') $$), 1,
+-- (0172: anular exige las 24 h del teléfono: la corrige a una hora reciente para que la baja de abajo sea a tiempo.)
+select is(pg_temp.filas($$ update public.devolucion set fecha_devolucion = now() - interval '1 hour' where id = pg_temp.u('d1') $$), 1,
           'b1 corrige la fecha de la suya');
 select is((select sync_version from public.devolucion where id = pg_temp.u('d1')), 1::bigint, 'y sube sync_version (el teléfono ve el cambio)');
 select is(pg_temp.filas($$ update public.devolucion set deleted_at = now() where id = pg_temp.u('d1') $$), 1,
@@ -463,7 +464,10 @@ select is((select array[(fecha_devolucion = '2026-10-06 12:00+00')::text, delete
 
 -- La baja propia (tombstone), por push.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is((select pg_temp.push1(pg_temp.op('10'), 'delete', jsonb_build_object('id', pg_temp.u('d4')), 0) ->> 'outcome'),
+-- (0172: la baja exige las 24 h del teléfono: primero corrige la fecha de la devolución a una hora reciente.)
+select is((select pg_temp.push1(pg_temp.op('1a'), 'update', jsonb_build_object('id', pg_temp.u('d4'), 'fecha_devolucion', to_char(now() - interval '1 hour', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')), 0) ->> 'outcome'),
+          'accepted', 'b1 corrige la fecha de la d4');
+select is((select pg_temp.push1(pg_temp.op('10'), 'delete', jsonb_build_object('id', pg_temp.u('d4')), 1) ->> 'outcome'),
           'accepted', 'b1 da de baja la suya');
 select ok((select deleted_at is not null from public.devolucion where id = pg_temp.u('d4')), 'queda con deleted_at: la fila no se borra');
 

@@ -244,10 +244,12 @@ select is((select pg_temp.push1(pg_temp.op('01'), 'insert', pg_temp.dev(pg_temp.
 select is((select pg_temp.push1(pg_temp.op('03'), 'insert', pg_temp.dev(pg_temp.u('e1'), pg_temp.u('72'), jsonb_build_array(pg_temp.el('11', 2, '84')))) ->> 'outcome'),
           'duplicate', 'y el mismo id con otro client_op_id (un reintento tras reinstalar): duplicate, no invalid');
 
--- La que entra ya anulada (registrada y anulada sin conexión) pasa sin juicio.
+-- La que entra ya anulada (registrada y anulada sin conexión) pasa sin juicio de la venta saldada. (Desde 0172 la
+-- anulación sí se juzga con la hora del teléfono, por eso la fecha y la baja son de hace unas horas.)
 select is((select pg_temp.push1(pg_temp.op('04'), 'insert',
                                 pg_temp.dev(pg_temp.u('e3'), pg_temp.u('72'), jsonb_build_array(pg_temp.el('11', 1, '84')))
-                                  || jsonb_build_object('deleted_at', '2026-10-05T13:00:00Z')) ->> 'outcome'),
+                                  || jsonb_build_object('fecha_devolucion', now() - interval '2 hours',
+                                                        'deleted_at', now() - interval '1 hour')) ->> 'outcome'),
           'accepted', 'una devolución que ya llega anulada se acepta aunque la venta esté saldada');
 
 -- Directo por la API: lo mismo.
