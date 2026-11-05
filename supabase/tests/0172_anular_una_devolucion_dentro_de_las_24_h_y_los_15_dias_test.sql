@@ -10,6 +10,8 @@
 --   5. Una devolución que ya llega anulada (registrada y anulada sin señal) se juzga igual; un reenvío del alta que ya está
 --      no (duplicate); una baja repetida no se vuelve a juzgar; el servidor sin sesión no controla nada.
 --   6. Por sync.push: DV001 vuelve invalid sin tumbar el lote.
+--   7. DV004: con sesión la fecha de una devolución no se cambia (ni sola ni con la baja), así que no se rejuvenece
+--      para anularla; el servidor sin sesión la corrige a mano.
 -- Va en una transacción.
 begin;
 select * from no_plan();
@@ -298,6 +300,77 @@ select is((select pg_temp.push('b1', jsonb_build_array(
                'deleted_at', now() - interval '10 hours')))) -> 0 ->> 'outcome'),
           'accepted', 'un alta anulada a las 20 h por push: accepted');
 select is(pg_temp.anulada(33) || ' ' || pg_temp.eventos('devolucion_anulada', 33), 'true 1', 'queda anulada con su evento');
+
+-- ---------------------------------------------------------------------------
+-- 7. La fecha de una devolución no se cambia con sesión (DV004): no se rejuvenece para anularla
+-- ---------------------------------------------------------------------------
+create or replace function pg_temp.corregir_y_anular(p_quien text, p_n integer, p_fecha_nueva timestamptz, p_hora timestamptz)
+returns text language plpgsql as $$
+declare
+  v_filas integer;
+  v_r     text;
+begin
+  perform pg_temp.actuar_como(pg_temp.u(p_quien));
+  begin
+    update public.devolucion set fecha_devolucion = p_fecha_nueva, deleted_at = p_hora where id = pg_temp.ud(p_n);
+    get diagnostics v_filas = row_count;
+    v_r := case when v_filas = 1 then 'ok' else v_filas || ' filas' end;
+  exception when others then
+    v_r := sqlstate;
+  end;
+  perform pg_temp.actuar_como_servidor();
+  return v_r;
+end $$;
+create or replace function pg_temp.cambiar_fecha(p_quien text, p_n integer, p_fecha_nueva timestamptz, p_msg boolean default false)
+returns text language plpgsql as $$
+declare
+  v_filas integer;
+  v_r     text;
+begin
+  perform pg_temp.actuar_como(pg_temp.u(p_quien));
+  begin
+    update public.devolucion set fecha_devolucion = p_fecha_nueva where id = pg_temp.ud(p_n);
+    get diagnostics v_filas = row_count;
+    v_r := case when v_filas = 1 then 'ok' else v_filas || ' filas' end;
+  exception when others then
+    v_r := case when p_msg then sqlstate || ': ' || sqlerrm else sqlstate end;
+  end;
+  perform pg_temp.actuar_como_servidor();
+  return v_r;
+end $$;
+select pg_temp.dv(40, '71', '81', now() - interval '10 days');
+select pg_temp.dv(41, '71', '81', now() - interval '30 hours');
+select pg_temp.dv(42, '77', '87', now() - interval '16 days');
+select pg_temp.dv(43, '71', '81', now() - interval '10 days');
+select is(pg_temp.cambiar_fecha('b1', 40, now() - interval '2 hours'), 'DV004',
+          'cambiar la fecha de una devolución de hace 10 días a «hace 2 horas»: DV004');
+select alike(pg_temp.cambiar_fecha('b1', 40, now() - interval '2 hours', true), 'DV004: La fecha de una devolución no se puede cambiar%',
+             'y el aviso lo dice');
+select is(pg_temp.cambiar_fecha('b1', 41, pg_temp.fecha_de(41) + interval '1 minute'), 'DV004', 'cualquier cambio de fecha, también uno mínimo');
+select is(pg_temp.cambiar_fecha('b1', 41, pg_temp.fecha_de(41)), 'ok', 'mandar la misma fecha no es un cambio: pasa');
+select is(pg_temp.corregir_y_anular('b1', 40, now() - interval '2 hours', now() - interval '1 hour'), 'DV004',
+          'la fecha nueva y la baja en la misma sentencia: DV004');
+select is(pg_temp.corregir_y_anular('b7', 42, now() - interval '2 hours', pg_temp.fecha_de(42) + interval '2 hours'), 'DV004',
+          'lo mismo con la gracia de 15 días');
+select is(pg_temp.anulada(40) || ' ' || pg_temp.eventos('devolucion_anulada', 40) || ' ' || (pg_temp.fecha_de(40) < now() - interval '9 days')::text,
+          'false 0 true', 'la fila no cambia: ni anulada, ni evento, ni la fecha nueva');
+-- Por push: la fecha y después la baja (los dos pasos de la vuelta que se cierra).
+select is((select pg_temp.push('b1', jsonb_build_array(
+             pg_temp.job(20, 'update', jsonb_build_object('id', pg_temp.ud(43), 'fecha_devolucion', now() - interval '2 hours'), 0))) -> 0 ->> 'code'),
+          'DV004', 'por push, cambiar la fecha: invalid DV004');
+select is((select pg_temp.push('b1', jsonb_build_array(
+             pg_temp.job(21, 'delete', jsonb_build_object('id', pg_temp.ud(43)), 0))) -> 0 ->> 'code'),
+          'DV001', 'y la baja que sigue se mide contra la fecha de siempre: invalid DV001');
+select is(pg_temp.anulada(43) || ' ' || (pg_temp.fecha_de(43) < now() - interval '9 days')::text, 'false true', 'la devolución sigue como estaba');
+-- Un lote con las dos cosas: el cambio de fecha vuelve invalid y no tumba al resto.
+select is((select pg_temp.push('b1', jsonb_build_array(
+             pg_temp.job(22, 'update', jsonb_build_object('id', pg_temp.ud(43), 'fecha_devolucion', now() - interval '3 hours'), 0),
+             pg_temp.job(23, 'update', jsonb_build_object('id', pg_temp.ud(41), 'deleted_at', pg_temp.fecha_de(41) + interval '20 hours'), pg_temp.version_de(41)))) -> 1 ->> 'outcome'),
+          'accepted', 'en un lote, el cambio de fecha rechazado no tumba la baja válida que sigue');
+-- Sin sesión (el servidor, las migraciones, el editor SQL) la fecha se corrige a mano.
+update public.devolucion set fecha_devolucion = now() - interval '5 days' where id = pg_temp.ud(43);
+select is((pg_temp.fecha_de(43) between now() - interval '5 days 1 minute' and now() - interval '4 days 23 hours'), true,
+          'el servidor sin sesión corrige la fecha a mano');
 
 select * from finish();
 rollback;

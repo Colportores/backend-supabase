@@ -243,8 +243,8 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 0, 'y no deja 
 
 -- Otra columna de una devolución viva: no es una anulación.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.filas(format($$update public.devolucion set fecha_devolucion = pg_temp.f1() + interval '30 minutes' where id = %L$$, pg_temp.u('d1'))), 1,
-          'b1 corrige la fecha de su devolución');
+select is(pg_temp.filas(format($$update public.devolucion set productos_devueltos = productos_devueltos where id = %L$$, pg_temp.u('d1'))), 1,
+          'b1 toca otra columna de su devolución');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d1')), 0, 'corregir una devolución no es anularla: sin evento');
 select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d1')), 1, 'ni un segundo «registrada»');
@@ -261,7 +261,7 @@ select is(pg_temp.detalle('devolucion_anulada', pg_temp.u('d1')) - 'fecha_devolu
           jsonb_build_object('venta_id', pg_temp.u('71'), 'productos_distintos', 2, 'unidades_devueltas', 3),
           'el detalle es el de la devolución tal como quedó');
 select is((pg_temp.detalle('devolucion_anulada', pg_temp.u('d1')) ->> 'fecha_devolucion')::timestamptz,
-          pg_temp.f1() + interval '30 minutes', 'con la fecha ya corregida');
+          pg_temp.f1(), 'con la fecha de siempre');
 select is((select array_agg(k order by k) from jsonb_object_keys(pg_temp.detalle('devolucion_anulada', pg_temp.u('d1'))) k),
           array['fecha_devolucion', 'productos_distintos', 'unidades_devueltas', 'venta_id'],
           'las mismas cuatro claves, sin texto libre');
@@ -271,7 +271,7 @@ select is(pg_temp.eventos('devolucion_anulada', pg_temp.u('d2')), 0, 'la d2 no s
 -- Repetir la baja, tocar otra columna de una anulada o reactivarla: nada se suma.
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select pg_temp.filas(format($$update public.devolucion set deleted_at = '2026-10-08T10:00:00Z' where id = %L$$, pg_temp.u('d1')));
-select pg_temp.filas(format($$update public.devolucion set fecha_devolucion = '2026-10-05T12:45:00Z' where id = %L$$, pg_temp.u('d1')));
+select pg_temp.filas(format($$update public.devolucion set productos_devueltos = productos_devueltos where id = %L$$, pg_temp.u('d1')));
 select throws_ok(format($$update public.devolucion set deleted_at = null where id = %L$$, pg_temp.u('d1')), '42501',
                  'Una devolución anulada no se reabre: registrá una nueva.', 'reactivarla se rechaza (0153)');
 select pg_temp.actuar_como_servidor();
