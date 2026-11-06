@@ -7,6 +7,7 @@
 
 \set ON_ERROR_STOP on
 \if :{?colportores} \else \set colportores 150 \endif
+\if :{?ciudades_ajenas} \else \set ciudades_ajenas 4 \endif
 
 \echo '-- limpiando corrida anterior'
 delete from public.venta          where numero_talonario like 'BENCH-%';
@@ -19,7 +20,7 @@ delete from public.campania_colportor where campania_id = '01920000-0000-7000-80
 delete from public.zona           where nombre like 'BENCH zona %';
 delete from public.campania_ciudad where id = '01920000-0000-7000-8000-0000000be003';
 delete from public.campania       where id = '01920000-0000-7000-8000-0000000be002';
-delete from public.ciudad         where nombre = 'BENCH ciudad';
+delete from public.ciudad         where nombre = 'BENCH ciudad' or nombre like 'BENCH ajena %';
 delete from public.pais           where iso_code = 'ZZ';
 delete from auth.users            where email like 'bench-%@bench.local';
 
@@ -77,11 +78,41 @@ from public.usuario u
   join public.zona z on z.id = ins.zona_id, generate_series(1, 400) n
 where u.email like 'bench-%@bench.local';
 
+\echo '-- ubicaciones de otras ciudades (60.000 por ciudad, de un colportor ajeno)'
+-- El colportor mide contra una tabla donde su ciudad es una parte: las demás ciudades son filas que
+-- el delta tiene que recorrer y descartar. -v ciudades_ajenas=0 para medir con una sola ciudad.
+-- Entran por lotes con COMMIT: el trigger de dirección única toma un lock por fila y 60.000 en una
+-- transacción agotan max_locks_per_transaction.
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+select public.uuid_generate_v7(), 'BENCH ajena ' || n, 'Departamento de prueba',
+       '01920000-0000-7000-8000-0000000be000', -34.5, -56.0
+from generate_series(1, :ciudades_ajenas) n;
+
+do $$
+declare
+  v_otro uuid := (select id from public.usuario where email = 'bench-2@bench.local' limit 1);
+  v_ciudades uuid[] := array(select id from public.ciudad where nombre like 'BENCH ajena %' order by nombre);
+  v_c uuid;
+begin
+  if v_otro is null then return; end if;
+  foreach v_c in array v_ciudades loop
+    for i in 0..59 loop
+      insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by)
+      select public.uuid_generate_v7(), 'CASA', 'Calle ' || (g % 80), g::text,
+             -34.5 - (g % 50) * 0.0001, -56.0 - (g / 50) * 0.0001, v_c, v_otro
+      from generate_series(i * 1000 + 1, i * 1000 + 1000) g;
+      commit;
+    end loop;
+  end loop;
+end
+$$;
+
 \echo '-- espacios y vínculos'
 insert into public.espacio (id, ubicacion_id, created_by)
 select public.uuid_generate_v7(), ub.id, ub.created_by
 from public.ubicacion ub
-where ub.created_by in (select id from public.usuario where email like 'bench-%@bench.local');
+where ub.created_by in (select id from public.usuario where email like 'bench-%@bench.local')
+  and ub.ciudad_id = '01920000-0000-7000-8000-0000000be001';
 
 insert into public.espacio_persona (id, espacio_id, persona_id, created_by)
 select public.uuid_generate_v7(), e.id, public.uuid_generate_v7(), e.created_by
@@ -129,7 +160,11 @@ from public.venta v where v.numero_talonario like 'BENCH-%';
 -- que se llenó a lo largo de una temporada.
 --
 -- Los valores tienen que quedar POR DEBAJO del xid actual, o el corte por
--- horizonte de `sync.pull` los deja afuera y el delta mide sobre cero filas.
+-- horizonte de `sync.pull` los deja afuera y el delta mide sobre cero filas. En una base recién
+-- levantada el xid actual es chico (~1.600) y una tabla tiene decenas de miles de filas: restar el
+-- número de fila al xid (`greatest(1, xid - rn)`) dejaba ~98 % de las filas en el xid 1, y el delta
+-- paginaba por `id` solamente. Por eso el reparto es módulo el xid actual: cada fila cae en uno de
+-- los xids 1..(actual - 1) y las de un mismo xid se desempatan por `id`.
 \echo '-- repartiendo xmin_w bajo el horizonte'
 do $$
 declare
@@ -139,7 +174,7 @@ begin
   foreach t in array array['jornada','ubicacion','espacio','espacio_persona','visita','venta','venta_item'] loop
     execute format('alter table public.%I disable trigger %I', t, t || '_auditoria_update');
     execute format($q$
-      update public.%I x set xmin_w = (greatest(1, $1 - s.rn))::text::xid8
+      update public.%I x set xmin_w = (1 + mod(s.rn, greatest(1, $1 - 1)))::text::xid8
         from (select id, row_number() over (order by id) rn from public.%I) s
        where s.id = x.id
     $q$, t, t) using v_base;
@@ -153,7 +188,8 @@ analyze;
 \echo ''
 \echo '-- filas cargadas'
 select 'jornada' t, count(*) from public.jornada where colportor_id in (select id from public.usuario where email like 'bench-%@bench.local')
-union all select 'ubicacion', count(*) from public.ubicacion where created_by in (select id from public.usuario where email like 'bench-%@bench.local')
+union all select 'ubicacion', count(*) from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000be001'
+union all select 'ubicacion (otras ciudades)', count(*) from public.ubicacion where ciudad_id in (select id from public.ciudad where nombre like 'BENCH ajena %')
 union all select 'espacio', count(*) from public.espacio where created_by in (select id from public.usuario where email like 'bench-%@bench.local')
 union all select 'espacio_persona', count(*) from public.espacio_persona where created_by in (select id from public.usuario where email like 'bench-%@bench.local')
 union all select 'visita', count(*) from public.visita where colportor_id in (select id from public.usuario where email like 'bench-%@bench.local')
