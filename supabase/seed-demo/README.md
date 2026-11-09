@@ -43,6 +43,7 @@ sesión; en remoto se les pone contraseña desde Supabase Studio (Authentication
 - **Idempotente**: si la campaña de verano de la demo ya existe, no hace nada; además cada `INSERT` lleva
   `on conflict do nothing`.
 - **Determinístico**: no usa `random()`; los "azares" salen de un hash (`pg_temp.rnd`), así que la historia es la misma.
+- **Sin depender del día en que se corre**: la historia queda anclada en el 04/11/2026, y las altas de `agenda` llevan `created_at` de ese día (el disparador AG003 mide la fecha programada contra `created_at`; sin él, una carga posterior rechazaría las cuotas ya vencidas). El test `ops_seed_demo_datos_test.sql` corre la carga y el retiro completos en CI.
 - **Con las reglas del dominio**: pasa por los mismos disparadores que la app (la entrega descuenta el stock, el
   alquiler se calcula, los depósitos pasan por sus reglas). La plata va en centavos de peso uruguayo y los precios
   salen de `precio_por_ciudad` (si la ciudad no tiene precio, `precio_general`).

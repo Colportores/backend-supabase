@@ -53,6 +53,10 @@ begin
       select (('x' || substr(md5(p_clave), 1, 7))::bit(28)::int)::double precision / 268435456.0
     $f$;
 
+  -- Dos cargas a la vez no deben pasar juntas la guarda (los movimientos de stock no tienen id fijo): la segunda espera
+  -- a que la primera termine y entonces ve la campaña.
+  perform pg_advisory_xact_lock(hashtext('colportores.seed-demo'));
+
   if exists (select 1 from public.campania c where c.id = pg_temp.did(3, 1)) then
     raise notice 'La demo de datos ya está cargada (campaña %). No se cambió nada.', pg_temp.did(3, 1);
     return;
@@ -611,7 +615,7 @@ begin
          coalesce((select sum(d.monto) from t_dep d where d.usr = u.idx and d.concepto = 'CASA_EDITORA' and d.validado), 0),
          coalesce((select sum(d.monto) from t_dep d where d.usr = u.idx and d.validado), 0),
          coalesce((select sum(t.monto) from t_tkt t where t.usr = u.idx and t.tipo = 'COBRO_TARJETA' and t.estado = 'VALIDADO'), 0),
-         coalesce((select sum(c.monto) from t_cob c where c.usr = u.idx and not c.anulada and c.medio <> 'TARJETA'), 0),
+         coalesce((select sum(c.monto) from t_cob c where c.usr = u.idx and not c.anulada and c.medio = 'EFECTIVO'), 0),
          coalesce((select sum(d.monto) from t_dep d where d.usr = u.idx), 0),
          coalesce((select sum(q.monto) from t_cuota q where q.usr = u.idx and not q.paga), 0)
     from t_usr u where u.rol = 'COLPORTOR';
@@ -674,28 +678,30 @@ begin
     from t_ent e on conflict do nothing;
 
   -- Agenda: la próxima cuota de cada cliente que debe, las entregas pendientes y algunas entrevistas de seguimiento.
+  -- Las altas llevan created_at = el día de la historia (hoy = 04/11): tg_agenda_origen (AG003) mide la fecha programada contra
+  -- created_at, y sin él una carga posterior rechazaría toda cuota PROGRAMADA que ya pasó.
   create temp table t_ag_ent (vis uuid primary key, ins int, usr int, esp bigint, ubi bigint, fecha timestamptz) on commit drop;
   insert into t_ag_ent (vis, ins, usr, esp, ubi, fecha)
   select v.id, v.ins, v.usr, v.esp, v.ubi, greatest(v.fecha + interval '7 days', timestamptz '2026-11-05 15:00:00+00')
     from t_vis v where v.res = 'ENTREVISTA' and v.fecha >= timestamptz '2026-10-24 00:00:00+00' and pg_temp.rnd('ag' || v.id) < 0.50;
 
-  insert into public.agenda (id, espacio_persona_id, tipo, fecha_programada, estado, colportor_id, espacio_id, venta_id, monto_previsto)
+  insert into public.agenda (id, espacio_persona_id, tipo, fecha_programada, estado, colportor_id, espacio_id, venta_id, monto_previsto, created_at)
   select pg_temp.did(26, q.ins * 1000000 + row_number() over (partition by q.ins order by q.fecha, q.venta)), pg_temp.did(46, q.esp), 'COBRANZA', q.fecha,
          case when q.fecha < timestamptz '2026-11-04 00:00:00+00' then 'NO_CUMPLIDA' else 'PROGRAMADA' end,
-         pg_temp.did(0, q.usr), e.id, q.venta, q.monto
+         pg_temp.did(0, q.usr), e.id, q.venta, q.monto, timestamptz '2026-11-04 12:00:00+00'
     from (select distinct on (c.venta) c.* from t_cuota c where not c.paga order by c.venta, c.k) q
     join t_esp e on e.no = q.esp
   on conflict do nothing;
-  insert into public.agenda (id, espacio_persona_id, tipo, fecha_programada, estado, colportor_id, espacio_id, venta_id, entrega_id)
+  insert into public.agenda (id, espacio_persona_id, tipo, fecha_programada, estado, colportor_id, espacio_id, venta_id, entrega_id, created_at)
   select pg_temp.did(26, 300000 + row_number() over (order by en.id)), pg_temp.did(46, en.esp), 'ENTREGA',
          en.fecha + ((3 + floor(pg_temp.rnd('pp' || en.id) * 5)) || ' days')::interval,
          case when en.fecha + ((3 + floor(pg_temp.rnd('pp' || en.id) * 5)) || ' days')::interval < timestamptz '2026-11-04 00:00:00+00' then 'NO_CUMPLIDA' else 'PROGRAMADA' end,
-         pg_temp.did(0, en.usr), e.id, en.venta, en.id
+         pg_temp.did(0, en.usr), e.id, en.venta, en.id, timestamptz '2026-11-04 12:00:00+00'
     from t_ent en join t_esp e on e.no = en.esp where en.pend
   on conflict do nothing;
-  insert into public.agenda (id, espacio_persona_id, tipo, fecha_programada, estado, colportor_id, espacio_id, visita_id)
+  insert into public.agenda (id, espacio_persona_id, tipo, fecha_programada, estado, colportor_id, espacio_id, visita_id, created_at)
   select pg_temp.did(26, 600000 + row_number() over (order by a.vis)), pg_temp.did(46, a.esp), 'ENTREVISTA', a.fecha, 'PROGRAMADA',
-         pg_temp.did(0, a.usr), e.id, null
+         pg_temp.did(0, a.usr), e.id, null, timestamptz '2026-11-04 12:00:00+00'
     from t_ag_ent a join t_esp e on e.no = a.esp
   on conflict do nothing;
 

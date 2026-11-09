@@ -104,6 +104,14 @@ reglas as (
   union all
   select 114, 'jornadas con total_visitas distinto de sus visitas (debe ser 0)', count(*), count(*) = 0
     from public.jornada j, d where j.id::text like d.pre and j.total_visitas <> (select count(*) from public.visita v where v.jornada_id = j.id)
+  union all
+  -- 115: el «en mano» de la cuenta es el que calcula el servidor (efectivo cobrado menos depósitos)
+  select 115, 'cuentas cuyo «en mano» difiere de efectivo_en_mano() (debe ser 0)', count(*), count(*) = 0
+    from public.cuenta_colportor cu, d where cu.id::text like d.pre and cu.dinero_en_mano <> public.efectivo_en_mano(cu.usuario_id)
+  union all
+  -- 116: una base sin demo (o una carga que falló) no puede salir toda en verde
+  select 116, 'ventas de la demo cargadas (debe ser más de 0)', count(*), count(*) > 0
+    from public.venta v, d where v.id::text like d.pre
 )
 select o as orden, que, v as valor, null::boolean as ok from conteos
 union all select o, que, v, ok from reglas

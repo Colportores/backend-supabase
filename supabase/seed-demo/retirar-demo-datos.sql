@@ -11,8 +11,9 @@
 --
 -- Cómo se corre: `scripts/db-seed-demo.sh --retirar` (o pegarlo entero en el SQL Editor / `psql -f`). Es un solo DO:
 -- o aplica todo o no aplica nada. Sin tocar nada corre en VISTA PREVIA: hace todo, devuelve el conteo por tabla y
--- deshace. Para aplicarlo de verdad, descomentar la línea `select set_config('retiro.aplicar', 'si', true);` de
--- abajo (el script la activa con --aplicar). Se puede correr dos veces: la segunda no encuentra nada vivo.
+-- deshace. Para aplicarlo de verdad, cambiar `v_aplicar boolean := false;` por `true` en el DO de abajo (el script lo hace
+-- con --aplicar, sobre una copia). No depende de la transacción: sirve con `psql -f`, con el CLI y con el SQL Editor.
+-- Se puede correr dos veces: la segunda no encuentra nada vivo.
 --
 -- Los depósitos YA VALIDADOS no se pueden dar de baja (trigger DP001: «una corrección es un movimiento nuevo», vale
 -- también para el servidor): quedan vivos y el resumen los cuenta. Quitarlos del todo es una decisión de dominio de
@@ -22,20 +23,21 @@
 -- la campaña de la demo (aunque esté dada de baja), a propósito, para no resucitar datos retirados.
 -- ============================================================================
 
--- select set_config('retiro.aplicar', 'si', true);
-
 create temp table if not exists retiro_demo_resumen (orden serial, que text, filas integer);
 truncate retiro_demo_resumen;
 
 do $retiro$
 declare
-  v_aplicar boolean := coalesce(current_setting('retiro.aplicar', true), '') = 'si';
+  v_aplicar boolean := false;  -- retiro:aplicar (el script cambia este false por true con --aplicar)
   v_pre     constant text := '5eed0000-0000-7000-8%';
   v_usr     uuid[];
   v_n       integer;
   v_resumen jsonb := '[]'::jsonb;
   t         record;
 begin
+  -- Los tests pueden activar el retiro con la marca de transacción `retiro.aplicar`.
+  v_aplicar := v_aplicar or coalesce(current_setting('retiro.aplicar', true), '') = 'si';
+
   select coalesce(array_agg(id), '{}') into v_usr from public.usuario where id::text like v_pre;
 
   begin
@@ -60,8 +62,10 @@ begin
         (15, 'stock',                             'id::text like $1'),
         (16, 'pedido_item',                       'id::text like $1'),
         (17, 'pedido_casa_editora',               'id::text like $1'),
-        (18, 'cuenta_deuda_historial',            'id::text like $1'),
+        (18, 'campania_coordinador',              'campania_id::text like $1'),
         (19, 'cuenta_colportor',                  'id::text like $1'),
+        -- Después de la cuenta: darla de baja escribe otra fila de historial (trigger), sin el prefijo.
+        (19.5, 'cuenta_deuda_historial',          'id::text like $1 or usuario_id = any ($2)'),
         (20, 'cuenta_alquiler',                   'usuario_id = any ($2)'),
         (21, 'precio_por_ciudad',                 'id::text like $1'),
         (22, 'precio_general',                    'id::text like $1'),

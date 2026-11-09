@@ -43,10 +43,12 @@ case "$modo" in
   retirar) archivo="$DIR/retirar-demo-datos.sql" ;;
 esac
 
-# Para --aplicar se arma una copia temporal con la línea de confirmación activa (el original queda en vista previa).
+# Para --aplicar se arma una copia temporal con la confirmación activa dentro del propio DO (el original queda en vista
+# previa). No depende de la transacción: psql -f confirma cada sentencia por separado.
 if [ "$aplicar" = 1 ]; then
   tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
-  sed "s/^-- select set_config('retiro.aplicar'/select set_config('retiro.aplicar'/" "$archivo" > "$tmp"
+  sed "s/v_aplicar boolean := false;  -- retiro:aplicar/v_aplicar boolean := true;  -- retiro:aplicar/" "$archivo" > "$tmp"
+  grep -q "v_aplicar boolean := true;  -- retiro:aplicar" "$tmp" || { echo "No se pudo activar --aplicar en $archivo" >&2; exit 1; }
   archivo="$tmp"
 fi
 
@@ -56,7 +58,9 @@ if [ "$remoto" = 1 ]; then
     echo "DEMO_PASSWORD no se aplica en remoto (la contraseña no se manda por la API): ponela desde Supabase Studio." >&2
   fi
   echo "Proyecto de demo: $REF_DEMO — $modo$([ "$aplicar" = 1 ] && echo ' (APLICAR)')" >&2
-  exec supabase db query --linked --project-ref "$REF_DEMO" -o table -f "$archivo"
+  # Sin exec: así el trap borra la copia temporal de --aplicar al terminar.
+  supabase db query --linked --project-ref "$REF_DEMO" -o table -f "$archivo"
+  exit $?
 fi
 
 : "${DB_URL:?Definir DB_URL (postgresql://user:pass@host:port/db) o usar --remoto}"

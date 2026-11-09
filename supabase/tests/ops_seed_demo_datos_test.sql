@@ -64,6 +64,11 @@ select results_eq(
   $$ select ventas, cobros, usuarios, movs from antes $$,
   'una segunda pasada no duplica nada');
 
+-- En mano: la cuenta del generador coincide con la del servidor (solo efectivo)
+select is((select count(*) from public.cuenta_colportor cu where cu.id::text like '5eed0000-0000-7000-8%'
+            and cu.dinero_en_mano <> public.efectivo_en_mano(cu.usuario_id)), 0::bigint,
+          'el «en mano» de cada cuenta es el efectivo_en_mano() del servidor');
+
 -- Retiro: baja lógica de todo lo de la demo; los depósitos validados quedan (DP001)
 \i supabase/seed-demo/retirar-demo-datos.sql
 select is((select count(*) from public.venta where id::text like '5eed0000-0000-7000-8%' and deleted_at is not null), 0::bigint,
@@ -83,6 +88,9 @@ select cmp_ok((select count(*) from public.deposito where id::text like '5eed000
                '>', 0::bigint, 'los depósitos validados quedan vivos (DP001)');
 select is((select count(*) from public.venta where id::text not like '5eed0000-0000-7000-8%' and deleted_at is not null), 0::bigint,
           'el retiro no toca nada que no sea de la demo');
+select is((select count(*) from public.cuenta_deuda_historial h where h.deleted_at is null
+            and h.usuario_id in (select id from public.usuario where id::text like '5eed0000-0000-7000-8%')), 0::bigint,
+          'el retiro da de baja también el historial de deuda de las cuentas de la demo');
 
 select * from finish();
 rollback;
