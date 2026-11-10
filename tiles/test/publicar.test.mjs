@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { ciudadesPublicables } from '../src/ambito.mjs';
 import { validar } from '../src/catalogo.mjs';
 import { estiloDePrueba } from './ayudas.mjs';
 import {
@@ -837,6 +838,41 @@ test('un renombre no es un choque: la ciudad que cambió de nombre se publica en
       }),
     );
     assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-rivera', C], ['ciudad-tranqueras', A]]);
+  }));
+
+test('dos ciudades del mismo nombre en distintos departamentos se publican las dos; la que ya estaba pasa a su paquete con departamento y el viejo se retira (#259)', () =>
+  conTmp(async (tmp) => {
+    const CANELONES = '09990000-0000-7000-8003-0000000000c1';
+    const COLONIA = '09990000-0000-7000-8003-0000000000c2';
+    const laPaz = (id, departamento, bbox) => ({
+      id,
+      nombre: 'La Paz',
+      departamento,
+      bbox_oeste: bbox[0],
+      bbox_sur: bbox[1],
+      bbox_este: bbox[2],
+      bbox_norte: bbox[3],
+    });
+    const canelones = laPaz(CANELONES, 'Canelones', [-56.25, -34.78, -56.2, -34.74]);
+    const colonia = laPaz(COLONIA, 'Colonia', [-57.35, -34.37, -57.31, -34.33]);
+    const storage = bucketFalso();
+    // Primero solo La Paz de Canelones tiene rectángulo: su paquete es el de siempre, sin departamento.
+    const { publicables: antes } = ciudadesPublicables([canelones, { ...colonia, bbox_oeste: null }]);
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: antes }));
+    assert.deepEqual(v1.paquetes.map((p) => p.id), ['ciudad-la-paz']);
+    const archivoViejo = v1.paquetes[0].partes[0].archivo;
+
+    // La de Colonia carga su rectángulo: antes el publicador se frenaba con «mismo paquete», ahora publica las dos.
+    const { publicables: despues } = ciudadesPublicables([canelones, colonia]);
+    const { catalogo: v2 } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, { ciudades: despues, ciudadesEnBase: [canelones, colonia], ahora: '2026-10-08T12:00:00Z' }),
+    );
+    assert.deepEqual(v2.paquetes.map((p) => [p.id, p.ambito_id, p.nombre]).sort(), [
+      ['ciudad-la-paz-canelones', CANELONES, 'La Paz'],
+      ['ciudad-la-paz-colonia', COLONIA, 'La Paz'],
+    ]);
+    assert.deepEqual(v2.retirados, [{ archivo: archivoViejo, desde: '2026-10-08T12:00:00Z' }], 'el archivo viejo queda retirado, con su gracia');
+    assert.deepEqual(validar(v2), []);
   }));
 
 test('dos ciudades que se intercambian los nombres tampoco chocan: los dos paquetes pasan a su ambito_id nuevo', () =>
