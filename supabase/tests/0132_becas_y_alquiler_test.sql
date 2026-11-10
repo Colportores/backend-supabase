@@ -504,8 +504,13 @@ select is(pg_temp.coincide('ea'), '4|0', '  … y coincide');
 select is((select ca.sync_version = a.sync_version from public.cuenta_alquiler ca join antes_eb a using (usuario_id, campania_id)
             where ca.usuario_id = pg_temp.u('53') and ca.campania_id = pg_temp.u('eb')), true, 'la fila de eb no se tocó');
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is((select r.cambio from public.definir_alquiler_de_campania(pg_temp.u('ea'), null) r), true, 'a1 deja ea sin alquiler');
+-- ea ya tiene pagos: desde la 0185 el coordinador no la deja sin alquiler (CZ017). El caso «campaña sin alquiler con
+-- pagos» (datos de antes, o el UPDATE directo del servidor) se sigue calculando: se arma como servidor.
+select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000132ea', null) $$,
+  'CZ017', 'Ya hay pagos de alquiler en esta campaña, así que no puede quedar sin alquiler ni en cero. Podés cambiarlo por otro monto mayor que cero.',
+  'a1 no puede dejar ea sin alquiler: ya hay pagos (0185)');
 select pg_temp.actuar_como_servidor();
+update public.campania set alquiler_monto = null where id = pg_temp.u('ea');
 select is(pg_temp.fila('51', 'ea') || '/' || pg_temp.fila('52', 'ea'), 'n|270000|0|n|0/n|40000|0|n|0',
           'sin alquiler: no debe (null) y todo lo pagado queda por decidir (0159)');
 update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('ea') and usuario_id = pg_temp.u('52');

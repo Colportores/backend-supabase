@@ -469,28 +469,34 @@ select is(pg_temp.eventos('e1'), 1, 'definir: y no deja un segundo registro');
 select is((select c.sync_version from public.campania c where c.id = pg_temp.u('e1')),
           (select a.sync_version from antes2 a), 'definir: ni sube la versión de la campaña (no se avisa a los teléfonos de nada)');
 
-select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
-             from public.definir_alquiler_de_campania(pg_temp.u('e1'), null) r),
-          'null|t', 'definir: null = la campaña deja de cobrar alquiler');
-select is(pg_temp.eventos('e1', '{"monto_anterior":180000,"monto_nuevo":null}'), 1,
-          'definir: el registro del null lleva el monto nuevo en null');
-select is(pg_temp.alq('e1', 'b1'), 'null|75000|50000|null|2026-09-08',
-          'sin alquiler: monto y debe en null; lo pagado se sigue viendo');
-select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
-             from public.definir_alquiler_de_campania(pg_temp.u('e1'), null) r),
-          'null|f', 'definir: null sobre null tampoco cambia nada');
+-- e1 ya tiene pagos de alquiler (b1, b4): desde la 0185 no puede quedar sin alquiler ni en cero (CZ017; los casos en
+-- 0185_…_test.sql). Quitar el alquiler y el cero se prueban en e6, que no tiene pagos.
+select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e1', null) $$,
+  'CZ017', 'Ya hay pagos de alquiler en esta campaña, así que no puede quedar sin alquiler ni en cero. Podés cambiarlo por otro monto mayor que cero.',
+  'definir: con pagos, la campaña no puede quedar sin alquiler (0185)');
+select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e1', 0) $$,
+  'CZ017', 'Ya hay pagos de alquiler en esta campaña, así que no puede quedar sin alquiler ni en cero. Podés cambiarlo por otro monto mayor que cero.',
+  'definir: con pagos, tampoco en cero (0185)');
+select is(pg_temp.eventos('e1'), 1, 'definir: los rechazos no dejaron registro');
 
-select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.definir_alquiler_de_campania(pg_temp.u('e1'), 0) r),
+select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
+             from public.definir_alquiler_de_campania(pg_temp.u('e6'), null) r),
+          'null|t', 'definir: null = la campaña deja de cobrar alquiler');
+select is(pg_temp.eventos('e6', '{"monto_anterior":5000,"monto_nuevo":null}'), 1,
+          'definir: el registro del null lleva el monto nuevo en null');
+select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
+             from public.definir_alquiler_de_campania(pg_temp.u('e6'), null) r),
+          'null|f', 'definir: null sobre null tampoco cambia nada');
+select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.definir_alquiler_de_campania(pg_temp.u('e6'), 0) r),
           '0|t', 'definir: cero es un monto válido');
-select is(pg_temp.alq('e1', 'b2'), '0|0|0|0|null', 'alquiler en cero: no debe nada');
-select is(pg_temp.eventos('e1'), 3, 'definir: tres cambios, tres registros');
+select is(pg_temp.eventos('e6'), 2, 'definir: dos cambios en e6, dos registros');
 
 select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e1', -1) $$,
   '22023', 'El alquiler no puede ser negativo. Escribí un monto de cero o más, o dejalo vacío si la campaña no cobra alquiler.',
   'definir: un monto negativo se rechaza con un aviso que guía');
-select is((select c.alquiler_monto from public.campania c where c.id = pg_temp.u('e1')), 0::bigint,
+select is((select c.alquiler_monto from public.campania c where c.id = pg_temp.u('e1')), 180000::bigint,
           'definir: el rechazo no cambió el monto');
-select is(pg_temp.eventos('e1'), 3, 'definir: ni dejó registro');
+select is(pg_temp.eventos('e1'), 1, 'definir: ni dejó registro');
 
 select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.definir_alquiler_de_campania(pg_temp.u('e1'), 150000) r),
           '150000|t', 'definir: vuelve a 150000');
@@ -505,7 +511,7 @@ select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.defini
           '160000|t', 'definir: otro cambio');
 select is(pg_temp.alq('e1', 'b7'), '160000|0|0|160000|null', 'y el cambio le llega también');
 select is(pg_temp.alq('e1', 'b1'), '160000|75000|50000|85000|2026-09-08', 'y a b1 le queda lo que falta (160000 menos 75000)');
-select is(pg_temp.eventos('e1'), 5, 'cinco cambios en e1, cinco registros');
+select is(pg_temp.eventos('e1'), 3, 'tres cambios en e1, tres registros');
 
 -- La campaña terminada no se toca.
 select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e5', 1) $$,
