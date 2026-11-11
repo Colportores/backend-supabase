@@ -66,7 +66,8 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    `sources.protomaps.url`: si los deja, MapLibre los pide al bucket y, sin red, no dibuja rótulos ni íconos aunque
    el mapa esté bajado. Lo que hay que copiar: `estilo/glyphs/<fuente>/<rango>.pbf` (NotoSans-Regular, -Medium e
    -Italic; los rangos `0-255`, `256-511` y `8192-8447`) y `estilo/sprites/grayscale{,@2x}.{json,png}`; están en
-   [`tiles/assets/`](../tiles/assets) (con sus licencias) y son los mismos que se publican. `glyphs` queda como
+   `assets/` de [lib-mapa](https://github.com/Colportores/lib-mapa) (con sus licencias, ADR-019) y son los mismos que
+   se publican. `glyphs` queda como
    `<local>/glyphs/{fontstack}/{range}.pbf` y `sprite` como `<local>/sprites/grayscale`.
    **Por eso la URL absoluta del estilo publicado no es un error** (revisado en backend-supabase#259 contra ADR-011 y
    ADR-019): es la que necesita el panel, que lee el estilo del bucket con conexión. La app no usa ese estilo: el suyo
@@ -76,8 +77,8 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
 5. **¿Hay mapa nuevo?** Comparar el `version` del paquete con el que se bajó: es el SHA-256 de la parte (o,
    con varias, el de sus SHA-256 en orden). Es lo que usa `hayActualizacion`.
    **El estilo se compara igual**: `estilo.version` es el SHA-256 de `estilo/colportores.json`. Si es distinto del
-   que la app guardó, vuelve a pedir el estilo (~240 KB); si es igual, no lo pide. Cambia cuando se publica la
-   paleta nueva (`publicar --solo estilo`, que sube el estilo **y el catálogo**).
+   que la app guardó, vuelve a pedir el estilo (~240 KB); si es igual, no lo pide. Cambia cuando se publica una
+   release nueva de lib-mapa (`publicar --solo estilo`, que sube el estilo **y el catálogo**).
 6. **Atribución visible**: «© OpenStreetMap» (ODbL). Viene en `sources.protomaps.attribution` y en `fuente` del catálogo.
 7. **El mapa de la zona del colportor** no está en el catálogo: el enlace viene **con la zona**, en su columna
    `paquete_mapa`, por el sync (el pull serializa todas las columnas de `zona`; el contrato lo documenta un PR de
@@ -171,21 +172,35 @@ está en el teléfono de cada colportor de la zona. Las ciudades no tienen el pr
 
 ## El estilo
 
-`tiles/paleta.json` + las capas de [`@protomaps/basemaps`](https://github.com/protomaps/basemaps) 5.7.2 dan
-**un** estilo MapLibre (`estilo/colportores.json`), con la paleta del canvas de Claude Design (tierra
-`#F6F5F0`, parques `#DDE8D3`, calles `#FFFFFF` y avenidas `#FBF1D6`), rótulos en español
-(`name:es`), tipografía Noto Sans y la atribución de OSM. Lo genera `node src/cli.mjs estilo` (o `publicar`)
-de forma determinista: la misma paleta da el mismo archivo.
+**El estilo sale de la librería [`lib-mapa`](https://github.com/Colportores/lib-mapa)** ([ADR-019](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-019-libreria-del-mapa-compartida-lib-mapa.md),
+backend-supabase#256): ahí viven el estilo MapLibre, la paleta del canvas, los ajustes (los números de puerta), las
+letras (glyphs Noto Sans) y los íconos (sprites), con sus tests (MapLibre válido, contraste AA, capturas a z16-z18) y
+sus licencias. Backend **no arma ni pinta nada**: el publicador depende de la librería por npm, con el tag de la release
+fijado en [`tiles/package.json`](../tiles/package.json) (`github:Colportores/lib-mapa#vX.Y.Z`, decisión de Cristian del
+09/11, «Usar lib-mapa»: por versión del repo), y **republica en el bucket el estilo, los glyphs y los sprites de esa
+release**. El recorte, el catálogo, el bucket, los secretos y el workflow «Mapas» se quedan acá: la clave de servicio no
+sale de este repo.
 
-Los rótulos que se leen (calles menores y mayores, barrios y números de puerta) van en `#5B6B82`, el «texto
-atenuado» del canvas: **4,97:1 sobre su halo, AA**. Los grises que el canvas usa para esos rótulos dan 3,41:1 y
-2,85:1 sobre la tierra y no llegan a 4,5:1; en este caso gana la accesibilidad (decisión del 06/10) y lo vigila
-`tiles/test/estilo.test.mjs`. Los rótulos de provincia y de país (`state_label`, `country_label`) siguen en el gris
-del canvas (`#8A93A0`): solo se ven con el mapa muy alejado y la decisión no los incluyó.
+- `node src/cli.mjs estilo` (o `publicar`) toma `armarEstilo` de la librería ([`tiles/src/lib-mapa.mjs`](../tiles/src/lib-mapa.mjs))
+  y solo le pasa la URL pública del bucket: es el mismo `colportores.json` de la release de lib-mapa, con
+  `<SUPABASE_URL>/storage/v1/object/public/mapas/estilo` donde la release dice `https://REEMPLAZAR/estilo`. Es
+  determinista: la misma release y la misma URL dan el mismo archivo, byte por byte.
+- Los glyphs y los sprites se suben desde `node_modules/@colportores/lib-mapa/assets/` a `estilo/glyphs/` y
+  `estilo/sprites/`. La versión de la librería queda en el estilo (`metadata["colportores:estilo"]`) y en el log del
+  publicador.
+- Las URL de glyphs y sprites tienen que ser absolutas (MapLibre no las resuelve contra la del estilo), así que el
+  estilo se genera **por proyecto**, con la URL pública de su bucket.
+- **Números de puerta de OpenStreetMap** (`address_label`): desde el zoom 16 de MapLibre, el zoom de calle del móvil,
+  letra 11, halo 1,5 y el color AA de los rótulos `#5B6B82` (decisión P4 del 05/11, lib-mapa#3). Las capas propias de la
+  app y del panel van por encima: donde chocan con un cuadrado numerado de la casa, gana el cuadrado.
+- Los rótulos que se leen van en `#5B6B82` (4,97:1 sobre su halo, AA; decisión del 06/10) y el estilo no dibuja los
+  puntos de interés. El detalle de la paleta y sus tests está en lib-mapa (`estilo/README.md`).
 
-Las URL de glyphs y sprites tienen que ser absolutas (MapLibre no las resuelve contra la del estilo), así que el
-estilo se genera **por proyecto**, con la URL pública de su bucket. Sin los puntos de interés (el sprite no trae
-sus íconos; el canvas no los dibuja). Los assets y sus licencias: [`tiles/assets/NOTICE.md`](../tiles/assets/NOTICE.md).
+**Cambiar el aspecto del mapa** es una release nueva de lib-mapa y, acá, un PR que sube el tag en `tiles/package.json` y
+`tiles/package-lock.json` (`npm install` en Docker) y, después del merge, `publicar --solo estilo` en cada proyecto
+([§ Publicar](#publicar)). `tiles/test/lib-mapa.test.mjs` falla si el tag fijado y la versión instalada no coinciden, si
+el estilo no apunta al bucket o si falta un glyph o un sprite que el estilo pide. Los assets y sus licencias:
+`NOTICE.md` y `assets/NOTICE.md` de lib-mapa.
 
 ## Tamaño: ningún archivo pasa de 50 MB
 
@@ -198,10 +213,15 @@ El plan Free de Supabase rechaza archivos de más de 50 MB. La política (`tiles
    de más de 50 MB.
 
 Medido el 06/10 con el build `20261006` de Protomaps: **Montevideo pesa 10,9 MB a zoom 15** (3,5 MB a zoom 14 y 1,9 a 13),
-así que no hace falta bajar el zoom ni partirla. **El piso es el zoom 14**: es el último en el que todavía se
-distingue una manzana (a 13 se pierden las puertas), así que antes de bajar de ahí la ciudad se parte en dos
-archivos. El 15 es solo el primer intento, no un piso. Una ciudad partida pide que front-colportores-mobile#189 use
-una fuente por parte.
+así que no hace falta bajar el zoom ni partirla. Una ciudad partida pide que front-colportores-mobile#189 use una
+fuente por parte.
+
+**El piso pasa a ser el zoom 15** (decisión de Cristian del 09/11, «Zoom 14»: «Siempre 15, partir en dos»; ADR-019 y
+ADR-011): los números de puerta de OSM solo vienen en las teselas de zoom 15 (0 en zoom 14, medido el 05/11), así que
+una ciudad cortada a 14 se quedaría sin números. Si una ciudad no entra en 50 MB a zoom 15, se parte en dos o más
+archivos, sin bajar el zoom. **El código todavía no lo hace**: el paso 2 de arriba (bajar a 14) lo saca
+[backend-supabase#68](https://github.com/Colportores/backend-supabase/issues/68) en `politica.mjs` y `recorte.mjs`. Hasta
+entonces no hay diferencia práctica: ninguna ciudad publicada pasa de 50 MB a zoom 15.
 Cada descarga de Montevideo son 10,9 MB: conviene mirar en el panel de Supabase el límite mensual de salida
 (*egress*) del plan antes de que el piloto tenga muchos teléfonos bajando el mapa.
 
@@ -249,8 +269,8 @@ de Supabase y no se resuelve desde este repo.
 
 ## Publicar
 
-El código está en [`tiles/`](../tiles) (Node 22; las dependencias son `@protomaps/basemaps` y, para probar,
-`@maplibre/maplibre-gl-style-spec`). Usa el CLI de Protomaps
+El código está en [`tiles/`](../tiles) (Node 22; la única dependencia es lib-mapa, por tag de GitHub, que trae
+`@protomaps/basemaps`; `npm ci` la baja de GitHub sin credenciales, porque el repo es público). Usa el CLI de Protomaps
 [`go-pmtiles`](https://github.com/protomaps/go-pmtiles) **1.31.2** (se baja solo, con SHA-256 verificado), que lee por
 `Range` solo la zona pedida de `https://build.protomaps.com/AAAAMMDD.pmtiles` (el planeta entero pesa ~138 GB: no se
 descarga).
@@ -493,7 +513,7 @@ Un «aviso» no es un error: hoy es que el gateway no expone `Content-Range` al 
 | qué cambia | qué se hace | qué ven los teléfonos |
 |---|---|---|
 | un build nuevo de Protomaps (diario) | **nada** por defecto. Re-cortar cada vez le haría bajar a todos ~11 MB de mapa casi idéntico. Se publica a mano cuando el mapa de OSM cambió lo que importa (calles nuevas, un barrio) | un `version` nuevo en el paquete → «hay actualización» |
-| la paleta | editar `tiles/paleta.json`, probar, y publicar con `--solo estilo` (sube el estilo y el catálogo) | un `estilo.version` nuevo → la app vuelve a pedir el estilo |
+| el aspecto del mapa (paleta, números de puerta, letras, íconos) | una release nueva de [lib-mapa](https://github.com/Colportores/lib-mapa); acá, subir el tag en `tiles/package.json` y `package-lock.json`, probar, y publicar con `--solo estilo` (sube el estilo y el catálogo) | el panel, un `estilo.version` nuevo apenas se publica; la app, con su versión nueva que sube el tag (su estilo viaja con ella, ADR-019) |
 | una ciudad nueva | cargarla en `public.ciudad` **con su rectángulo** ([guía de carga manual § 2](guia-carga-manual.md#2-ciudad)) y publicar (`publicar --solo ciudades`). No se toca ningún archivo del repo | una entrada nueva en el catálogo |
 | el rectángulo de una ciudad | `UPDATE` de los cuatro `bbox_*` a la vez y publicar: sale un mapa nuevo | un `version` nuevo en el paquete |
 | una ciudad que no entra en 50 MB | nada: la política baja el zoom o la parte en dos | `partes` con dos archivos |
@@ -668,5 +688,5 @@ select * from public.agregar_ciudad_a_mano('Pueblo Nuevo', 'Rivera');
   La atribución va en el estilo y en el catálogo; la app y el panel tienen que mostrarla.
 - La lista de departamentos y ciudades (`tiles/datos/uruguay-osm.json`) también es de OpenStreetMap: © OpenStreetMap
   contributors, **ODbL 1.0**, consultada por Overpass API; lleva su atribución y la fecha de los datos en `fuente`.
-- Capas del estilo: `@protomaps/basemaps` (BSD-3-Clause). Tipografía Noto Sans (OFL) y sprites (MIT): ver
-  [`tiles/assets/NOTICE.md`](../tiles/assets/NOTICE.md).
+- Capas del estilo: `@protomaps/basemaps` (BSD-3-Clause). Tipografía Noto Sans (OFL) y sprites (MIT): vienen de
+  lib-mapa con sus avisos (`NOTICE.md` y `assets/NOTICE.md` de [lib-mapa](https://github.com/Colportores/lib-mapa)).

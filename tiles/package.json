@@ -2,7 +2,7 @@
   "name": "colportores-tiles",
   "version": "0.1.0",
   "private": true,
-  "description": "Mapas propios de Colportores: recorta PMTiles de Protomaps, arma el estilo de MapLibre y publica todo en el bucket público `mapas` de Supabase Storage (backend-supabase#42).",
+  "description": "Mapas propios de Colportores: recorta PMTiles de Protomaps y publica en el bucket público `mapas` de Supabase Storage los mapas, el catálogo y el estilo de MapLibre de lib-mapa (backend-supabase#42, #256).",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -12,9 +12,6 @@
     "cli": "node src/cli.mjs"
   },
   "dependencies": {
-    "@protomaps/basemaps": "5.7.2"
-  },
-  "devDependencies": {
-    "@maplibre/maplibre-gl-style-spec": "26.4.4"
+    "@colportores/lib-mapa": "github:Colportores/lib-mapa#94b24cfbf5756994307b75aada177a3b3a9b419f"
   }
 }

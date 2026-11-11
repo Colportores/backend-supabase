@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ciudadesPublicables } from '../src/ambito.mjs';
 import { validar } from '../src/catalogo.mjs';
+import { RAIZ_ASSETS } from '../src/lib-mapa.mjs';
 import { estiloDePrueba } from './ayudas.mjs';
 import {
   RUTA_CATALOGO,
@@ -561,8 +562,7 @@ for (const [que, args, mensaje] of [
 test('publica el estilo con sus glyphs y sprites, cada uno con su tipo de contenido', () =>
   conTmp(async () => {
     const storage = bucketFalso();
-    const raizAssets = fileURLToPath(new URL('../assets', import.meta.url));
-    const { version } = await publicarEstilo({ storage, estilo: estiloDePrueba(), raizAssets });
+    const { version } = await publicarEstilo({ storage, estilo: estiloDePrueba(), raizAssets: RAIZ_ASSETS });
     const porRuta = new Map(storage.subidas.map((s) => [s.ruta, s]));
 
     assert.equal(version, sha(storage.objetos.get(RUTA_ESTILO)), 'la versión es el SHA-256 del estilo subido');
@@ -578,7 +578,7 @@ test('publica el estilo con sus glyphs y sprites, cada uno con su tipo de conten
   }));
 
 test('listarArchivos devuelve rutas con barras, ordenadas', async () => {
-  const raiz = fileURLToPath(new URL('../assets/sprites', import.meta.url));
+  const raiz = join(RAIZ_ASSETS, 'sprites');
   const archivos = await listarArchivos(raiz, 'estilo/sprites');
   assert.deepEqual(
     archivos.map((a) => a.ruta),
