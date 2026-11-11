@@ -264,10 +264,23 @@ begin
     (11, 2, 1,  9, date '2026-07-13', date '2026-08-28', 1.20, null,       true),
     (12, 2, 2, 10, date '2026-07-13', date '2026-08-28', 1.00, null,       true),
     (13, 2, 3,  9, date '2026-07-20', date '2026-08-28', 0.80, null,       true);
-  insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, tipo_beca)
-  select pg_temp.did(11, i.no), (select id from t_camp where idx = i.camp), pg_temp.did(0, i.usr), pg_temp.did(4, i.zona), i.tipo_beca
+  -- La fecha de alta es el primer día de la inscripción (d0, 00:00 de Montevideo), no la de la carga: Inicio y Reportes
+  -- (tablero_de_inicio, horas_/ventas_por_ciudad_y_colportor, 0106) solo cuentan lo que pasó con la inscripción vigente.
+  insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, tipo_beca, created_at)
+  select pg_temp.did(11, i.no), (select id from t_camp where idx = i.camp), pg_temp.did(0, i.usr), pg_temp.did(4, i.zona), i.tipo_beca,
+         i.d0::timestamp at time zone 'America/Montevideo'
     from t_ins i
   on conflict do nothing;
+  -- El trigger del historial (0022) abre el primer tramo de zona con la hora de la carga: empieza el mismo día que la
+  -- inscripción, así la ciudad de cada jornada y venta sale de su zona.
+  update public.campania_colportor_zona_historial h
+     set desde = i.d0::timestamp at time zone 'America/Montevideo'
+    from t_ins i
+   where h.campania_colportor_id = pg_temp.did(11, i.no)
+     and h.deleted_at is null
+     and h.desde > i.d0::timestamp at time zone 'America/Montevideo'
+     and not exists (select 1 from public.campania_colportor_zona_historial h2
+                      where h2.campania_colportor_id = h.campania_colportor_id and h2.desde < h.desde);
   -- La meta de cada beca sale de la meta de su carrera (la misma regla de asignar_beca).
   update public.campania_colportor cc
      set meta_libros    = case cc.tipo_beca when 'MEDIA' then mb.meta_media else mb.meta_completa end,
