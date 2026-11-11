@@ -164,6 +164,16 @@ Al registrarse, la persona acepta los Términos y la Política de Privacidad (HU
 - **Quién lo ve:** cada persona lee solo lo suyo (`select` por la API, `consentimiento_terminos`); nadie lo escribe con su JWT, ni un ADMIN. Lo escribe el trigger del registro o el servidor (`service_role`). Desde la `0182` baja al teléfono por el sync, solo bajada y cada persona la suya (ver «La tanda del 05/11»).
 - Las cuentas que ya existían quedan sin fila: no se inventa qué aceptaron.
 
+### La cédula: una ficha solo de la nube que lee Administración (`0188`, backend-supabase#266)
+
+La cédula que la persona pone al registrarse (HU-AUTH-001) la necesita Administración para identificarla (becas, pagos, casa editora). Decisión de Cristian del 11/11 («Cédula adm.», docs-organizacion#184): **ficha propia en el servidor**.
+
+- **Cómo llega:** el móvil la manda en los metadatos del registro, `signUp(data: {'cedula': …})`, como siempre. El trigger del registro (`tg_auth_usuario_nuevo`) la copia a `public.ficha_administrativa` (una fila por cuenta), sin los espacios de los extremos. Sin la clave, null o en blanco no se crea la ficha y el registro sigue igual.
+- **Solo de la nube:** `ficha_administrativa` no está en `sync.entidad` (no baja al teléfono) y no es una columna de `usuario`. Es dato personal: no entra al `audit_log` (su CHECK ya rechaza la clave `cedula`, 0073) y la ficha no registra eventos.
+- **Quién la lee:** solo Administración (rol ADMIN), por `cedula_de_la_cuenta(p_usuario_id)` → la cédula o null (sin ficha, cuenta inexistente o ficha dada de baja). Cualquier otra sesión, `42501`. Nadie con su JWT tiene privilegios sobre la tabla (ni el ADMIN directo); la escriben el trigger del registro o el servidor (`service_role`).
+- **Rocío no la cambia sola:** cambiar después los metadatos de Auth (`auth.updateUser`) no toca la ficha; el trigger corre solo al crear la cuenta.
+- Pendientes de decisión (ver el PR): si el servidor valida o normaliza la forma, completar las cuentas que ya existían y la corrección por Administración.
+
 ## Inscripción en campaña
 
 `select public.inscribir_colportor(campania_id, usuario_id);` inscribe a un colportor en una campaña y devuelve la fila de `campania_colportor` (HU-CAM-004). Con eso su cuenta pasa sola de `PENDIENTE_ASIGNACION` a `ACTIVA`. Lo consume `bff-coordinadores`; por PostgREST es `POST /rest/v1/rpc/inscribir_colportor`.
