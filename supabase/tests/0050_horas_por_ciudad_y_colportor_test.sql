@@ -1,8 +1,9 @@
--- pgTAP · horas trabajadas por ciudad y colportor (migración 0060, backend-supabase#95, HU-REP-001)
+-- pgTAP · horas trabajadas por ciudad y colportor (migración 0060, backend-supabase#95, HU-REP-001;
+-- la ciudad por el historial de zonas de cada día desde la 0106, backend-supabase#141)
 -- horas_por_ciudad_y_colportor(): el permiso primero (sin JWT, anon, colportor, sin rol, rol vencido,
 -- coordinador de otra campaña) y que una campaña terminada se lee; los errores de campaña y de
 -- parámetros; las horas por día, semana y mes (jornadas cerradas, el día de Montevideo, la campaña,
--- la baja de la inscripción, la ciudad de la zona actual y «sin ciudad»); el período anterior (el
+-- la baja de la inscripción, la ciudad de la zona de ese día y «sin ciudad»); el período anterior (el
 -- lunes contra el sábado, la semana anterior, el mes contra el mes pasado, lo en curso sin
 -- comparar salvo el mes a la fecha); el rango a períodos completos y su tope; los filtros; que la
 -- respuesta no trae nada de más.
@@ -77,6 +78,8 @@ $$;
 -- Ciudades: c1 «Ciudad uno q95» y c2 «Ciudad dos q95» (en ese orden alfabético: dos antes que uno).
 -- campania_ciudad: 71 Cierre/c1  72 Cierre/c2  73 En curso/c1  74 Otra/c2
 -- Zonas: d1 Centro (en 71)  d2 Costa (en 72)  d3 Baja (en 71, se da de baja)  d4 Cerro (en 73)
+-- Campaña e9 «Zonas» (0106): ciudades 75 (c1) y 76 (c2), zonas d5 (en 75) y d6 (en 76), colportores
+-- bd, be y bf con tramos del historial a mano (ver «Cambio de zona» más abajo).
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'horas-' || s || '@example.com', 'x', now(), now(), now()
@@ -141,6 +144,10 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, created
 update public.zona set deleted_at = now() where id = pg_temp.u('d3');
 update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b6');
+-- El historial (0022) abre el tramo con la hora real de la inserción; en este fixture las zonas se
+-- asignaron al inscribirse, antes de todas las jornadas.
+update public.campania_colportor_zona_historial h set desde = i.created_at
+  from public.campania_colportor i where i.id = h.campania_colportor_id;
 
 -- Jornadas de Cierre (horas locales de Montevideo, UTC-3). Semana 1 = lun 07/09 a dom 13/09.
 --   b1 lun 07/09: 2 h + 1,5 h con acompañante; mar 08: 4 h; sáb 12: 3 h; dom 13: 1 h; lun 14: 5 h;
@@ -467,9 +474,10 @@ select is(pg_temp.ciudad_de('e1', '2026-09-07', '2026-09-20', 'semana', '2026-09
 select is(pg_temp.ciudad_de('e1', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'b4'),
           '(sin ciudad)/null', 'b4 sin zona: sin ciudad');
 select is(pg_temp.ciudad_de('e1', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'b5'),
-          '(sin ciudad)/null', 'b5, con la zona dada de baja: sin ciudad');
+          'Ciudad uno q95/01920000-0000-7000-8000-0000000050c1', 'b5, con la zona dada de baja DESPUÉS: sigue en la ciudad que tenía (un reporte cerrado no se mueve)');
 select is(pg_temp.ciudad_de('e1', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'b6'),
-          '(sin ciudad)/null', 'b6, con la inscripción dada de baja: sin ciudad');
+          'Ciudad uno q95/01920000-0000-7000-8000-0000000050c1',
+          'b6, con la inscripción dada de baja DESPUÉS: la jornada del 10/09 va a la ciudad de su zona de ese día (R7)');
 select is((select count(*)::int from public.horas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-09-07', '2026-09-13', 'semana')
             where colportor_id = pg_temp.u('b4')),
           1, 'sin zona aparece UNA sola vez, no repetido en cada ciudad (el total de horas no se infla)');
@@ -479,7 +487,7 @@ select is((select sum(horas) from public.horas_por_ciudad_y_colportor(pg_temp.u(
 -- El orden: período, ciudad por nombre (sin ciudad al final), apellido.
 select is((select array(select left(r.apellido, 3)
                           from public.horas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-09-07', '2026-09-13', 'semana') r)),
-          array['Cru','Alf','Bra','Dua','Egu','Fue'],
+          array['Cru','Alf','Bra','Egu','Fue','Dua'],
           'el orden: Ciudad dos, Ciudad uno (por apellido), sin ciudad (por apellido)');
 select pg_temp.actuar_como_servidor();
 
@@ -522,7 +530,7 @@ select pg_temp.actuar_como_servidor();
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000050a1');
 select is((select string_agg(distinct left(apellido, 3), ',' order by left(apellido, 3))
              from public.horas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-09-07', '2026-09-20', 'semana', pg_temp.u('c1'))),
-          'Alf,Bra', 'p_ciudad_id = ciudad uno: solo los de esa ciudad');
+          'Alf,Bra,Egu,Fue', 'p_ciudad_id = ciudad uno: solo los de esa ciudad (b5 y b6 por su zona de ese día)');
 select is((select string_agg(distinct left(apellido, 3), ',' order by left(apellido, 3))
              from public.horas_por_ciudad_y_colportor(pg_temp.u('e1'), '2026-09-07', '2026-09-20', 'semana', pg_temp.u('c2'))),
           'Cru', 'p_ciudad_id = ciudad dos');
@@ -587,6 +595,141 @@ select is((select count(*)::int
 select is((select count(*)::int
              from public.horas_por_ciudad_y_colportor(pg_temp.u('e6'), pg_temp.hoy() + 1, pg_temp.hoy() + 30, 'dia')),
           0, 'los días futuros no salen');
+select pg_temp.actuar_como_servidor();
+
+-- ---------------------------------------------------------------------------
+-- 10b. Cambio de zona: la ciudad es la de la zona de cada día (0106, #141)
+-- ---------------------------------------------------------------------------
+-- e9 «Zonas» desde el 03/08, sin fin, de a1. Ciudades de campaña 75 (c1) y 76 (c2); zonas d5 (75)
+-- y d6 (76). Los tramos del historial se cargan a mano (desde <= instante < hasta):
+--   bd Ana: d5 hasta el lun 14/09 00:00 (Montevideo) y d6 desde ese instante.
+--       Jornadas: 08/09 2 h, 10/09 3 h, dom 13/09 22:00 a 01:00 (3 h: empieza en el tramo viejo),
+--       lun 14/09 00:00 a 01:00 (1 h: empieza justo en el instante del cambio, es de la nueva),
+--       14/09 08:00 4 h, 15/09 1 h.
+--   be Beto: d5 hasta el 09/09 00:00; sin zona; d6 desde el 20/09 00:00 (días sin zona en el medio).
+--       Jornadas: 08/09 1 h (d5), 12/09 3 h (sin zona), 21/09 2 h (d6).
+--   bf Fede: d5 hasta el 12/09 12:00, cuando se dio de baja la inscripción (R7, decisión 25/10).
+--       Jornadas: 08/09 8 h, 11/09 3 h (de d5), 14/09 2 h (después de la baja: no cuenta).
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
+       'authenticated', 'authenticated', 'horas-' || s || '@example.com', 'x', now(), now(), now()
+  from unnest(array['bd','be','bf']) s;
+update public.usuario u set nombre = x.n, apellido = x.a
+  from (values ('bd','Ana','Zeta'), ('be','Beto','Yepes'), ('bf','Fede','Xavier')) x(s, n, a)
+ where u.id = pg_temp.u(x.s);
+insert into public.usuario_rol (usuario_id, rol_id)
+select pg_temp.u(x.s), r.id
+  from (values ('bd'), ('be'), ('bf')) x(s) join public.rol r on r.codigo = 'COLPORTOR';
+insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
+  (pg_temp.u('e9'), 'Zonas', 'VERANO', '2026-08-03', null, pg_temp.u('a1'));
+insert into public.campania_ciudad (id, campania_id, ciudad_id) values
+  (pg_temp.u('75'), pg_temp.u('e9'), pg_temp.u('c1')),
+  (pg_temp.u('76'), pg_temp.u('e9'), pg_temp.u('c2'));
+insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poligono_geojson) values
+  (pg_temp.u('d5'), 'Rivera',  pg_temp.u('75'), 'ESQUINAS', null,
+   '{"type":"Polygon","coordinates":[[[-56.19,-34.92],[-56.17,-34.92],[-56.17,-34.91],[-56.19,-34.91],[-56.19,-34.92]]]}'::jsonb),
+  (pg_temp.u('d6'), 'Artigas', pg_temp.u('76'), 'ESQUINAS', null,
+   '{"type":"Polygon","coordinates":[[[-56.19,-34.90],[-56.17,-34.90],[-56.17,-34.89],[-56.19,-34.89],[-56.19,-34.90]]]}'::jsonb);
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e9'), pg_temp.u('bd'), null, '2026-08-01 12:00-03'),
+  (pg_temp.u('e9'), pg_temp.u('be'), null, '2026-08-01 12:00-03'),
+  (pg_temp.u('e9'), pg_temp.u('bf'), null, '2026-08-01 12:00-03');
+update public.campania_colportor set deleted_at = '2026-09-12 12:00-03'
+ where campania_id = pg_temp.u('e9') and usuario_id = pg_temp.u('bf');
+insert into public.campania_colportor_zona_historial (campania_colportor_id, zona_id, desde, hasta)
+select i.id, pg_temp.u(x.z), x.d::timestamptz, x.h::timestamptz
+  from (values
+    ('bd', 'd5', '2026-08-01 12:00-03', '2026-09-14 00:00-03'),
+    ('bd', 'd6', '2026-09-14 00:00-03', null),
+    ('be', 'd5', '2026-08-01 12:00-03', '2026-09-09 00:00-03'),
+    ('be', 'd6', '2026-09-20 00:00-03', null),
+    ('bf', 'd5', '2026-08-01 12:00-03', '2026-09-12 12:00-03')
+  ) x(c, z, d, h)
+  join public.campania_colportor i
+    on i.campania_id = pg_temp.u('e9') and i.usuario_id = pg_temp.u(x.c);
+insert into public.jornada (colportor_id, inicio, fin)
+select pg_temp.u(x.s), x.i::timestamptz, x.f::timestamptz
+  from (values
+    ('bd', '2026-09-08 09:00-03', '2026-09-08 11:00-03'),
+    ('bd', '2026-09-10 09:00-03', '2026-09-10 12:00-03'),
+    ('bd', '2026-09-13 22:00-03', '2026-09-14 01:00-03'),
+    ('bd', '2026-09-14 00:00-03', '2026-09-14 01:00-03'),
+    ('bd', '2026-09-14 08:00-03', '2026-09-14 12:00-03'),
+    ('bd', '2026-09-15 09:00-03', '2026-09-15 10:00-03'),
+    ('be', '2026-09-08 09:00-03', '2026-09-08 10:00-03'),
+    ('be', '2026-09-12 09:00-03', '2026-09-12 12:00-03'),
+    ('be', '2026-09-21 09:00-03', '2026-09-21 11:00-03'),
+    ('bf', '2026-09-08 09:00-03', '2026-09-08 17:00-03'),
+    ('bf', '2026-09-11 09:00-03', '2026-09-11 12:00-03'),
+    ('bf', '2026-09-14 09:00-03', '2026-09-14 11:00-03')
+  ) x(s, i, f);
+
+-- horas|jornadas de un colportor, un período y una ciudad (c1, c2 o 'sin').
+create or replace function pg_temp.fila_ciudad(p_agr text, p_inicio date, p_colp text, p_ciudad text)
+returns text language sql as $$
+  select coalesce((
+    select format('%s|%s|%s|%s', r.horas, r.jornadas, r.horas_anterior, r.jornadas_anterior)
+      from public.horas_por_ciudad_y_colportor(pg_temp.u('e9'), '2026-09-07', '2026-09-27', p_agr) r
+     where r.periodo_inicio = p_inicio and r.colportor_id = pg_temp.u(p_colp)
+       and r.ciudad_id is not distinct from (case p_ciudad when 'sin' then null else pg_temp.u(p_ciudad) end)),
+    'sin fila')
+$$;
+
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000050a1');
+-- Por semana: Ana trabajó la semana del 07/09 en la primera ciudad y la del 14/09 en la segunda.
+select is(pg_temp.fila_ciudad('semana', '2026-09-07', 'bd', 'c1'), '8.00|3|0.00|0',
+          'Ana, semana 07/09: 8 h en Ciudad uno (la jornada del domingo 22:00 a 01:00 empieza en el tramo viejo y cuenta entera ahí)');
+select is(pg_temp.fila_ciudad('semana', '2026-09-07', 'bd', 'c2'), 'sin fila',
+          'Ana, semana 07/09: nada en Ciudad dos');
+select is(pg_temp.fila_ciudad('semana', '2026-09-14', 'bd', 'c2'), '6.00|3|0.00|0',
+          'Ana, semana 14/09: 6 h en Ciudad dos (la jornada que empieza justo en el instante del cambio es de la zona nueva)');
+select is(pg_temp.fila_ciudad('semana', '2026-09-14', 'bd', 'c1'), '0.00|0|8.00|3',
+          'Ana, semana 14/09 en Ciudad uno: 0 h contra las 8 h de la semana anterior (la suma por ciudad dice la verdad: nada se cuenta dos veces)');
+select is((select sum(horas) from public.horas_por_ciudad_y_colportor(pg_temp.u('e9'), '2026-09-07', '2026-09-27', 'semana')
+            where colportor_id = pg_temp.u('bd')),
+          14.00, 'Ana: 8 + 6 = 14 h en total, ni una más ni una menos');
+-- Por mes: el cambio a mitad de mes parte el mes en dos ciudades.
+select is(pg_temp.fila_ciudad('mes', '2026-09-01', 'bd', 'c1'), '8.00|3|0.00|0', 'Ana, septiembre en Ciudad uno: 8 h');
+select is(pg_temp.fila_ciudad('mes', '2026-09-01', 'bd', 'c2'), '6.00|3|0.00|0', 'Ana, septiembre en Ciudad dos: 6 h');
+-- Por día.
+select is((select string_agg(r.horas::text || '@' || coalesce(ciu.nombre, '-'), ',' order by r.periodo_inicio, ciu.nombre)
+             from public.horas_por_ciudad_y_colportor(pg_temp.u('e9'), '2026-09-13', '2026-09-15', 'dia') r
+             left join public.ciudad ciu on ciu.id = r.ciudad_id
+            where r.colportor_id = pg_temp.u('bd') and r.jornadas > 0),
+          '3.00@Ciudad uno q95,5.00@Ciudad dos q95,1.00@Ciudad dos q95',
+          'Ana por día: el 13 (3 h) en Ciudad uno; el 14 (5 h) y el 15 (1 h) en Ciudad dos');
+-- Filtro por ciudad: solo lo que trabajó en esa ciudad.
+select is((select sum(horas) from public.horas_por_ciudad_y_colportor(pg_temp.u('e9'), '2026-09-07', '2026-09-27', 'semana',
+                                                                       pg_temp.u('c1'), array[pg_temp.u('bd')])),
+          8.00, 'p_ciudad_id = Ciudad uno: de Ana solo las 8 h que trabajó allá');
+select is((select sum(horas) from public.horas_por_ciudad_y_colportor(pg_temp.u('e9'), '2026-09-07', '2026-09-27', 'semana',
+                                                                       pg_temp.u('c2'), array[pg_temp.u('bd')])),
+          6.00, 'p_ciudad_id = Ciudad dos: de Ana solo las 6 h que trabajó allá');
+
+-- Días sin zona: «Sin zona asignada» (ciudad null), una sola vez.
+select is(pg_temp.fila_ciudad('semana', '2026-09-07', 'be', 'c1'), '1.00|1|0.00|0', 'Beto, semana 07/09: la hora del 08 (con zona) en Ciudad uno');
+select is(pg_temp.fila_ciudad('semana', '2026-09-07', 'be', 'sin'), '3.00|1|0.00|0', 'Beto, semana 07/09: las 3 h del 12 (sin zona) van a «sin ciudad»');
+select is(pg_temp.fila_ciudad('semana', '2026-09-21', 'be', 'c2'), '2.00|1|0.00|0', 'Beto, semana 21/09: con zona de nuevo, en Ciudad dos');
+select is((select sum(horas) from public.horas_por_ciudad_y_colportor(pg_temp.u('e9'), '2026-09-07', '2026-09-27', 'semana')
+            where colportor_id = pg_temp.u('be')),
+          6.00, 'Beto: 1 + 3 + 2 = 6 h, los días sin zona no se pierden ni se repiten');
+
+-- Inscripción dada de baja después (R7): sus horas siguen en la ciudad de la zona que tenía.
+select is(pg_temp.fila_ciudad('semana', '2026-09-07', 'bf', 'c1'), '11.00|2|0.00|0',
+          'Fede, dado de baja el 12/09: sus 11 h trabajadas antes de la baja van a Ciudad uno, no a «sin ciudad»');
+select is(pg_temp.fila_ciudad('semana', '2026-09-07', 'bf', 'sin'), 'sin fila', 'Fede: nada en «sin ciudad»');
+select is(pg_temp.fila_ciudad('semana', '2026-09-14', 'bf', 'c1'), '0.00|0|11.00|2',
+          'Fede, semana 14/09: la jornada posterior a la baja no cuenta (queda la semana anterior)');
+select pg_temp.actuar_como_servidor();
+
+-- Un reporte de un mes cerrado no cambia aunque después den de baja la zona y la ciudad de campaña.
+update public.zona set deleted_at = now() where id in (pg_temp.u('d5'), pg_temp.u('d6'));
+update public.campania_ciudad set deleted_at = now() where id in (pg_temp.u('75'), pg_temp.u('76'));
+select pg_temp.actuar_como('01920000-0000-7000-8000-0000000050a1');
+select is(pg_temp.fila_ciudad('mes', '2026-09-01', 'bd', 'c1'), '8.00|3|0.00|0',
+          'con las zonas y las ciudades de campaña dadas de baja después, septiembre de Ana sigue igual (Ciudad uno)');
+select is(pg_temp.fila_ciudad('mes', '2026-09-01', 'bd', 'c2'), '6.00|3|0.00|0',
+          'y en Ciudad dos también');
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
