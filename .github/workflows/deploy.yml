@@ -1,8 +1,11 @@
 name: Deploy
 
-# Aplica las migraciones pendientes al proyecto Supabase del environment.
+# Aplica las migraciones pendientes al proyecto Supabase del environment y, después, publica las
+# Edge Functions del repo (`supabase/functions/*`) en el mismo environment.
 # Cada environment de GitHub define: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD.
-# Solo aplica migraciones pendientes (forward-only); nunca hace reset.
+# Solo aplica migraciones pendientes (forward-only); nunca hace reset. Las funciones se publican con
+# la misma clave (SUPABASE_ACCESS_TOKEN); los secretos de cada función (`supabase secrets set`) no
+# viajan acá: se cargan una vez por environment (README de cada función).
 #
 # Se dispara al TERMINAR CI sobre el mismo commit, no en paralelo con él: con `on: push` los dos
 # workflows arrancaban a la vez y una migración que rompe pgTAP igual llegaba a la base real.
@@ -67,3 +70,10 @@ jobs:
 
       - name: Historial aplicado
         run: supabase migration list
+
+      # Después de las migraciones: una función puede llamar a una RPC que la migración recién creó.
+      # `--use-api` empaqueta del lado del servidor de Supabase (sin Docker en el runner). Sin nombres
+      # publica todas las del repo, con el `verify_jwt` y el import map de cada una en `config.toml`.
+      # NO lleva `--prune`: una función que existe en el proyecto y no en el repo no se borra sola.
+      - name: Publicar las funciones
+        run: supabase functions deploy --use-api --yes

@@ -100,8 +100,8 @@ select is(
   array['consentimiento_terminos_select_propio:SELECT'],
   'una sola política: leer lo propio (ninguna de escritura)'
 );
-select ok(not exists (select 1 from sync.entidad where nombre = 'consentimiento_terminos'),
-          'no es entidad de sync: no baja al teléfono');
+select ok(exists (select 1 from sync.entidad where nombre = 'consentimiento_terminos' and not permite_push and columna_duenio = 'usuario_id'),
+          'desde la 0182 es entidad de sync de solo bajada, cada persona la suya (la 0065 decía que no bajaba)');
 
 select ok(not (has_table_privilege('anon', 'public.consentimiento_terminos', 'select')
             or has_table_privilege('anon', 'public.consentimiento_terminos', 'insert')

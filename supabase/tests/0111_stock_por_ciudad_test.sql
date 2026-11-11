@@ -255,8 +255,10 @@ select pg_temp.u(x.v), x.m, 'EFECTIVO', x.f::timestamptz, x.baja, x.anul, case w
 -- Pedidos a la casa editora (un colportor, varios estados). Esperan autorización los PENDIENTE_AUTORIZACION
 -- vivos: b1 uno (hay otro dado de baja, uno AUTORIZADO, uno BORRADOR y uno RECHAZADO), b2, b3, b4, b5 (de
 -- baja), b8 y b6 (de Otra).
-insert into public.pedido_casa_editora (colportor_id, estado, monto_total, origen, deleted_at)
-select pg_temp.u(x.s), x.e, 1000, 'COLPORTOR', x.baja
+-- Todos del 10/09: dentro de la inscripción (la de b5 se da de baja el 15/09) y antes del fin de Cierre (0112).
+insert into public.pedido_casa_editora (colportor_id, estado, monto_total, origen, deleted_at, motivo_rechazo, fecha_pedido)
+select pg_temp.u(x.s), x.e, 1000, 'COLPORTOR', x.baja, case when x.e = 'RECHAZADO' then 'Motivo de prueba' end,
+       '2026-09-10 12:00:00-03'
   from (values
     ('b1', 'PENDIENTE_AUTORIZACION', null::timestamptz),
     ('b1', 'PENDIENTE_AUTORIZACION', now()),
@@ -278,7 +280,7 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000111a1');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.stock_por_ciudad(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','entregados',
+          array['apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
                 'nombre','por_cobrar','por_entregar','producto_id','producto_nombre','producto_tipo','tiene',
                 'ultimo_dato_at'],
           'stock_por_ciudad: la forma de la respuesta, solo cantidades (sin plata, clientes, talonarios ni emails)');
@@ -442,8 +444,8 @@ select is(pg_temp.fila('e1', 'b1', '91'), '5|1|5|3',
           'b1, Libro Uno: tiene 5; 1 por entregar; entregó 2 + 3; por cobrar solo las 3 de la venta sin cobros (la de 2 está paga)');
 select is(pg_temp.fila('e1', 'b1', '92'), '0|4|0|0',
           'b1, Libro Dos: su renglón de stock está dado de baja (no cuenta) y 4 por entregar');
-select is(pg_temp.fila('e1', 'b1', '93'), '10|0|7|7',
-          'b1, Revista: un cobro parcial (6) y un cobro anulado (1) dejan las 7 por cobrar');
+select is(pg_temp.fila('e1', 'b1', '93'), '10|0|7|5',
+          'b1, Revista: por cobrar en proporción (0137): 6 de una venta de 5000 con 2000 cobrados = ceil(6 × 3000 / 5000) = 4, y 1 de una de 8000 con el cobro anulado = 1');
 select is(pg_temp.fila('e1', 'b1', '94'), '0|0|2|2',
           'b1, Material: un cobro dado de baja no cuenta: la venta sigue con saldo');
 select is(pg_temp.fila('e1', 'b1', '98'), '3|0|0|0', 'b1, Libro De Baja: lo que tiene, 3');

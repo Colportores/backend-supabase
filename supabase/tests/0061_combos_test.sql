@@ -284,7 +284,8 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 create temp table r_push on commit drop as
   select pg_temp.push(jsonb_build_array(
     pg_temp.job('c1', 'venta', jsonb_build_object('id', pg_temp.u('b3'), 'espacio_persona_id', pg_temp.u('ca'),
-                'numero_talonario', 'T-62', 'monto_total', 134500, 'fecha', now())),
+                'numero_talonario', 'T-62', 'monto_total', 134500, 'fecha', now(),
+                'motivo_monto_manual', 'el último ítem pasa el total (0150)')),
     pg_temp.job('c2', 'venta_item', pg_temp.payload_item('b4', 'b3', null, 'd0', 1, 110000)),
     pg_temp.job('c3', 'venta_item', pg_temp.payload_item('b5', 'b3', '11', null, 1, 24500)))) as r;
 grant select on r_push to authenticated;

@@ -43,6 +43,10 @@ on:
         description: Solo esta ciudad (su nombre en minúsculas, sin tildes y con guiones, p. ej. montevideo). Vacío = todas las que tienen rectángulo en public.ciudad
         required: false
         type: string
+      pais:
+        description: País de las ciudades que se publican (ISO 3166-1 de dos letras, p. ej. AR). Vacío = UY
+        required: false
+        type: string
       zona:
         description: Solo esta zona (su id en public.zona). Vacío = todas
         required: false
@@ -147,6 +151,7 @@ jobs:
           # La corrida programada no tiene inputs: publica solo las zonas.
           SOLO: ${{ inputs.solo || 'zonas' }}
           CIUDAD: ${{ inputs.ciudad }}
+          PAIS: ${{ inputs.pais }}
           ZONA: ${{ inputs.zona }}
           REGENERAR: ${{ inputs.regenerar }}
           BUILD: ${{ inputs.build }}
@@ -170,6 +175,7 @@ jobs:
           args=(publicar)
           if [ "$SOLO" != "todo" ]; then args+=(--solo "$SOLO"); fi
           if [ -n "$CIUDAD" ]; then args+=(--ciudad "$CIUDAD"); fi
+          if [ -n "$PAIS" ]; then args+=(--pais "$PAIS"); fi
           if [ -n "$ZONA" ]; then args+=(--zona "$ZONA"); fi
           if [ "$REGENERAR" = "true" ]; then args+=(--regenerar); fi
           if [ -n "$BUILD" ]; then args+=(--build "$BUILD"); fi

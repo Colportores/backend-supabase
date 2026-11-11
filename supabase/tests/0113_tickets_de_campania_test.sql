@@ -185,13 +185,13 @@ select is((select pg_get_function_result('public.tickets_de_campania(uuid, text,
 -- con JWT; las dos de la política, solo authenticated.
 select is((select count(*)::int
              from pg_proc p where p.pronamespace = 'public'::regnamespace
-              and p.proname in ('campania_del_ticket', 'puede_ver_ticket_de', 'puede_ver_foto_de_ticket')
+              and p.proname in ('campania_del_ticket', 'puede_ver_ticket', 'puede_ver_foto_de_ticket')
               and p.prosecdef and p.proconfig = array['search_path=""']),
           3, 'las tres son SECURITY DEFINER con search_path vacío');
 select is(has_function_privilege('authenticated', 'public.campania_del_ticket(uuid, timestamptz)', 'execute'), false,
           'campania_del_ticket es interna: authenticated no la ejecuta');
-select is(has_function_privilege('anon', 'public.puede_ver_ticket_de(uuid, timestamptz)', 'execute'), false, 'anon no ejecuta puede_ver_ticket_de');
-select is(has_function_privilege('authenticated', 'public.puede_ver_ticket_de(uuid, timestamptz)', 'execute'), true,
+select is(has_function_privilege('anon', 'public.puede_ver_ticket(uuid, uuid, timestamptz)', 'execute'), false, 'anon no ejecuta puede_ver_ticket');
+select is(has_function_privilege('authenticated', 'public.puede_ver_ticket(uuid, uuid, timestamptz)', 'execute'), true,
           'authenticated sí (la llama la política ticket_select)');
 select is(has_function_privilege('anon', 'public.puede_ver_foto_de_ticket(text)', 'execute'), false, 'anon no ejecuta puede_ver_foto_de_ticket');
 select is(has_function_privilege('authenticated', 'public.puede_ver_foto_de_ticket(text)', 'execute'), true,
@@ -483,29 +483,29 @@ select is(public.campania_del_ticket(pg_temp.u('b8'), now() - interval '35 days'
           'una campaña dada de baja no se queda con tickets');
 update public.campania set deleted_at = null where id = pg_temp.u('e4');
 
--- puede_ver_ticket_de(), llamada directa por cada quien (la usan ticket_select y la foto del bucket).
+-- puede_ver_ticket() sin ticket (por la fecha), llamada directa por cada quien (la usan ticket_select y la foto del bucket).
 -- El ticket mirado: lo que Gaspar (b7) hizo hace 60 días, de e4 (la campaña de c1).
 select pg_temp.actuar_como(pg_temp.u('b7'));
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '60 days'), true, 'la dueña lo ve');
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '90 days'), true,
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '60 days'), true, 'la dueña lo ve');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '90 days'), true,
           'la dueña ve también el que no es de ninguna campaña');
-select is(public.puede_ver_ticket_de(pg_temp.u('b8'), now() - interval '60 days'), false, 'y no el de otro colportor');
+select is(public.puede_ver_ticket(null, pg_temp.u('b8'), now() - interval '60 days'), false, 'y no el de otro colportor');
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '60 days'), true, 'el ADMIN lo ve');
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '90 days'), true, 'también el que no es de ninguna campaña');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '60 days'), true, 'el ADMIN lo ve');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '90 days'), true, 'también el que no es de ninguna campaña');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '60 days'), true, 'c1, coordinador de e4, lo ve');
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '10 days'), false,
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '60 days'), true, 'c1, coordinador de e4, lo ve');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '10 days'), false,
           'pero no el de e5 de la misma persona, aunque coordine a Gaspar en e4');
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '90 days'), false, 'ni el que no es de ninguna campaña');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '90 days'), false, 'ni el que no es de ninguna campaña');
 select pg_temp.actuar_como(pg_temp.u('c2'));
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), now() - interval '60 days'), false, 'c2 no ve el de e4');
-select is(public.puede_ver_ticket_de(pg_temp.u('b7'), null), false, 'sin fecha, no se ve (no hay a qué campaña pertenecer)');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), now() - interval '60 days'), false, 'c2 no ve el de e4');
+select is(public.puede_ver_ticket(null, pg_temp.u('b7'), null), false, 'sin fecha, no se ve (no hay a qué campaña pertenecer)');
 -- Quien figura como coordinador de la campaña pero con el rol vencido (f2) no lo ve.
 select pg_temp.actuar_como_servidor();
 update public.campania set coordinador_id = pg_temp.u('f2') where id = pg_temp.u('e5');
 select pg_temp.actuar_como(pg_temp.u('f2'));
-select is(public.puede_ver_ticket_de(pg_temp.u('b8'), now() - interval '10 days'), false,
+select is(public.puede_ver_ticket(null, pg_temp.u('b8'), now() - interval '10 days'), false,
           'con el rol de coordinador vencido, aunque figure como coordinador de la campaña, no lo ve');
 select pg_temp.actuar_como_servidor();
 update public.campania set coordinador_id = pg_temp.u('c2') where id = pg_temp.u('e5');

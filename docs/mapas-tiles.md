@@ -68,6 +68,11 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    -Italic; los rangos `0-255`, `256-511` y `8192-8447`) y `estilo/sprites/grayscale{,@2x}.{json,png}`; están en
    [`tiles/assets/`](../tiles/assets) (con sus licencias) y son los mismos que se publican. `glyphs` queda como
    `<local>/glyphs/{fontstack}/{range}.pbf` y `sprite` como `<local>/sprites/grayscale`.
+   **Por eso la URL absoluta del estilo publicado no es un error** (revisado en backend-supabase#259 contra ADR-011 y
+   ADR-019): es la que necesita el panel, que lee el estilo del bucket con conexión. La app no usa ese estilo: el suyo
+   viaja con ella (decisión de Cristian del 21/10, «Estilo mapa», ADR-011) y reemplaza `glyphs` y `sprite` por los que
+   lleva adentro (`file://<local>/…`, `estilo_mapa.dart` de front-colportores-mobile), que con lib-mapa salen del
+   paquete de la librería (ADR-019).
 5. **¿Hay mapa nuevo?** Comparar el `version` del paquete con el que se bajó: es el SHA-256 de la parte (o,
    con varias, el de sus SHA-256 en orden). Es lo que usa `hayActualizacion`.
    **El estilo se compara igual**: `estilo.version` es el SHA-256 de `estilo/colportores.json`. Si es distinto del
@@ -259,14 +264,23 @@ se corta por su polígono (`public.zona.poligono_geojson`).
 ```
 node src/cli.mjs estilo     [--url-base URL] [--salida DIR]      # solo escribe el estilo en un archivo
 node src/cli.mjs publicar   [--solo estilo|ciudades|zonas|departamentos|uruguay] [--ciudad SLUG] [--zona ID]
-                            [--regenerar] [--quitar ID] [--build AAAAMMDD] [--dry-run]
+                            [--pais ISO] [--regenerar] [--quitar ID] [--build AAAAMMDD] [--dry-run]
 node src/cli.mjs verificar  [--url URL]
 node src/cli.mjs catalogo-uruguay [--salida ARCHIVO] [--funcion-sql ARCHIVO] [--overpass URL]
 ```
 
 `publicar` (sin `--solo`: todo), en este orden, para que el catálogo **nunca apunte a algo que todavía no está**:
-1. lee de `public.ciudad` (PostgREST, con la clave de servicio) las ciudades de Uruguay con rectángulo. Si dos dan el
-   mismo nombre de paquete, o una tiene un nombre sin letras, **se detiene antes de subir nada** y dice cuáles;
+1. lee de `public.ciudad` (PostgREST, con la clave de servicio) las ciudades **del país** con rectángulo (`UY` si no
+   se pasa `--pais`, [§ Otro país: `--pais`](#otro-país---pais)). **Dos ciudades del mismo nombre en distintos
+   departamentos se publican las dos** (el catálogo de OSM trae diez nombres así: «La Paz» en Canelones y en Colonia,
+   «Las Piedras» en Artigas y en Canelones…): a esas, y solo a esas, el paquete les suma el departamento
+   (`ciudad-la-paz-canelones`, `ciudad-la-paz-colonia`); las demás conservan `ciudad-<nombre>`, así que un paquete ya
+   publicado no cambia de nombre. Si una ciudad publicada como `ciudad-la-paz` gana una homónima con rectángulo, pasa a
+   `ciudad-la-paz-canelones` como en un renombre (el archivo viejo se retira con su gracia) (backend-supabase#259). Si
+   aun así dos dan el mismo nombre de paquete (mismo nombre **en el mismo departamento**: casi seguro una repetida, se
+   da de baja la sobrante), si a una de las homónimas le falta el departamento (se carga con
+   [`guia-carga-manual.md` § 2](guia-carga-manual.md#2-ciudad)) o si una tiene un nombre sin letras, **se detiene antes
+   de subir nada** y dice cuáles y qué hacer;
 2. crea o ajusta el bucket `mapas` (público, 50 MiB, tipos permitidos);
 3. sube el estilo, glyphs y sprites;
 4. corta cada ciudad según la política de tamaño y sube sus partes **solo si ese SHA-256 todavía no está**;
@@ -292,10 +306,36 @@ de avisarse.
 `--dry-run` hace todo menos escribir; sin clave de servicio no puede leer la base, lo avisa y no simula ciudades ni zonas.
 
 `--ciudad <slug>` publica solo esa ciudad (el slug es su nombre en minúsculas, sin tildes y con guiones: `montevideo`,
-`san-jose`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
+`san-jose`; con una homónima en otro departamento, también el departamento: `la-paz-colonia`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
 también el catálogo**, con la `estilo.version` nueva y los paquetes como estaban: así los teléfonos se enteran de que el
 estilo cambió. `--solo ciudades` exige que el catálogo ya tenga `estilo.version` (o sea, que el estilo ya se haya
 publicado). `--solo zonas` solo hace lo de las zonas.
+
+#### Otro país: `--pais`
+
+El dominio es Uruguay: sin `--pais`, `publicar` toma las ciudades de `UY`, como siempre. Para publicar las de otro país
+(`public.ciudad` → `pais.iso_code`) se pasa su código **ISO 3166-1 alpha-2**:
+
+```
+node src/cli.mjs publicar --solo ciudades --pais AR --dry-run   # lista y arma solo las ciudades de AR con rectángulo
+node src/cli.mjs publicar --solo ciudades --pais AR             # y las publica
+```
+
+- Son dos letras (`ar` se lee `AR`). Cualquier otra cosa (`A`, `ARG`, `1R`, vacío) **corta antes de leer la base y de
+  escribir en el bucket**, con un mensaje que nombra el valor recibido.
+- Un país válido sin ciudades vivas en `public.ciudad` lo dice con el país («no hay ciudades de AR en public.ciudad»);
+  si tiene ciudades pero ninguna con rectángulo, dice «no hay ciudades de AR con rectángulo en public.ciudad».
+- **Una corrida publica un solo país**, pero el catálogo puede nombrar ciudades de más de un país: cada paquete de
+  ciudad lleva el `ambito_id` de SU ciudad, y es lo que la app usa para elegirlo. Los paquetes de los otros países
+  no se tocan (se conservan como están). Los avisos de «sigue en el catálogo, pero …» se calculan contra
+  `public.ciudad` entera (todos los países), así que publicar `AR` no avisa de que sobran los mapas de `UY`.
+- **El nombre del paquete (`ciudad-<slug>`) sale del nombre de la ciudad, no del país.** Si la ciudad a publicar daría
+  el mismo paquete que el de OTRA ciudad viva del catálogo (un «San José» de cada país), el publicador **se detiene
+  antes de subir nada** y dice cuáles son; se resuelve cambiando el nombre de una de las dos en `public.ciudad`. Si la
+  dueña del paquete ya no está viva, el nombre se reutiliza como en un renombre.
+- `--solo departamentos` y `--solo uruguay` salen del catálogo de Uruguay (`tiles/datos/uruguay-osm.json`) y siguen
+  siendo solo de Uruguay: con `--pais` distinto de `UY` se rechazan, sin tocar nada. Con `--solo estilo` o `--solo zonas`,
+  `--pais` no cambia nada (el publicador lo avisa).
 
 ### Mapas de las zonas
 
@@ -368,8 +408,8 @@ en la misma corrida del 06/11, sin gracia alguna; lo reproduce y lo vigila la pr
 Workflow **Mapas** (`.github/workflows/tiles.yml`). Dos disparos:
 
 - **A mano** (`workflow_dispatch`): elegir environment (`develop`, `staging`, `production`), qué publicar (`todo`,
-  `estilo`, `ciudades`, `zonas`), y opcionalmente una ciudad, una zona, un build, forzar el corte de las zonas
-  (`regenerar`) o simular (`simulacro`). Corre las pruebas, publica y después `verificar`.
+  `estilo`, `ciudades`, `zonas`), y opcionalmente una ciudad, un país (`pais`: vacío = `UY`; se pasa como `--pais` solo
+  si viene lleno), una zona, un build, forzar el corte de las zonas (`regenerar`) o simular (`simulacro`). Corre las pruebas, publica y después `verificar`.
 - **Cada hora** (`schedule`, minuto 17): `publicar --solo zonas`, para que una zona nueva o movida tenga su mapa en
   la hora siguiente, sin que nadie lo pida. **Una corrida programada no tiene quién elija el environment**: publica
   solo en los que tienen su variable de repo en `true` (Settings → Variables → Actions): `MAPAS_ZONAS_DEVELOP`,
@@ -419,6 +459,8 @@ Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY
 Tiene que terminar con «Todo bien» (el `verificar`). Si dice **«ciudades sin rectángulo: Montevideo»** o «no hay
 ciudades con rectángulo», faltó el paso 0 o se cargó en otro proyecto. Si se detiene con «dos ciudades … el mismo
 paquete», hay dos Montevideo vivas: dejá una.
+
+**Ciudades de otro país:** el mismo comando con `--pais AR` ([§ Otro país](#otro-país---pais)); sin `--pais`, solo `UY`.
 
 **Paso 2 (aparte; no hace falta para el Hito 1): las zonas.** Las mismas tres líneas, con esto dentro del `sh -c`:
 `npm ci && node src/cli.mjs publicar --solo zonas`. Publica el mapa de cada zona activa y guarda su enlace en la zona.

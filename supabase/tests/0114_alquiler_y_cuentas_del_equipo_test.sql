@@ -142,7 +142,12 @@ insert into public.ticket (id, usuario_id, tipo, estado, motivo_rechazo) values
   (pg_temp.u('56'), pg_temp.u('b1'), 'DEPOSITO', 'VALIDADO',  null),
   (pg_temp.u('57'), pg_temp.u('b1'), 'DEPOSITO', 'VALIDADO',  null),
   (pg_temp.u('58'), pg_temp.u('b4'), 'DEPOSITO', 'VALIDADO',  null),
-  (pg_temp.u('59'), pg_temp.u('b6'), 'DEPOSITO', 'VALIDADO',  null);
+  (pg_temp.u('59'), pg_temp.u('b6'), 'DEPOSITO', 'VALIDADO',  null),
+  -- Comprobantes de los depósitos de casa editora y de los de prueba (0122: banco u oficina llevan ticket).
+  (pg_temp.u('5a'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null),
+  (pg_temp.u('5b'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null),
+  (pg_temp.u('5c'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null),
+  (pg_temp.u('5d'), pg_temp.u('b1'), 'DEPOSITO', 'PENDIENTE', null);
 
 -- b1 en Cuentas (e1): 50000 validado (01/09) + 25000 validado (08/09) = 75000 pagado; 30000 con el ticket
 --   pendiente y 20000 sin ticket (un retiro) = 50000 por validar; el de 99999 con el ticket rechazado, el de
@@ -157,12 +162,19 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
   (pg_temp.u('f5'), pg_temp.u('b1'), 70000, '2026-09-09 10:00+00', pg_temp.u('54'), 'BANCO',              'ALQUILER',     pg_temp.u('e2'), null),
   (pg_temp.u('f6'), pg_temp.u('b1'), 10000, '2026-09-10 10:00+00', pg_temp.u('55'), 'BANCO',              'CASA_EDITORA', null,            null),
   (pg_temp.u('f7'), pg_temp.u('b1'), 5000,  '2026-09-02 10:00+00', pg_temp.u('56'), 'BANCO',              'CASA_EDITORA', pg_temp.u('e1'), null),
-  (pg_temp.u('f8'), pg_temp.u('b1'), 99,    '2026-09-20 10:00+00', null,            'OFICINA',            'CASA_EDITORA', null,            now()),
+  (pg_temp.u('f8'), pg_temp.u('b1'), 99,    '2026-09-20 10:00+00', pg_temp.u('5c'), 'OFICINA',            'CASA_EDITORA', null,            now()),
   (pg_temp.u('f9'), pg_temp.u('b1'), 40000, '2026-09-11 10:00+00', pg_temp.u('57'), 'BANCO',              'ALQUILER',     pg_temp.u('e1'), now()),
   (pg_temp.u('fa'), pg_temp.u('b1'), 25000, '2026-09-08 10:00+00', pg_temp.u('57'), 'BANCO',              'ALQUILER',     pg_temp.u('e1'), null),
   (pg_temp.u('fb'), pg_temp.u('b4'), 200000, '2026-09-03 10:00+00', pg_temp.u('58'), 'BANCO',             'ALQUILER',     pg_temp.u('e1'), null),
-  (pg_temp.u('fd'), pg_temp.u('b1'), 3000,  '2026-09-15 10:00+00', null,            'OFICINA',            'CASA_EDITORA', pg_temp.u('e2'), null),
+  (pg_temp.u('fd'), pg_temp.u('b1'), 3000,  '2026-09-15 10:00+00', pg_temp.u('5d'), 'OFICINA',            'CASA_EDITORA', pg_temp.u('e2'), null),
   (pg_temp.u('fc'), pg_temp.u('b6'), 15000, '2026-09-04 10:00+00', pg_temp.u('59'), 'BANCO',              'ALQUILER',     pg_temp.u('e3'), null);
+
+-- Desde 0129 el depósito lleva su propia validación y es lo que cuenta como pagado: los que tienen el ticket
+-- VALIDADO quedan validados (como los deja el backfill de la migración).
+update public.deposito d
+   set validado_en = d.fecha
+  from public.ticket t
+ where t.id = d.ticket_id and t.estado = 'VALIDADO';
 
 -- Donde cuelga una venta (para probar que el alquiler no bloquea vender).
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id)
@@ -197,15 +209,18 @@ select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, 
             values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER') $$),
           '23514: new row for relation "deposito" violates check constraint "deposito_pago_de_alquiler_con_campania_check"',
           'un depósito de ALQUILER sin campaña se rechaza');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id)
-            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114fe') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id, ticket_id)
+            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114fe',
+                    '01920000-0000-7000-8000-00000001145a') $$),
           '23503: insert or update on table "deposito" violates foreign key constraint "deposito_campania_id_fkey"',
           'un depósito de ALQUILER con una campaña que no existe se rechaza');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id)
-            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114e1') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, campania_id, ticket_id)
+            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'ALQUILER', '01920000-0000-7000-8000-0000000114e1',
+                    '01920000-0000-7000-8000-00000001145a') $$),
           'ok', 'un depósito de ALQUILER con su campaña entra');
-select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto)
-            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'CASA_EDITORA') $$),
+select is(pg_temp.error_de($$ insert into public.deposito (colportor_id, monto, destino, concepto, ticket_id)
+            values ('01920000-0000-7000-8000-0000000114b5', 100, 'BANCO', 'CASA_EDITORA',
+                    '01920000-0000-7000-8000-00000001145b') $$),
           'ok', 'uno de casa editora no necesita campaña');
 rollback to s_deposito;
 
@@ -216,7 +231,7 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.cuentas_de_campania(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          (select array(select k from unnest(array['alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
+          (select array(select k from unnest(array['alquiler_trasladado','alquiler_a_favor','alquiler_por_decidir','alquiler_debe','alquiler_monto','alquiler_pagado','alquiler_por_validar',
                 'alquiler_ultimo_pago_fecha','apellido','ciudad_id','ciudad_nombre','colportor_id',
                 'de_baja','deuda_total','dinero_depositado','dinero_en_mano','dinero_por_cobrar',
                 'departamento','nombre','ultimo_deposito_fecha','ultimo_deposito_monto']) k
@@ -346,7 +361,7 @@ select is((select array_agg(r.colportor_id order by r.colportor_id) from public.
 -- Las cuatro cifras, del snapshot.
 select is((select format('%s|%s|%s|%s', r.deuda_total, r.dinero_depositado, r.dinero_en_mano, r.dinero_por_cobrar)
              from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b1')),
-          '1200000|500000|30000|80000', 'cuentas: las cuatro cifras de su cuenta, tal cual');
+          '1200000|500000|0|80000', 'cuentas: las cuatro cifras de su cuenta (en mano se calcula: sin cobros en efectivo, 0)');
 select is((select format('%s|%s|%s|%s', r.deuda_total, r.dinero_depositado, r.dinero_en_mano, r.dinero_por_cobrar)
              from public.cuentas_de_campania(pg_temp.u('e1')) r where r.colportor_id = pg_temp.u('b2')),
           '0|0|0|0', 'cuentas: una cuenta dada de baja no cuenta');
@@ -397,7 +412,7 @@ select is((select r.ultimo_deposito_fecha from public.cuentas_de_campania(pg_tem
 select is(pg_temp.alq('e1', 'b1'), '150000|75000|50000|75000|2026-09-08',
           'alquiler: pagado = solo tickets VALIDADOS de esta campaña (50000 + 25000); por validar = el ticket pendiente (30000) y el retiro sin ticket (20000); no cuentan el rechazado, el dado de baja ni el de otra campaña');
 select is(pg_temp.alq('e1', 'b2'), '150000|0|0|150000|null', 'alquiler: sin pagos, debe todo');
-select is(pg_temp.alq('e1', 'b3'), '150000|0|0|150000|null', 'alquiler: el de baja se calcula igual (ver pendientes)');
+select is(pg_temp.alq('e1', 'b3'), '150000|0|0|0|null', 'alquiler: el de baja no debe nada («Alq. de baja», 27/10, 0132)');
 select is(pg_temp.alq('e1', 'b4'), '150000|200000|0|0|2026-09-03', 'alquiler: pagó de más: no debe, y se ve en pagado');
 select is(pg_temp.alq('e1', 'b5'), '150000|0|0|150000|null', 'alquiler: otro sin pagos');
 select is((select count(*)::int from public.cuentas_de_campania(pg_temp.u('e1')) r
@@ -454,28 +469,34 @@ select is(pg_temp.eventos('e1'), 1, 'definir: y no deja un segundo registro');
 select is((select c.sync_version from public.campania c where c.id = pg_temp.u('e1')),
           (select a.sync_version from antes2 a), 'definir: ni sube la versión de la campaña (no se avisa a los teléfonos de nada)');
 
-select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
-             from public.definir_alquiler_de_campania(pg_temp.u('e1'), null) r),
-          'null|t', 'definir: null = la campaña deja de cobrar alquiler');
-select is(pg_temp.eventos('e1', '{"monto_anterior":180000,"monto_nuevo":null}'), 1,
-          'definir: el registro del null lleva el monto nuevo en null');
-select is(pg_temp.alq('e1', 'b1'), 'null|75000|50000|null|2026-09-08',
-          'sin alquiler: monto y debe en null; lo pagado se sigue viendo');
-select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
-             from public.definir_alquiler_de_campania(pg_temp.u('e1'), null) r),
-          'null|f', 'definir: null sobre null tampoco cambia nada');
+-- e1 ya tiene pagos de alquiler (b1, b4): desde la 0185 no puede quedar sin alquiler ni en cero (CZ017; los casos en
+-- 0185_…_test.sql). Quitar el alquiler y el cero se prueban en e6, que no tiene pagos.
+select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e1', null) $$,
+  'CZ017', 'Ya hay pagos de alquiler en esta campaña, así que no puede quedar sin alquiler ni en cero. Podés cambiarlo por otro monto mayor que cero.',
+  'definir: con pagos, la campaña no puede quedar sin alquiler (0185)');
+select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e1', 0) $$,
+  'CZ017', 'Ya hay pagos de alquiler en esta campaña, así que no puede quedar sin alquiler ni en cero. Podés cambiarlo por otro monto mayor que cero.',
+  'definir: con pagos, tampoco en cero (0185)');
+select is(pg_temp.eventos('e1'), 1, 'definir: los rechazos no dejaron registro');
 
-select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.definir_alquiler_de_campania(pg_temp.u('e1'), 0) r),
+select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
+             from public.definir_alquiler_de_campania(pg_temp.u('e6'), null) r),
+          'null|t', 'definir: null = la campaña deja de cobrar alquiler');
+select is(pg_temp.eventos('e6', '{"monto_anterior":5000,"monto_nuevo":null}'), 1,
+          'definir: el registro del null lleva el monto nuevo en null');
+select is((select format('%s|%s', coalesce(r.alquiler_monto::text, 'null'), r.cambio)
+             from public.definir_alquiler_de_campania(pg_temp.u('e6'), null) r),
+          'null|f', 'definir: null sobre null tampoco cambia nada');
+select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.definir_alquiler_de_campania(pg_temp.u('e6'), 0) r),
           '0|t', 'definir: cero es un monto válido');
-select is(pg_temp.alq('e1', 'b2'), '0|0|0|0|null', 'alquiler en cero: no debe nada');
-select is(pg_temp.eventos('e1'), 3, 'definir: tres cambios, tres registros');
+select is(pg_temp.eventos('e6'), 2, 'definir: dos cambios en e6, dos registros');
 
 select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e1', -1) $$,
   '22023', 'El alquiler no puede ser negativo. Escribí un monto de cero o más, o dejalo vacío si la campaña no cobra alquiler.',
   'definir: un monto negativo se rechaza con un aviso que guía');
-select is((select c.alquiler_monto from public.campania c where c.id = pg_temp.u('e1')), 0::bigint,
+select is((select c.alquiler_monto from public.campania c where c.id = pg_temp.u('e1')), 180000::bigint,
           'definir: el rechazo no cambió el monto');
-select is(pg_temp.eventos('e1'), 3, 'definir: ni dejó registro');
+select is(pg_temp.eventos('e1'), 1, 'definir: ni dejó registro');
 
 select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.definir_alquiler_de_campania(pg_temp.u('e1'), 150000) r),
           '150000|t', 'definir: vuelve a 150000');
@@ -490,7 +511,7 @@ select is((select format('%s|%s', r.alquiler_monto, r.cambio) from public.defini
           '160000|t', 'definir: otro cambio');
 select is(pg_temp.alq('e1', 'b7'), '160000|0|0|160000|null', 'y el cambio le llega también');
 select is(pg_temp.alq('e1', 'b1'), '160000|75000|50000|85000|2026-09-08', 'y a b1 le queda lo que falta (160000 menos 75000)');
-select is(pg_temp.eventos('e1'), 5, 'cinco cambios en e1, cinco registros');
+select is(pg_temp.eventos('e1'), 3, 'tres cambios en e1, tres registros');
 
 -- La campaña terminada no se toca.
 select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000114e5', 1) $$,

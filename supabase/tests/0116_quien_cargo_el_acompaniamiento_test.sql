@@ -52,9 +52,11 @@ $$;
 -- Lo guardado en una jornada: acompañante|origen|quién cargó (con 'null' por vacío; el nombre de quien cargó).
 create or replace function pg_temp.guardado(p_jor text) returns text language sql security definer as $$
   select format('%s|%s|%s', coalesce((select u.nombre from public.usuario u where u.id = j.acompaniante_id), 'null'),
-                coalesce(j.acompaniamiento_origen, 'null'),
+                coalesce(d.origen, 'null'),
                 coalesce((select u.nombre from public.usuario u where u.id = j.acompaniamiento_cargado_por), 'null'))
-    from public.jornada j where j.id = pg_temp.u(p_jor)
+    from public.jornada j
+    left join public.jornada_acompaniamiento d on d.jornada_id = j.id
+   where j.id = pg_temp.u(p_jor)
 $$;
 
 -- El historial de un colportor: día|acompañante|nombre de quien cargó|apellido (un renglón por jornada).
@@ -84,21 +86,21 @@ $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------
 -- Staff: a1 Mariela Pereyra (coordinadora de En curso), a2 Nora Quiroga (de Otra), ad Samuel Soto (ADMIN).
--- Colportores de En curso (desde hace 200 días): b1 Ana Alfa, b2 Beto Bravo, b3 Carla Cruz.
+-- Colportores de En curso (desde hace 200 días): b1 Ana Alfa, b2 Beto Bravo, b3 Carla Cruz. b4 Dora Díaz no está inscripta.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'cargadopor116-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a1','a2','ad','b1','b2','b3']) s;
+  from unnest(array['a1','a2','ad','b1','b2','b3','b4']) s;
 
 update public.usuario u set nombre = x.n, apellido = x.a
   from (values ('a1','Mariela','Pereyra'), ('a2','Nora','Quiroga'), ('ad','Samuel','Soto'),
-               ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz')) x(s, n, a)
+               ('b1','Ana','Alfa'), ('b2','Beto','Bravo'), ('b3','Carla','Cruz'), ('b4','Dora','Díaz')) x(s, n, a)
  where u.id = pg_temp.u(x.s);
 
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
   from (values ('a1','COORDINADOR'), ('a2','COORDINADOR'), ('ad','ADMIN'),
-               ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR')) x(s, codigo)
+               ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
@@ -122,7 +124,8 @@ select pg_temp.u(x.id), pg_temp.u(x.colp),
     ('f5', 'b1', 6, null), ('f6', 'b1', 5, null), ('f7', 'b1', 4, 'b2'),
     ('f8', 'b2', 3, null), ('f9', 'b3', 2, null)
   ) x(id, colp, dias, acomp);
-update public.jornada set acompaniamiento_origen = 'COORDINADOR' where id = pg_temp.u('f7');
+-- Desde la 0133 el origen vive en jornada_acompaniamiento: el trigger dejó f7 como COLPORTOR y acá pasa a COORDINADOR.
+update public.jornada_acompaniamiento set origen = 'COORDINADOR' where jornada_id = pg_temp.u('f7');
 
 -- ---------------------------------------------------------------------------
 -- 1. La forma
@@ -139,14 +142,14 @@ select is((select pg_get_constraintdef(c.oid) from pg_constraint c
           'FOREIGN KEY (acompaniamiento_cargado_por) REFERENCES usuario(id) ON DELETE SET NULL',
           'es una FK a usuario que se vacía si el usuario se borra');
 select is((select count(*) from pg_constraint where conrelid = 'public.jornada'::regclass
-              and conname = 'jornada_acompaniamiento_cargado_por_con_origen'), 1::bigint,
-          'el CHECK que ata quién cargó al origen COORDINADOR existe');
+              and conname = 'jornada_acompaniamiento_cargado_por_con_acompaniante'), 1::bigint,
+          'el CHECK que ata quién cargó al acompañante existe (0133: ya no al origen)');
 select is((select columnas_servidor @> array['acompaniamiento_cargado_por'] from sync.entidad where nombre = 'jornada'),
           true, 'es una columna del servidor: el push la descarta');
 select is('acompaniamiento_cargado_por' = any (sync.columnas_escribibles('jornada')), false,
           'y por eso no está entre las que el cliente puede escribir');
-select is((select columnas_servidor @> array['acompaniamiento_origen', 'acompaniamiento_nota']
-             from sync.entidad where nombre = 'jornada'), true, 'las columnas de la 0100 siguen siendo del servidor');
+select is((select columnas_servidor && array['acompaniamiento_origen', 'acompaniamiento_nota']
+             from sync.entidad where nombre = 'jornada'), false, 'las de la 0100 salieron de jornada con la 0133');
 -- Una sola de cada función (no quedó la sobrecarga de antes) y con los privilegios de siempre.
 select is((select count(*) from pg_proc where pronamespace = 'public'::regnamespace
               and proname in ('historial_de_acompaniamientos', 'jornadas_cerradas_de_colportor', 'agregar_acompaniamiento')),
@@ -193,11 +196,9 @@ end $$;
 select is(pg_temp.upd(format('acompaniamiento_cargado_por = %L', pg_temp.u('a1'))), 'ok',
           'quién cargó en una jornada sin acompañante: el trigger lo deja en null (no hay a quién atribuírselo)');
 select is(pg_temp.guardado('f1'), 'null|null|null', 'y no queda guardado');
-select is(pg_temp.upd(format('acompaniante_id = %L, acompaniamiento_origen = ''COLPORTOR'', acompaniamiento_cargado_por = %L',
-                             pg_temp.u('b2'), pg_temp.u('a1'))), '23514', 'y con origen COLPORTOR (lo marcó el colportor), también');
-select is(pg_temp.upd(format('acompaniante_id = %L, acompaniamiento_origen = ''COORDINADOR'', acompaniamiento_cargado_por = %L',
-                             pg_temp.u('b2'), pg_temp.u('a1'))), 'ok', 'con origen COORDINADOR entra');
-select is(pg_temp.guardado('f1'), 'Beto|COORDINADOR|Mariela', 'y queda guardado');
+select is(pg_temp.upd(format('acompaniante_id = %L, acompaniamiento_cargado_por = %L',
+                             pg_temp.u('b2'), pg_temp.u('a1'))), 'ok', 'con acompañante entra');
+select is(pg_temp.guardado('f1'), 'Beto|COLPORTOR|Mariela', 'y queda guardado (el origen lo pone el trigger de la tabla interna)');
 select is(pg_temp.upd(format('acompaniamiento_cargado_por = %L', gen_random_uuid())), '23503', 'un usuario que no existe, no');
 select is(pg_temp.upd('acompaniamiento_cargado_por = null'), 'ok', 'null (no se sabe) siempre entra');
 -- Sin acompañante no hay quien cargó: el servidor lo limpia.
@@ -209,7 +210,7 @@ select is(pg_temp.guardado('f1'), 'null|null|null', 'y se lleva el origen y quie
 -- 2. La RPC la pone: quien llama
 -- ---------------------------------------------------------------------------
 create temp table antes on commit drop as
-  select id, sync_version, acompaniante_id, acompaniamiento_origen, acompaniamiento_cargado_por from public.jornada;
+  select id, sync_version, acompaniante_id, acompaniamiento_cargado_por from public.jornada;
 select pg_temp.actuar_como(pg_temp.u('a1'));
 -- Yo, sin parámetro.
 select is(pg_temp.agregar('e1', 'f1'), 'false|Mariela', 'a1 se anota como acompañante de f1 («Yo»)');
@@ -240,15 +241,16 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f3'), 'Carla|COORDINADOR|Samuel', 'y quien lo cargó sigue siendo el primero (el ADMIN), no a1');
 select is((select j.sync_version - a.sync_version from public.jornada j join antes a using (id) where j.id = pg_temp.u('f3')),
           1::bigint, 'ni subió la versión otra vez');
--- Quien lo cargó primero no cambia aunque el otro coordinador intente con otra persona: JO003.
+-- Quien lo cargó primero no cambia aunque otro coordinador sume a otra persona (0176/0177, #254): se agrega al lado, y la
+-- columna de la jornada sigue en el primero. Nora, coordinadora de otra campaña, se puede anotar (decisión del 05/11).
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.cod('e1', 'f3', 'b2'), 'JO003', 'con otra persona en una ya acompañada: JO003');
+select is(pg_temp.agregar('e1', 'f3', 'a2'), 'false|Nora', 'a1 suma a Nora (coordinadora de otra campaña) a la f3 ya acompañada');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('f3'), 'Carla|COORDINADOR|Samuel', 'y no se pisa nada');
+select is(pg_temp.guardado('f3'), 'Carla|COORDINADOR|Samuel', 'y no se pisa nada: la jornada sigue con el primero y quien lo cargó');
 
 -- Los errores y el que no tiene permiso no escriben la columna.
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.cod('e1', 'f5', 'a2'), 'JO005', 'un coordinador que no está inscripto: JO005');
+select is(pg_temp.cod('e1', 'f5', 'b4'), 'JO005', 'un colportor que no está inscripto: JO005');
 select is(pg_temp.cod('e1', 'f5', 'b1'), 'JO004', 'el dueño de la jornada: JO004');
 select is(pg_temp.cod('e1', 'f0'), 'JO001', 'una jornada que no existe: JO001');
 select pg_temp.actuar_como(pg_temp.u('a2'));
@@ -270,19 +272,19 @@ select is((select count(*) from public.jornada j join antes a using (id)
 select pg_temp.actuar_como(pg_temp.u('a1'));
 -- b1: f1 (a1 cargó), f2 (a1, con b2), f3 (el ADMIN), f4 (el ADMIN, él mismo), f7 (de antes: nadie), f5 y f6 libres.
 select is(pg_temp.historial('e1', 'b1'),
-          '-4|Beto|null|null;-7|Samuel|Samuel|Soto;-8|Carla|Samuel|Soto;-9|Beto|Mariela|Pereyra;-10|Mariela|Mariela|Pereyra',
+          '-4|Beto|null|null;-7|Samuel|Samuel|Soto;-8|Carla|Samuel|Soto;-8|Nora|Mariela|Pereyra;-9|Beto|Mariela|Pereyra;-10|Mariela|Mariela|Pereyra',
           'el historial trae el nombre y el apellido de quien cargó cada uno; null en lo de antes de la 0116');
 select is(pg_temp.jornadas('e1', 'b1'),
-          '-4|Beto|null;-5|null|null;-6|null|null;-7|Samuel|Samuel;-8|Carla|Samuel;-9|Beto|Mariela;-10|Mariela|Mariela',
+          '-4|Beto|null;-5|null|null;-6|null|null;-7|Samuel|Samuel;-8|Carla|Samuel;-8|Nora|Mariela;-9|Beto|Mariela;-10|Mariela|Mariela',
           'las jornadas cerradas de b1, también (las libres, sin quien cargó)');
 select is((select r.acompaniamiento_cargado_por from public.historial_de_acompaniamientos(pg_temp.u('e1'), pg_temp.u('b1')) r
             where r.jornada_id = pg_temp.u('f1')), pg_temp.u('a1'),
           'el historial devuelve el uuid de quien cargó: el panel lo compara con el suyo para decir «vos»');
 select is((select r.acompaniamiento_cargado_por from public.jornadas_cerradas_de_colportor(pg_temp.u('e1'), pg_temp.u('b1')) r
-            where r.jornada_id = pg_temp.u('f3')), pg_temp.u('ad'), 'y las jornadas cerradas, también');
+            where r.jornada_id = pg_temp.u('f3') and r.acompaniante_id = pg_temp.u('b3')), pg_temp.u('ad'), 'y las jornadas cerradas, también');
 -- Sin p_colportor_id: el historial de todos.
 select is((select count(*) from public.historial_de_acompaniamientos(pg_temp.u('e1')) r
-            where r.acompaniamiento_cargado_por is not null), 4::bigint, 'el historial de toda la campaña: cuatro con quien cargó');
+            where r.acompaniamiento_cargado_por is not null), 5::bigint, 'el historial de toda la campaña: cinco con quien cargó');
 -- Otro coordinador: sigue sin permiso.
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select throws_ok(format('select * from public.historial_de_acompaniamientos(%L)', pg_temp.u('e1')), '42501', null,
@@ -300,11 +302,10 @@ update public.jornada set acompaniante_id = pg_temp.u('a1') where id = pg_temp.u
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f9'), 'Mariela|COLPORTOR|null', 'el colportor marcó a a1 en su celular: origen COLPORTOR y nadie cargó');
 select pg_temp.actuar_como(pg_temp.u('b3'));
-update public.jornada set acompaniante_id = pg_temp.u('a1'), acompaniamiento_origen = 'COORDINADOR',
-                          acompaniamiento_cargado_por = pg_temp.u('a2')
+update public.jornada set acompaniante_id = pg_temp.u('a1'), acompaniamiento_cargado_por = pg_temp.u('a2')
  where id = pg_temp.u('f9');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('f9'), 'Mariela|COLPORTOR|null', 'si manda origen y quien cargó en la fila, el servidor los descarta');
+select is(pg_temp.guardado('f9'), 'Mariela|COLPORTOR|null', 'si manda quien cargó en la fila, el servidor lo descarta');
 -- El historial lo muestra como del celular: sin nombre.
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.historial('e1', 'b3'), '-2|Mariela|null|null', 'y el historial no inventa quién cargó lo del celular');
@@ -326,15 +327,15 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f2'), 'null|null|null', 'si lo quita, no queda origen ni quien cargó');
 -- Un INSERT del cliente.
 select pg_temp.actuar_como(pg_temp.u('b1'));
-insert into public.jornada (id, colportor_id, inicio, fin, acompaniante_id, acompaniamiento_origen, acompaniamiento_cargado_por)
+insert into public.jornada (id, colportor_id, inicio, fin, acompaniante_id, acompaniamiento_cargado_por)
 values (pg_temp.u('c1'), pg_temp.u('b1'), (pg_temp.hoy() - 6 + time '10:00') at time zone 'America/Montevideo',
-        (pg_temp.hoy() - 6 + time '11:00') at time zone 'America/Montevideo', pg_temp.u('a1'), 'COORDINADOR', pg_temp.u('a1'));
-insert into public.jornada (id, colportor_id, inicio, fin, acompaniamiento_origen, acompaniamiento_cargado_por)
+        (pg_temp.hoy() - 6 + time '11:00') at time zone 'America/Montevideo', pg_temp.u('a1'), pg_temp.u('a1'));
+insert into public.jornada (id, colportor_id, inicio, fin, acompaniamiento_cargado_por)
 values (pg_temp.u('c2'), pg_temp.u('b1'), (pg_temp.hoy() - 6 + time '12:00') at time zone 'America/Montevideo',
-        (pg_temp.hoy() - 6 + time '13:00') at time zone 'America/Montevideo', 'COORDINADOR', pg_temp.u('a1'));
+        (pg_temp.hoy() - 6 + time '13:00') at time zone 'America/Montevideo', pg_temp.u('a1'));
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('c1'), 'Mariela|COLPORTOR|null', 'un INSERT del cliente con acompañante: COLPORTOR y nadie cargó');
-select is(pg_temp.guardado('c2'), 'null|null|null', 'y sin acompañante no queda nada, aunque mande origen y quien cargó');
+select is(pg_temp.guardado('c2'), 'null|null|null', 'y sin acompañante no queda nada, aunque mande quien cargó');
 -- Por sync_push.
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is((pg_temp.push(jsonb_build_array(
@@ -342,11 +343,11 @@ select is((pg_temp.push(jsonb_build_array(
                'sync_version', null, 'payload', jsonb_build_object(
                  'id', pg_temp.u('c3'), 'inicio', (pg_temp.hoy() - 6 + time '14:00') at time zone 'America/Montevideo',
                  'fin', (pg_temp.hoy() - 6 + time '15:00') at time zone 'America/Montevideo',
-                 'acompaniante_id', pg_temp.u('a1'), 'acompaniamiento_origen', 'COORDINADOR',
+                 'acompaniante_id', pg_temp.u('a1'),
                  'acompaniamiento_cargado_por', pg_temp.u('a1'), 'created_at', now()))
-           )) -> 'results' -> 0 ->> 'outcome'), 'accepted', 'el teléfono sube una jornada con acompañante (y un origen y un quien cargó inventados)');
+           )) -> 'results' -> 0 ->> 'outcome'), 'accepted', 'el teléfono sube una jornada con acompañante (y un quien cargó inventado)');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.guardado('c3'), 'Mariela|COLPORTOR|null', 'el push los descartó: COLPORTOR y nadie cargó');
+select is(pg_temp.guardado('c3'), 'Mariela|COLPORTOR|null', 'el push lo descartó: COLPORTOR y nadie cargó');
 -- Un push viejo del teléfono no le pisa nada al coordinador.
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.agregar('e1', 'f6', 'b2'), 'false|Beto', 'a1 anota a b2 en f6');
@@ -365,9 +366,9 @@ select is(pg_temp.guardado('f6'), 'Beto|COORDINADOR|Mariela', 'y el acompañamie
 -- 5. Si quien cargó se va, la jornada queda
 -- ---------------------------------------------------------------------------
 -- (El ADMIN de arriba tiene eventos en audit_log, que no se borran: se prueba con a2, que no tiene ninguno.)
-update public.jornada set acompaniante_id = pg_temp.u('b1'), acompaniamiento_origen = 'COORDINADOR',
-                          acompaniamiento_cargado_por = pg_temp.u('a2')
+update public.jornada set acompaniante_id = pg_temp.u('b1'), acompaniamiento_cargado_por = pg_temp.u('a2')
  where id = pg_temp.u('f8');
+update public.jornada_acompaniamiento set origen = 'COORDINADOR' where jornada_id = pg_temp.u('f8');
 select is(pg_temp.guardado('f8'), 'Ana|COORDINADOR|Nora', 'sanity: f8 quedó cargada por a2');
 delete from public.usuario where id = pg_temp.u('a2');
 select is(pg_temp.guardado('f8'), 'Ana|COORDINADOR|null', 'si se borra a quien cargó, el acompañamiento queda y quien cargó pasa a null');

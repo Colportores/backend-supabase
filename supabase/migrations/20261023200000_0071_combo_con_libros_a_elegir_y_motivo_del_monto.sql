@@ -43,8 +43,10 @@
 --        · CHECK `venta_motivo_monto_manual_forma`: null, o un texto sin espacios ni saltos de línea
 --          al principio y al final (el mismo `^\S(.*\S)?$` de `ciudad.departamento`, 0066) de hasta
 --          500 caracteres (`char_length`, no bytes). Un texto en blanco no entra (se manda null).
---          No se exige cuando el total difiere de la suma de los ítems: el descuento informal sigue
---          sin atarse (0001) y exigirlo sería perder una venta por un motivo que el teléfono ya pide.
+--          (Corregido el 29/10, backend-supabase#206: este párrafo decía que el motivo no se exigía
+--          cuando el total difiere de la suma de los ítems. Desde la 0150 SÍ se exige si el total queda
+--          por DEBAJO de la suma de los ítems: decisión de Cristian del 28/10 en
+--          front-colportores-mobile#531. Es solo el comentario; la 0071 no cambia de efecto.)
 --        · El tope de 500 es el de `motivo_rechazo` (0067): el issue no da el número (pendiente §2).
 --
 --   4. «Talonario por año» · el índice único pasa de (colportor, número) a (colportor, número, AÑO de

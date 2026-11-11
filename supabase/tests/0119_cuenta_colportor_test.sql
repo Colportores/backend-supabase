@@ -27,12 +27,12 @@ select is((select array(select conname::text from pg_constraint
           'los cuatro constraints llevan el nombre nuevo (clave, único por usuario y las dos FK)');
 select is((select array(select indexname::text from pg_indexes
                          where schemaname = 'public' and tablename = 'cuenta_colportor' order by indexname)),
-          array['cuenta_colportor_pkey', 'cuenta_colportor_usuario_key'],
-          'y los índices que los respaldan');
+          array['cuenta_colportor_delta_idx', 'cuenta_colportor_pkey', 'cuenta_colportor_usuario_key'],
+          'y los índices que los respaldan (más el del delta del pull, 0179)');
 select is((select array(select tgname::text from pg_trigger
                           where tgrelid = 'public.cuenta_colportor'::regclass and not tgisinternal order by tgname)),
-          array['cuenta_colportor_auditoria_insert', 'cuenta_colportor_auditoria_update'],
-          'los dos triggers de auditoría llevan el nombre nuevo');
+          array['cuenta_colportor_auditoria_insert', 'cuenta_colportor_auditoria_update', 'cuenta_colportor_historial_deuda'],
+          'los dos triggers de auditoría llevan el nombre nuevo (y el del historial de la deuda, 0168)');
 select is((select array(select policyname::text from pg_policies
                          where schemaname = 'public' and tablename = 'cuenta_colportor' order by policyname)),
           array['cuenta_colportor_select'],
@@ -49,8 +49,8 @@ select is((select relrowsecurity from pg_class where oid = 'public.cuenta_colpor
 select columns_are('public', 'cuenta_colportor',
   array['id', 'usuario_id', 'deuda_total', 'dinero_depositado', 'dinero_en_mano', 'dinero_por_cobrar',
         'deuda_alquiler', 'actualizado_en', 'created_at', 'updated_at', 'created_by', 'deleted_at',
-        'sync_version', 'xmin_w'],
-  'las columnas son las de siempre');
+        'sync_version', 'xmin_w', 'alquiler_trasladado'],
+  'las columnas son las de siempre (y alquiler_trasladado, de 0152)');
 select ok(has_table_privilege('authenticated', 'public.cuenta_colportor', 'select'),
           'authenticated sigue leyendo (la RLS recorta a lo suyo)');
 select ok(not has_table_privilege('authenticated', 'public.cuenta_colportor', 'insert')

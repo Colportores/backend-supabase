@@ -1,0 +1,22 @@
+{
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1.0.13"
+  },
+  "tasks": {
+    "test": "deno test --allow-read=../../migrations --no-prompt",
+    "check": "deno check *.ts && deno lint && deno fmt --check"
+  },
+  "compilerOptions": {
+    "strict": true
+  },
+  "fmt": {
+    "lineWidth": 120,
+    "indentWidth": 2,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "include": ["no-explicit-any"]
+    }
+  }
+}
