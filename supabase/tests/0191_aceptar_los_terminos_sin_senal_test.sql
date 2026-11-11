@@ -1,4 +1,4 @@
--- pgTAP · migración 0190 (backend-supabase#267, BACK-HU-AUTH-011; decisión de Cristian del 11/11, «TyC s/red»: se acepta
+-- pgTAP · migración 0191 (backend-supabase#267, BACK-HU-AUTH-011; decisión de Cristian del 11/11, «TyC s/red»: se acepta
 -- sin señal y sube después): sync_push aplica el trabajo «aceptar los Términos» como aceptar_terminos(version).
 --   1. Sin señal: Ana aceptó la v2 en el teléfono y la aceptación llega en un push posterior, en medio de su lote: `accepted`,
 --      la fila con la hora del servidor, el evento de auditoría y el cache; el reintento del mismo client_op_id es
@@ -32,7 +32,7 @@ begin
   perform set_config('request.jwt.claim.role', '', true);
 end $$;
 create or replace function pg_temp.u(p text) returns uuid language sql as $$
-  select ('01920000-0000-7000-8000-0000000190' || p)::uuid;
+  select ('01920000-0000-7000-8000-0000000191' || p)::uuid;
 $$;
 create or replace function pg_temp.job(p_ent text, p_op text, p_payload jsonb) returns jsonb language sql as $$
   select jsonb_build_object('client_op_id', gen_random_uuid(), 'entity', p_ent, 'op', p_op, 'payload', p_payload);
@@ -54,7 +54,7 @@ create or replace function pg_temp.eventos(p text) returns int language sql as $
    where a.event_type = 'terminos_aceptados' and a.actor_user_id = pg_temp.u(p);
 $$;
 create or replace function pg_temp.sobre() returns jsonb language sql as $$
-  select jsonb_build_object('device_id', '01920000-0000-7000-8000-0000000190d0', 'app_version', '1.4.2', 'schema_version', 1);
+  select jsonb_build_object('device_id', '01920000-0000-7000-8000-0000000191d0', 'app_version', '1.4.2', 'schema_version', 1);
 $$;
 
 -- --- fixtures (como postgres) --------------------------------------------------

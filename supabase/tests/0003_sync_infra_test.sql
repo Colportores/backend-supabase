@@ -125,7 +125,7 @@ select ok(
 -- RLS no la alcanzaría y la autorización pasaría a depender del BFF. Las únicas DEFINER son las
 -- purgas (las corre pg_cron) y registrar_push_recibido (0053: escribe usuario.ultimo_push_at, que
 -- el colportor no puede escribir, y no toca nada que push/pull lean o autoricen) y
--- hora_de_aceptacion_del_telefono (0190: escribe consentimiento_terminos.aceptado_en_telefono solo en la fila propia,
+-- hora_de_aceptacion_del_telefono (0191: escribe consentimiento_terminos.aceptado_en_telefono solo en la fila propia,
 -- auth.uid(), que nadie escribe con su JWT; la aceptación en sí la autoriza aceptar_terminos()).
 select is(
   (select array_agg(p.proname::text order by p.proname)

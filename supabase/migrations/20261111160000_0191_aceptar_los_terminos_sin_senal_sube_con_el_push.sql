@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0190 · Aceptar los Términos sin señal: la aceptación sube con el push como trabajo del motor
+-- 0191 · Aceptar los Términos sin señal: la aceptación sube con el push como trabajo del motor
 --        (backend-supabase#267, BACK-HU-AUTH-011; decisión de Cristian del 11/11, «TyC s/red»:
 --        https://github.com/Colportores/docs-organizacion/pull/185#issuecomment-6794635485)
 --
@@ -56,7 +56,7 @@
 --     queda hecha; con `invalid` muestra el aviso.
 --   · docs-organizacion#188: el contrato suma la operación, sus respuestas y TC001 en la tabla de rechazos por trabajo.
 --
--- Forward-only: esta migración no se edita una vez aplicada. Lo prueba supabase/tests/0190_… .
+-- Forward-only: esta migración no se edita una vez aplicada. Lo prueba supabase/tests/0191_… .
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -66,9 +66,9 @@
 alter table public.consentimiento_terminos add column aceptado_en_telefono timestamptz;
 
 comment on column public.consentimiento_terminos.aceptado_en_telefono is
-  'Cuándo se aceptó en el teléfono, si se aceptó sin señal y subió después por el push (0190, HU-AUTH-011). La manda el '
+  'Cuándo se aceptó en el teléfono, si se aceptó sin señal y subió después por el push (0191, HU-AUTH-011). La manda el '
   'teléfono; el servidor la guarda solo si no está más de 5 min en el futuro ni es anterior a que esa versión pasara a '
-  'vigente (si no, null). Null en el registro, en aceptar_terminos() con conexión y en las filas de antes de la 0190. '
+  'vigente (si no, null). Null en el registro, en aceptar_terminos() con conexión y en las filas de antes de la 0191. '
   'aceptado_en sigue siendo la hora del servidor.';
 
 -- Guarda la hora del teléfono en la aceptación propia de esa versión, si todavía no tiene una y si es creíble. La llama
@@ -134,7 +134,7 @@ $$;
 comment on function sync.hora_de_aceptacion_del_telefono(text, text) is
   'Guarda en la aceptación propia (auth.uid()) de esa versión la hora del teléfono que trae el trabajo aceptar_terminos '
   'del push, si no tiene una, no está más de 5 min en el futuro ni es anterior a que la versión pasara a vigente; si no, '
-  'no guarda nada y devuelve null (0190, HU-AUTH-011). La llama sync.aplicar_job_interno.';
+  'no guarda nada y devuelve null (0191, HU-AUTH-011). La llama sync.aplicar_job_interno.';
 
 revoke all on function sync.hora_de_aceptacion_del_telefono(text, text) from public, anon, authenticated, service_role;
 grant execute on function sync.hora_de_aceptacion_del_telefono(text, text) to authenticated, service_role;
@@ -200,7 +200,7 @@ begin
                         format('%L no está registrada para sync', v_entidad));
   end if;
 
-  -- 0190: «aceptar los Términos» (BACK-HU-AUTH-011, backend-supabase#267; decisión de Cristian del 11/11, «TyC
+  -- 0191: «aceptar los Términos» (BACK-HU-AUTH-011, backend-supabase#267; decisión de Cristian del 11/11, «TyC
   -- s/red»: se acepta sin señal y sube después, como «Duplicado»). No es un upsert: no trae PK ni sync_version y lo
   -- aplica aceptar_terminos(version) (0182), con sus permisos y sus errores. Va antes del chequeo de «solo lectura»:
   -- consentimiento_terminos no acepta filas por el push, solo este trabajo.
@@ -445,7 +445,7 @@ comment on function sync.aplicar_job_interno(uuid, jsonb) is
   'marcar_como_duplicado(B, A) y responde accepted, o duplicate con ya_unida (0101, HU-UBI-006); y op '
   '''aceptar_terminos'' con entity ''consentimiento_terminos'' y payload {version}: llama a aceptar_terminos(version) y '
   'responde accepted, o duplicate si ya estaba aceptada, con ya_estaba, version, aceptado_en y aceptado_en_telefono; '
-  'guarda la hora del teléfono del payload (aceptado_en_telefono) si es creíble (0190, HU-AUTH-011). El '
+  'guarda la hora del teléfono del payload (aceptado_en_telefono) si es creíble (0191, HU-AUTH-011). El '
   'update o delete de un espacio_persona que se juntó con otro al llegar se aplica al que quedó, con '
   'conflicto si cambió desde la unión (0123). El update de un pedido_casa_editora o de una transferencia_stock a '
   'CANCELADO no compara versión (0138, 0148).';
@@ -454,7 +454,7 @@ comment on function sync.aplicar_job_interno(uuid, jsonb) is
 -- 2. TC001 vuelve invalid sin tumbar el lote
 -- ----------------------------------------------------------------------------
 
--- Igual que en 0172, más TC001 (0190). Sus privilegios siguen (create or replace los conserva).
+-- Igual que en 0172, más TC001 (0191). Sus privilegios siguen (create or replace los conserva).
 create or replace function sync.aplicar_job(p_job jsonb)
 returns jsonb
 language plpgsql
@@ -502,7 +502,7 @@ exception
   -- (AG001 a AG003, 0068) y anular un cobro fuera de plazo, con el ticket validado o ya anulado (CB001 a
   -- CB003, CB005 y CB006, 0072), el cobro que ya no se puede cambiar, la hora de anulación inválida y la anulación fuera de la
   -- gracia (CB007 a CB009, 0131), anular una devolución pasadas las 24 h, con una hora inválida o fuera de la gracia
-  -- (DV001 a DV004, 0172), aceptar los Términos con una versión que no es una publicada (TC001, 0190) y la unión de duplicados con A de baja o con B = A (UB003 y UB004, 0101): códigos propios, que la
+  -- (DV001 a DV004, 0172), aceptar los Términos con una versión que no es una publicada (TC001, 0191) y la unión de duplicados con A de baja o con B = A (UB003 y UB004, 0101): códigos propios, que la
   -- app traduce a un aviso. INVALID como el resto, sin tumbar el lote.
   when sqlstate 'UB001' or sqlstate 'UB002' or sqlstate 'UB003' or sqlstate 'UB004' or sqlstate 'CG001' or sqlstate 'UB005'
     or sqlstate 'AG001' or sqlstate 'AG002' or sqlstate 'AG003'
@@ -527,5 +527,5 @@ comment on table public.consentimiento_terminos is
   'Qué versión de los Términos y la Política de Privacidad aceptó cada persona y cuándo (0065; HU-AUTH-001, R-AU04). Una fila '
   'por (usuario, versión): un historial, no un dato que se pisa. La escribe el trigger del registro (tg_auth_usuario_nuevo), '
   'aceptar_terminos() (cualquier rol, 0182; también como trabajo del push, op aceptar_terminos, para aceptar sin señal, '
-  '0190) o el servidor; cada persona lee solo lo suyo. Desde la 0182 baja al teléfono por el sync (cada persona la suya) '
+  '0191) o el servidor; cada persona lee solo lo suyo. Desde la 0182 baja al teléfono por el sync (cada persona la suya) '
   'para saber sin conexión si ya aceptó la versión vigente; filas por el push no entran (solo ese trabajo).';
