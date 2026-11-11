@@ -10,6 +10,8 @@
 --   5. Los rechazos vuelven `invalid` por trabajo y el lote sigue: TC001, PAYLOAD_VACIO, OP_INVALIDA, 42501 (cuenta dada
 --      de baja) y ENTIDAD_DE_SOLO_LECTURA para una fila de consentimiento_terminos. Rechazado no escribe nada. La cuenta
 --      suspendida no llega al trabajo: CS004 del push entero (0143).
+--   6. La hora del teléfono (`aceptado_en_telefono`): se guarda si es creíble (no más de 5 min en el futuro ni antes de que
+--      la versión pasara a vigente); si no, null y la aceptación vale igual; la primera no se pisa.
 -- Va en una transacción (audit_log solo se agrega y no se puede limpiar).
 begin;
 select * from no_plan();
@@ -210,6 +212,71 @@ select throws_ok(
   'CS004', null, 'cuenta suspendida: sync_push entero responde CS004');
 select pg_temp.como_servidor();
 select is(pg_temp.versiones('b2'), '-', 'y no deja nada');
+
+-- ---------------------------------------------------------------------------
+-- 6. La hora del teléfono (P2 de #267, decisión del 11/11 por R1 y R2)
+-- ---------------------------------------------------------------------------
+-- La v4 pasó a vigente hace dos días (el evento de audit_log de entonces; hoy se vuelve a fijar). Cinco colportoras la
+-- aceptan sin señal y suben con la hora del teléfono.
+create or replace function public.terminos_versiones_publicadas() returns text[] language sql immutable set search_path = ''
+as $$ select array['v1', 'v2', 'v3', 'v4']::text[] $$;
+insert into auditoria.audit_log (created_at, event_type, tabla, fila_id, metadata)
+select now() - interval '2 days', 'parametro_global_cambio', 'parametro_global', p.id,
+       jsonb_build_object('clave', 'terminos_version_vigente', 'valor_anterior', 3, 'valor_nuevo', 4, 'rol', 'postgres',
+                          'definitiva', true)
+  from public.parametro_global p where p.clave = 'terminos_version_vigente';
+update public.parametro_global set valor = 4 where clave = 'terminos_version_vigente';
+
+create or replace function pg_temp.aceptar_a_las(p_version text, p_hora jsonb) returns jsonb language sql as $$
+  select pg_temp.job('consentimiento_terminos', 'aceptar_terminos',
+                     jsonb_build_object('version', p_version, 'aceptado_en_telefono', p_hora));
+$$;
+-- Ana (d1..d5) sube la v4 con esa hora; devuelve «outcome|aceptado_en_telefono de la respuesta».
+create or replace function pg_temp.sube_con_hora(p text, p_hora jsonb) returns text language plpgsql as $$
+declare r jsonb;
+begin
+  perform pg_temp.actuar_como(pg_temp.u(p));
+  r := sync.push(jsonb_build_array(pg_temp.aceptar_a_las('v4', p_hora))) -> 'results' -> 0;
+  perform pg_temp.como_servidor();
+  return (r ->> 'outcome') || '|' || coalesce(r ->> 'aceptado_en_telefono', '-');
+end $$;
+create or replace function pg_temp.hora_guardada(p text) returns timestamptz language sql as $$
+  select aceptado_en_telefono from public.consentimiento_terminos where usuario_id = pg_temp.u(p) and version = 'v4';
+$$;
+
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+select pg_temp.u(s), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       'terminos189-' || s || '@example.com', 'x', now(), now(), now()
+  from unnest(array['d1','d2','d3','d4','d5','d6']) s;
+
+select is(pg_temp.sube_con_hora('d1', to_jsonb((now() - interval '1 day')::text)),
+          'accepted|' || (to_jsonb(now() - interval '1 day') #>> '{}'),
+          'aceptó ayer sin señal (después de que la v4 pasó a vigente): accepted, con la hora del teléfono');
+select is(pg_temp.hora_guardada('d1'), now() - interval '1 day', 'la hora del teléfono queda guardada');
+select is((select aceptado_en from public.consentimiento_terminos where usuario_id = pg_temp.u('d1') and version = 'v4'), now(),
+          'y aceptado_en sigue siendo la hora del servidor');
+select is(pg_temp.sube_con_hora('d2', to_jsonb((now() + interval '2 minutes')::text)) like 'accepted|2%', true,
+          'un reloj adelantado 2 min (dentro de los 5): se guarda');
+select is(pg_temp.hora_guardada('d2'), now() + interval '2 minutes', 'con esa hora');
+select is(pg_temp.sube_con_hora('d3', to_jsonb((now() + interval '10 minutes')::text)), 'accepted|-',
+          'más de 5 min en el futuro: la aceptación vale, sin hora del teléfono');
+select is(pg_temp.hora_guardada('d3'), null, 'queda en null');
+select is(pg_temp.sube_con_hora('d4', to_jsonb((now() - interval '3 days')::text)), 'accepted|-',
+          'antes de que la v4 pasara a vigente: la aceptación vale, sin hora del teléfono');
+select is(pg_temp.hora_guardada('d4'), null, 'queda en null');
+select is(pg_temp.sube_con_hora('d5', '"ayer a la tarde"'::jsonb), 'accepted|-', 'una hora que no es una fecha: accepted, sin hora');
+select is(pg_temp.sube_con_hora('d6', '1731340800'::jsonb), 'accepted|-', 'una hora que no es un texto: accepted, sin hora');
+select is((select count(*)::int from public.consentimiento_terminos
+            where usuario_id in (pg_temp.u('d3'), pg_temp.u('d4'), pg_temp.u('d5'), pg_temp.u('d6')) and version = 'v4'), 4,
+          'las cuatro aceptaciones sin hora quedaron registradas');
+
+-- Otro teléfono de d1 sube la misma aceptación con otra hora: duplicate, la primera no se pisa.
+select is(pg_temp.sube_con_hora('d1', to_jsonb((now() - interval '1 hour')::text)),
+          'duplicate|' || (to_jsonb(now() - interval '1 day') #>> '{}'),
+          'la misma versión con otra hora: duplicate, con la hora que ya estaba');
+select is(pg_temp.hora_guardada('d1'), now() - interval '1 day', 'la hora guardada no cambia');
+select is(has_function_privilege('anon', 'sync.hora_de_aceptacion_del_telefono(text, text)', 'execute'), false,
+          'anon no ejecuta sync.hora_de_aceptacion_del_telefono');
 
 select * from finish();
 rollback;

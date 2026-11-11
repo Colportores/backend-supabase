@@ -21,14 +21,26 @@
 --        texto) vuelve `invalid PAYLOAD_VACIO`: aceptar «la vigente» del servidor al subir podría registrar una versión
 --        que ella nunca leyó (si salió otra mientras estaba sin señal).
 --      · Aplicada -> `accepted`; la cuenta ya había aceptado esa versión (otro teléfono, la RPC, el registro) ->
---        `duplicate`. Los dos traen `ya_estaba`, `version`, `aceptado_en` y el `sync_version` de la fila de
+--        `duplicate`. Los dos traen `ya_estaba`, `version`, `aceptado_en`, `aceptado_en_telefono` y el `sync_version` de la fila de
 --        `consentimiento_terminos`, y entran al cache: el reintento del mismo client_op_id es `duplicate`.
 --      · Una versión que no es una de las publicadas -> `invalid TC001`; una cuenta dada de baja -> `invalid 42501`.
 --        Ninguno tumba el lote. La cuenta suspendida no llega hasta acá: `sync_push` entero responde CS004 (0143) y
 --        el trabajo queda pendiente en el teléfono hasta que la reactiven, como todo lo demás.
 --      · `aceptado_en` es la hora del servidor al aplicar el trabajo (la misma regla de `aceptar_terminos()` y de la
 --        columna: el cliente no la manda).
---   2. `sync.aplicar_job` suma TC001 a los códigos propios que vuelven `invalid` sin tumbar el lote.
+--   2. **La hora del teléfono, aparte** (decisión del agente de decisiones del 11/11, P2 de #267, por R1 y R2:
+--      https://github.com/Colportores/backend-supabase/issues/267#issuecomment-6803044544): el payload puede traer
+--      `aceptado_en_telefono` (ISO 8601), la hora en que Ana tocó «Aceptar» sin señal. Se guarda en la columna nueva y
+--      opcional `consentimiento_terminos.aceptado_en_telefono`, sin tocar `aceptado_en`. Con el mismo criterio que las
+--      otras horas del teléfono (0131, 0172: no más de 5 min en el futuro), y además no antes de que esa versión pasara a
+--      vigente: una hora futura, anterior a la versión o que no es una fecha queda en null y la aceptación se registra
+--      igual. Solo la primera aceptación de esa versión la guarda: si ya estaba, no se pisa nada.
+--   3. `sync.aplicar_job` suma TC001 a los códigos propios que vuelven `invalid` sin tumbar el lote.
+--
+-- ## Los datos
+--
+-- Una columna nueva y opcional (`aceptado_en_telefono`, null en las filas que existen: no se inventa) que baja con el
+-- pull como las demás.
 --
 -- ## Lo que NO cambia
 --
@@ -46,6 +58,86 @@
 --
 -- Forward-only: esta migración no se edita una vez aplicada. Lo prueba supabase/tests/0189_… .
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 0. La hora del teléfono
+-- ----------------------------------------------------------------------------
+
+alter table public.consentimiento_terminos add column aceptado_en_telefono timestamptz;
+
+comment on column public.consentimiento_terminos.aceptado_en_telefono is
+  'Cuándo se aceptó en el teléfono, si se aceptó sin señal y subió después por el push (0189, HU-AUTH-011). La manda el '
+  'teléfono; el servidor la guarda solo si no está más de 5 min en el futuro ni es anterior a que esa versión pasara a '
+  'vigente (si no, null). Null en el registro, en aceptar_terminos() con conexión y en las filas de antes de la 0189. '
+  'aceptado_en sigue siendo la hora del servidor.';
+
+-- Guarda la hora del teléfono en la aceptación propia de esa versión, si todavía no tiene una y si es creíble. La llama
+-- la rama aceptar_terminos de sync.aplicar_job_interno justo después de una aceptación nueva. DEFINER porque nadie con
+-- JWT escribe consentimiento_terminos (0065); solo toca la fila de quien llama (auth.uid()).
+create function sync.hora_de_aceptacion_del_telefono(p_version text, p_hora text)
+returns timestamptz
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_yo      uuid := auth.uid();
+  v_hora    timestamptz;
+  v_numero  bigint;
+  v_vigente timestamptz;
+begin
+  if v_yo is null or p_hora is null or p_version is null or p_version !~ '^v[1-9][0-9]{0,8}$' then
+    return null;
+  end if;
+
+  -- Una hora que no es una fecha no frena la aceptación: queda sin hora del teléfono.
+  begin
+    v_hora := p_hora::timestamptz;
+  exception when others then
+    return null;
+  end;
+
+  -- Como las otras horas del teléfono (0131, 0172): no más de 5 min en el futuro.
+  if v_hora is null or v_hora > now() + interval '5 minutes' then
+    return null;
+  end if;
+
+  -- Ni antes de que esa versión pasara a vigente: la primera alta o cambio de terminos_version_vigente a ese número
+  -- (audit_log, 0110); la v1 se sembró sin evento (0182): desde que existe la clave.
+  v_numero := substr(p_version, 2)::bigint;
+  select min(a.created_at) into v_vigente
+    from auditoria.audit_log a
+   where a.event_type in ('parametro_global_alta', 'parametro_global_cambio')
+     and a.tabla = 'parametro_global'
+     and a.metadata ->> 'clave' = 'terminos_version_vigente'
+     and a.metadata ->> 'valor_nuevo' = v_numero::text;
+  if v_vigente is null then
+    select p.created_at into v_vigente
+      from public.parametro_global p
+     where p.clave = 'terminos_version_vigente';
+  end if;
+  if v_vigente is not null and v_hora < v_vigente then
+    return null;
+  end if;
+
+  update public.consentimiento_terminos c
+     set aceptado_en_telefono = v_hora
+   where c.usuario_id = v_yo and c.version = p_version and c.aceptado_en_telefono is null;
+  if not found then
+    return null;
+  end if;
+  return v_hora;
+end;
+$$;
+
+comment on function sync.hora_de_aceptacion_del_telefono(text, text) is
+  'Guarda en la aceptación propia (auth.uid()) de esa versión la hora del teléfono que trae el trabajo aceptar_terminos '
+  'del push, si no tiene una, no está más de 5 min en el futuro ni es anterior a que la versión pasara a vigente; si no, '
+  'no guarda nada y devuelve null (0189, HU-AUTH-011). La llama sync.aplicar_job_interno.';
+
+revoke all on function sync.hora_de_aceptacion_del_telefono(text, text) from public, anon, authenticated, service_role;
+grant execute on function sync.hora_de_aceptacion_del_telefono(text, text) to authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- 1. El trabajo «aceptar los Términos» en sync.aplicar_job_interno
@@ -83,6 +175,7 @@ declare
   v_tc_version   text;
   v_tc_aceptado  timestamptz;
   v_tc_ya        boolean;
+  v_tc_telefono  timestamptz;
 begin
   if p_op_id is null then
     return sync.rechazo(p_op_id, 'OP_ID_REQUERIDO', 'falta client_op_id o no es un uuid');
@@ -112,8 +205,8 @@ begin
   -- aplica aceptar_terminos(version) (0182), con sus permisos y sus errores. Va antes del chequeo de «solo lectura»:
   -- consentimiento_terminos no acepta filas por el push, solo este trabajo.
   --   · la versión va explícita (la que se leyó y se aceptó en el teléfono); sin ella, PAYLOAD_VACIO.
-  --   · aplicada -> `accepted`; ya estaba aceptada -> `duplicate`. Los dos con ya_estaba, version, aceptado_en y el
-  --     sync_version de la fila, y entran al cache.
+  --   · aplicada -> `accepted`; ya estaba aceptada -> `duplicate`. Los dos con ya_estaba, version, aceptado_en,
+  --     aceptado_en_telefono y el sync_version de la fila, y entran al cache. La hora del teléfono, en la sección 0.
   --   · TC001 (versión no publicada) y 42501 (cuenta dada de baja) salen `invalid` (sync.aplicar_job, abajo).
   if v_op = 'aceptar_terminos' then
     if v_entidad <> 'consentimiento_terminos' then
@@ -130,12 +223,18 @@ begin
       into v_tc_version, v_tc_aceptado, v_tc_ya
       from public.aceptar_terminos(v_payload ->> 'version') a;
 
-    select c.sync_version into v_nueva
+    -- La hora del teléfono, solo en la aceptación nueva y solo si es creíble (si no, null; la aceptación vale igual).
+    if not v_tc_ya and jsonb_typeof(v_payload -> 'aceptado_en_telefono') = 'string' then
+      perform sync.hora_de_aceptacion_del_telefono(v_tc_version, v_payload ->> 'aceptado_en_telefono');
+    end if;
+
+    select c.sync_version, c.aceptado_en_telefono into v_nueva, v_tc_telefono
       from public.consentimiento_terminos c
      where c.usuario_id = auth.uid() and c.version = v_tc_version;
 
     return sync.registrar(p_op_id, v_entidad, case when v_tc_ya then 'duplicate' else 'accepted' end, v_nueva)
-           || jsonb_build_object('ya_estaba', v_tc_ya, 'version', v_tc_version, 'aceptado_en', v_tc_aceptado);
+           || jsonb_build_object('ya_estaba', v_tc_ya, 'version', v_tc_version, 'aceptado_en', v_tc_aceptado,
+                                 'aceptado_en_telefono', v_tc_telefono);
   end if;
 
   if not v_push_ok then
@@ -345,7 +444,8 @@ comment on function sync.aplicar_job_interno(uuid, jsonb) is
   'op ''marcar_como_duplicado'' con entity ''ubicacion'' y payload {duplicada_id, conservada_id}: llama a '
   'marcar_como_duplicado(B, A) y responde accepted, o duplicate con ya_unida (0101, HU-UBI-006); y op '
   '''aceptar_terminos'' con entity ''consentimiento_terminos'' y payload {version}: llama a aceptar_terminos(version) y '
-  'responde accepted, o duplicate si ya estaba aceptada, con ya_estaba, version y aceptado_en (0189, HU-AUTH-011). El '
+  'responde accepted, o duplicate si ya estaba aceptada, con ya_estaba, version, aceptado_en y aceptado_en_telefono; '
+  'guarda la hora del teléfono del payload (aceptado_en_telefono) si es creíble (0189, HU-AUTH-011). El '
   'update o delete de un espacio_persona que se juntó con otro al llegar se aplica al que quedó, con '
   'conflicto si cambió desde la unión (0123). El update de un pedido_casa_editora o de una transferencia_stock a '
   'CANCELADO no compara versión (0138, 0148).';
