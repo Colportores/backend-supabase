@@ -7,6 +7,8 @@
 #   scripts/db-seed-demo.sh --retirar       vista previa del retiro (no cambia nada); con --aplicar lo hace de verdad
 #   scripts/db-seed-demo.sh --coordinador   suma a coordinador.demo como coordinador de las campañas de la demo
 #                                           (solo agrega; sin esa cuenta no hace nada). Ver supabase/seed-demo/README.md
+#   scripts/db-seed-demo.sh --fechas        vista previa de la corrección de la fecha de alta de las inscripciones de una
+#                                           demo cargada antes del 11/11; con --aplicar lo hace de verdad
 #   scripts/db-seed-demo.sh --remoto <modo> lo mismo contra el proyecto de DEMO ohdsavwpasfpapbyutrv, con el CLI de
 #                                           Supabase ya logueado (o SUPABASE_ACCESS_TOKEN en el entorno)
 #
@@ -31,13 +33,14 @@ for a in "$@"; do
     --chequeo) modo="chequeo" ;;
     --retirar) modo="retirar" ;;
     --coordinador) modo="coordinador" ;;
+    --fechas) modo="fechas" ;;
     --aplicar) aplicar=1 ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $a (ver --help)" >&2; exit 2 ;;
   esac
 done
-if [ "$aplicar" = 1 ] && [ "$modo" != "retirar" ]; then
-  echo "--aplicar solo va con --retirar" >&2; exit 2
+if [ "$aplicar" = 1 ] && [ "$modo" != "retirar" ] && [ "$modo" != "fechas" ]; then
+  echo "--aplicar solo va con --retirar o --fechas" >&2; exit 2
 fi
 
 case "$modo" in
@@ -45,14 +48,16 @@ case "$modo" in
   chequeo) archivo="$DIR/chequeo-demo.sql" ;;
   retirar) archivo="$DIR/retirar-demo-datos.sql" ;;
   coordinador) archivo="$DIR/sumar-coordinador-demo.sql" ;;
+  fechas)  archivo="$DIR/corregir-fechas-de-alta-demo.sql" ;;
 esac
 
 # Para --aplicar se arma una copia temporal con la confirmación activa dentro del propio DO (el original queda en vista
 # previa). No depende de la transacción: psql -f confirma cada sentencia por separado.
 if [ "$aplicar" = 1 ]; then
   tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
-  sed "s/v_aplicar boolean := false;  -- retiro:aplicar/v_aplicar boolean := true;  -- retiro:aplicar/" "$archivo" > "$tmp"
-  grep -q "v_aplicar boolean := true;  -- retiro:aplicar" "$tmp" || { echo "No se pudo activar --aplicar en $archivo" >&2; exit 1; }
+  marca="retiro"; [ "$modo" = "fechas" ] && marca="fechas"
+  sed "s/v_aplicar boolean := false;  -- $marca:aplicar/v_aplicar boolean := true;  -- $marca:aplicar/" "$archivo" > "$tmp"
+  grep -q "v_aplicar boolean := true;  -- $marca:aplicar" "$tmp" || { echo "No se pudo activar --aplicar en $archivo" >&2; exit 1; }
   archivo="$tmp"
 fi
 
