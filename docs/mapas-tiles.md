@@ -68,6 +68,11 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    -Italic; los rangos `0-255`, `256-511` y `8192-8447`) y `estilo/sprites/grayscale{,@2x}.{json,png}`; están en
    [`tiles/assets/`](../tiles/assets) (con sus licencias) y son los mismos que se publican. `glyphs` queda como
    `<local>/glyphs/{fontstack}/{range}.pbf` y `sprite` como `<local>/sprites/grayscale`.
+   **Por eso la URL absoluta del estilo publicado no es un error** (revisado en backend-supabase#259 contra ADR-011 y
+   ADR-019): es la que necesita el panel, que lee el estilo del bucket con conexión. La app no usa ese estilo: el suyo
+   viaja con ella (decisión de Cristian del 21/10, «Estilo mapa», ADR-011) y reemplaza `glyphs` y `sprite` por los que
+   lleva adentro (`file://<local>/…`, `estilo_mapa.dart` de front-colportores-mobile), que con lib-mapa salen del
+   paquete de la librería (ADR-019).
 5. **¿Hay mapa nuevo?** Comparar el `version` del paquete con el que se bajó: es el SHA-256 de la parte (o,
    con varias, el de sus SHA-256 en orden). Es lo que usa `hayActualizacion`.
    **El estilo se compara igual**: `estilo.version` es el SHA-256 de `estilo/colportores.json`. Si es distinto del
@@ -266,8 +271,16 @@ node src/cli.mjs catalogo-uruguay [--salida ARCHIVO] [--funcion-sql ARCHIVO] [--
 
 `publicar` (sin `--solo`: todo), en este orden, para que el catálogo **nunca apunte a algo que todavía no está**:
 1. lee de `public.ciudad` (PostgREST, con la clave de servicio) las ciudades **del país** con rectángulo (`UY` si no
-   se pasa `--pais`, [§ Otro país: `--pais`](#otro-país---pais)). Si dos dan el mismo nombre de paquete, o una tiene un
-   nombre sin letras, **se detiene antes de subir nada** y dice cuáles;
+   se pasa `--pais`, [§ Otro país: `--pais`](#otro-país---pais)). **Dos ciudades del mismo nombre en distintos
+   departamentos se publican las dos** (el catálogo de OSM trae diez nombres así: «La Paz» en Canelones y en Colonia,
+   «Las Piedras» en Artigas y en Canelones…): a esas, y solo a esas, el paquete les suma el departamento
+   (`ciudad-la-paz-canelones`, `ciudad-la-paz-colonia`); las demás conservan `ciudad-<nombre>`, así que un paquete ya
+   publicado no cambia de nombre. Si una ciudad publicada como `ciudad-la-paz` gana una homónima con rectángulo, pasa a
+   `ciudad-la-paz-canelones` como en un renombre (el archivo viejo se retira con su gracia) (backend-supabase#259). Si
+   aun así dos dan el mismo nombre de paquete (mismo nombre **en el mismo departamento**: casi seguro una repetida, se
+   da de baja la sobrante), si a una de las homónimas le falta el departamento (se carga con
+   [`guia-carga-manual.md` § 2](guia-carga-manual.md#2-ciudad)) o si una tiene un nombre sin letras, **se detiene antes
+   de subir nada** y dice cuáles y qué hacer;
 2. crea o ajusta el bucket `mapas` (público, 50 MiB, tipos permitidos);
 3. sube el estilo, glyphs y sprites;
 4. corta cada ciudad según la política de tamaño y sube sus partes **solo si ese SHA-256 todavía no está**;
@@ -293,7 +306,7 @@ de avisarse.
 `--dry-run` hace todo menos escribir; sin clave de servicio no puede leer la base, lo avisa y no simula ciudades ni zonas.
 
 `--ciudad <slug>` publica solo esa ciudad (el slug es su nombre en minúsculas, sin tildes y con guiones: `montevideo`,
-`san-jose`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
+`san-jose`; con una homónima en otro departamento, también el departamento: `la-paz-colonia`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
 también el catálogo**, con la `estilo.version` nueva y los paquetes como estaban: así los teléfonos se enteran de que el
 estilo cambió. `--solo ciudades` exige que el catálogo ya tenga `estilo.version` (o sea, que el estilo ya se haya
 publicado). `--solo zonas` solo hace lo de las zonas.

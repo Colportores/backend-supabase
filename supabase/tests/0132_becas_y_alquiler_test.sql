@@ -96,7 +96,7 @@ $$;
 -- La fila guardada del alquiler: monto|pagado|por_validar|debe|a_favor (null = n). SECURITY DEFINER: sin RLS.
 create or replace function pg_temp.fila(p_us text, p_camp text) returns text language sql security definer as $$
   select coalesce((select format('%s|%s|%s|%s|%s', coalesce(ca.alquiler_monto::text, 'n'), ca.alquiler_pagado,
-                                 ca.alquiler_por_validar, coalesce(ca.alquiler_debe::text, 'n'), ca.alquiler_a_favor)
+                                 ca.alquiler_por_validar, coalesce(ca.alquiler_debe::text, 'n'), ca.alquiler_trasladado)
                      from public.cuenta_alquiler ca
                     where ca.usuario_id = pg_temp.u(p_us) and ca.campania_id = pg_temp.u(p_camp)), 'sin fila')
 $$;
@@ -118,10 +118,10 @@ begin
                      on ca.usuario_id = r.colportor_id
              where r.colportor_id is null or ca.id is null
                 or (r.alquiler_monto, r.alquiler_pagado, r.alquiler_por_validar, r.alquiler_debe,
-                    r.alquiler_a_favor, r.alquiler_ultimo_pago_fecha)
+                    r.alquiler_trasladado, r.alquiler_ultimo_pago_fecha)
                    is distinct from
                    (ca.alquiler_monto, ca.alquiler_pagado, ca.alquiler_por_validar, ca.alquiler_debe,
-                    ca.alquiler_a_favor, ca.alquiler_ultimo_pago_fecha)))
+                    ca.alquiler_trasladado, ca.alquiler_ultimo_pago_fecha)))
     into v;
   perform pg_temp.actuar_como_servidor();
   return v;
@@ -479,12 +479,12 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.fila('52', 'ea'), '150000|40000|0|110000|0', 'k2 inscripta: debe 110000');
 update public.campania_colportor set deleted_at = now()
  where campania_id = pg_temp.u('ea') and usuario_id = pg_temp.u('52');
-select is(pg_temp.fila('52', 'ea'), '150000|40000|0|0|40000', 'k2 de baja: debe 0 y los 40000 quedan a favor');
+select is(pg_temp.fila('52', 'ea'), '150000|40000|0|0|0', 'k2 de baja: debe 0 y los 40000 quedan por decidir (no se trasladan solos, 0159)');
 select is(pg_temp.coincide('ea'), '4|0', '  … y coincide (la baja sigue en la lista)');
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is((select format('%s|%s|%s|%s', r.de_baja, r.alquiler_debe, r.alquiler_pagado, r.alquiler_a_favor)
+select is((select format('%s|%s|%s|%s|%s', r.de_baja, r.alquiler_debe, r.alquiler_pagado, r.alquiler_trasladado, r.alquiler_por_decidir)
              from public.cuentas_de_campania(pg_temp.u('ea')) r where r.colportor_id = pg_temp.u('52')),
-          't|0|40000|40000', 'Cuentas: de baja, debe 0, pagado 40000 y a favor 40000');
+          't|0|40000|0|40000', 'Cuentas: de baja, debe 0, pagado 40000, nada trasladado y 40000 por decidir');
 select pg_temp.actuar_como_servidor();
 update public.campania_colportor set deleted_at = null
  where campania_id = pg_temp.u('ea') and usuario_id = pg_temp.u('52');
@@ -504,17 +504,22 @@ select is(pg_temp.coincide('ea'), '4|0', '  … y coincide');
 select is((select ca.sync_version = a.sync_version from public.cuenta_alquiler ca join antes_eb a using (usuario_id, campania_id)
             where ca.usuario_id = pg_temp.u('53') and ca.campania_id = pg_temp.u('eb')), true, 'la fila de eb no se tocó');
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is((select r.cambio from public.definir_alquiler_de_campania(pg_temp.u('ea'), null) r), true, 'a1 deja ea sin alquiler');
+-- ea ya tiene pagos: desde la 0185 el coordinador no la deja sin alquiler (CZ017). El caso «campaña sin alquiler con
+-- pagos» (datos de antes, o el UPDATE directo del servidor) se sigue calculando: se arma como servidor.
+select throws_ok($$ select * from public.definir_alquiler_de_campania('01920000-0000-7000-8000-0000000132ea', null) $$,
+  'CZ017', 'Ya hay pagos de alquiler en esta campaña, así que no puede quedar sin alquiler ni en cero. Podés cambiarlo por otro monto mayor que cero.',
+  'a1 no puede dejar ea sin alquiler: ya hay pagos (0185)');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.fila('51', 'ea') || '/' || pg_temp.fila('52', 'ea'), 'n|270000|0|n|270000/n|40000|0|n|40000',
-          'sin alquiler: no debe (null) y todo lo pagado queda a favor');
+update public.campania set alquiler_monto = null where id = pg_temp.u('ea');
+select is(pg_temp.fila('51', 'ea') || '/' || pg_temp.fila('52', 'ea'), 'n|270000|0|n|0/n|40000|0|n|0',
+          'sin alquiler: no debe (null) y todo lo pagado queda por decidir (0159)');
 update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('ea') and usuario_id = pg_temp.u('52');
-select is(pg_temp.fila('52', 'ea'), 'n|40000|0|n|40000', 'de baja en una campaña que no cobra: sigue null');
+select is(pg_temp.fila('52', 'ea'), 'n|40000|0|n|0', 'de baja en una campaña que no cobra: sigue null');
 select is(pg_temp.coincide('ea'), '4|0', '  … y coincide');
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select r.cambio from public.definir_alquiler_de_campania(pg_temp.u('ea'), 150000) r), true, 'a1 vuelve a 150000');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.fila('52', 'ea'), '150000|40000|0|0|40000', 'con alquiler otra vez, k2 sigue de baja: debe 0');
+select is(pg_temp.fila('52', 'ea'), '150000|40000|0|0|0', 'con alquiler otra vez, k2 sigue de baja: debe 0');
 update public.campania_colportor set deleted_at = null where campania_id = pg_temp.u('ea') and usuario_id = pg_temp.u('52');
 select pg_temp.actuar_como(pg_temp.u('a2'));
 select is((select r.cambio from public.definir_alquiler_de_campania(pg_temp.u('eb'), 120000) r), true, 'a2 cambia el alquiler de eb');
@@ -580,13 +585,13 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((select format('%s|%s|%s|%s', v.deuda_antes, v.deuda_despues, v.supera_deuda, v.a_favor_despues)
              from public.validacion_de_ticket(pg_temp.u('14')) v),
-          '0|0|50000|90000', 'de baja: no debe nada (antes 0), los 50000 superan la deuda y quedan a favor con los 40000 de antes');
+          '0|0|50000|0', 'de baja: no debe nada (antes 0) y los 50000 superan la deuda: desde 0152 pasan a la deuda con la casa editora, no quedan a favor del alquiler');
 select is((select format('%s|%s|%s|%s', v.deuda_antes, v.deuda_despues, v.supera_deuda, v.a_favor_despues)
              from public.validacion_de_ticket(pg_temp.u('15')) v),
-          '0|0|50000|170000', 'inscripta y con todo pagado: lo mismo que antes de 0132 (a favor 120000 + 50000)');
+          '0|0|50000|0', 'inscripta y con todo pagado: los 50000 también pasan a la deuda con la casa editora (0152)');
 select is((select v.estado from public.validar_ticket(pg_temp.u('14')) v), 'VALIDADO', 'a1 valida el de la persona de baja');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.fila('52', 'ea'), '150000|90000|0|0|90000', 'de baja, con lo pagado: debe 0 y 90000 a favor');
+select is(pg_temp.fila('52', 'ea'), '150000|90000|0|0|0', 'de baja, con lo pagado: debe 0 y 90000 por decidir');
 select is(pg_temp.coincide('ea'), '5|0', '  … y coincide');
 
 -- --- quién la lee ----------------------------------------------------------------

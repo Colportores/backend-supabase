@@ -284,7 +284,6 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.agregar('f1', null, 'Otra nota'), 'true|COORDINADOR|Le costó arrancar; mejoró a la tarde',
           'el segundo toque es ya_estaba y devuelve la nota guardada');
 select is(pg_temp.agregar('f1'), 'true|COORDINADOR|Le costó arrancar; mejoró a la tarde', 'y uno sin nota, también');
-select is(pg_temp.agregar('f1', 'b2', 'Otra'), 'JO003', 'otra persona en una ya acompañada: JO003');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.jornada_acompaniamiento d join fila_antes a using (jornada_id)
             where d.sync_version is distinct from a.sync_version or d.nota is distinct from a.nota), 0::bigint,
@@ -329,6 +328,18 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.agregar('f1', 'b2', 'Con Beto'), 'false|COORDINADOR|Con Beto', 'quitar y volver a poner con otro acompañante en seguida');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.guardado('f1'), 'COORDINADOR|Con Beto', 'deja la fila de la última acción');
+
+-- Varios acompañantes (0176/0177, #254): f1 ya tiene a b2; a1 suma a un coordinador de otra campaña (a2), con su propia nota.
+-- Cada acompañante tiene su fila con su origen y su nota; la primera no se toca.
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(pg_temp.agregar('f1', 'a2', 'Vino de visita'), 'false|COORDINADOR|Vino de visita', 'un segundo acompañante en la misma jornada, con su nota');
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.jornada_acompaniamiento where jornada_id = pg_temp.u('f1') and deleted_at is null), 2::bigint,
+          'f1 tiene dos filas, una por acompañante');
+select is((select d.nota from public.jornada_acompaniamiento d where d.jornada_id = pg_temp.u('f1') and d.acompaniante_id = pg_temp.u('b2')),
+          'Con Beto', 'y la nota de b2 no se tocó');
+select is((select d.nota from public.jornada_acompaniamiento d where d.jornada_id = pg_temp.u('f1') and d.acompaniante_id = pg_temp.u('a2')),
+          'Vino de visita', 'y la de a2 es la suya');
 
 -- Borrar la jornada se lleva su fila.
 delete from public.jornada where id = pg_temp.u('f4');

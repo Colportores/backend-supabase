@@ -78,34 +78,34 @@ create or replace function pg_temp.vt(p text) returns text language plpgsql as $
 declare r record;
 begin
   select * into r from public.validar_ticket(pg_temp.u(p));
-  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.estado, r.monto, r.cobros_vinculados, r.diferencia, r.deuda_antes,
+  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.estado, r.monto, coalesce(r.en_mano, r.cobros_vinculados), r.diferencia, r.deuda_antes,
                 r.deuda_despues, r.supera_deuda, r.a_favor_despues, r.ya_estaba);
 end $$;
 create or replace function pg_temp.cr(p text) returns text language plpgsql as $$
 declare r record;
 begin
   select * into r from public.confirmar_retiro(pg_temp.u(p));
-  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.estado, r.monto, r.cobros_vinculados, r.diferencia, r.deuda_antes,
+  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.estado, r.monto, coalesce(r.en_mano, r.cobros_vinculados), r.diferencia, r.deuda_antes,
                 r.deuda_despues, r.supera_deuda, r.a_favor_despues, r.ya_estaba);
 end $$;
 create or replace function pg_temp.rt(p text, p_motivo text) returns text language plpgsql as $$
 declare r record;
 begin
   select * into r from public.rechazar_ticket(pg_temp.u(p), p_motivo);
-  return format('%s|%s|%s', r.estado, r.cobros_liberados, r.ya_estaba);
+  return format('%s|%s', r.estado, r.ya_estaba);
 end $$;
 create or replace function pg_temp.pv(p text) returns text language plpgsql as $$
 declare r record;
 begin
   select * into r from public.validacion_de_ticket(pg_temp.u(p));
-  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.tipo, r.concepto, r.monto, r.cobros_vinculados, r.diferencia,
+  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.tipo, r.concepto, r.monto, coalesce(r.en_mano, r.cobros_vinculados), r.diferencia,
                 r.deuda_antes, r.deuda_despues, r.supera_deuda, r.a_favor_despues);
 end $$;
 create or replace function pg_temp.pr(p text) returns text language plpgsql as $$
 declare r record;
 begin
   select * into r from public.validacion_de_retiro(pg_temp.u(p));
-  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.tipo, r.concepto, r.monto, r.cobros_vinculados, r.diferencia,
+  return format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.tipo, r.concepto, r.monto, coalesce(r.en_mano, r.cobros_vinculados), r.diferencia,
                 r.deuda_antes, r.deuda_despues, r.supera_deuda, r.a_favor_despues);
 end $$;
 create or replace function pg_temp.push1(p_op uuid, p_entidad text, p_tipo text, p_payload jsonb, p_version bigint default null)
@@ -247,16 +247,6 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
 -- d0 estaba validado (su ticket t0 también).
 update public.deposito set validado_en = now() - interval '2 days', validado_por = pg_temp.u('c1')
  where id = pg_temp.u('20');
-insert into public.deposito_cobro (id, deposito_id, cobranza_id, colportor_id) values
-  (pg_temp.u('e1'), pg_temp.u('21'), pg_temp.u('a1'), pg_temp.u('b1')),
-  (pg_temp.u('e2'), pg_temp.u('21'), pg_temp.u('a2'), pg_temp.u('b1')),
-  (pg_temp.u('e3'), pg_temp.u('28'), pg_temp.u('a3'), pg_temp.u('b1')),
-  (pg_temp.u('e4'), pg_temp.u('28'), pg_temp.u('a6'), pg_temp.u('b1')),
-  (pg_temp.u('e5'), pg_temp.u('21'), pg_temp.u('a8'), pg_temp.u('b1')),
-  (pg_temp.u('e7'), pg_temp.u('21'), pg_temp.u('aa'), pg_temp.u('b1'));
--- Un vínculo dado de baja (a9 vive pero ya no está en el depósito d1).
-insert into public.deposito_cobro (id, deposito_id, cobranza_id, colportor_id, deleted_at) values
-  (pg_temp.u('e6'), pg_temp.u('21'), pg_temp.u('a9'), pg_temp.u('b1'), now());
 
 -- La plata de b1 (debe 500000) y de b2 (una cuenta dada de baja, que se reactiva).
 insert into public.cuenta_colportor (usuario_id, deuda_total, dinero_depositado, deleted_at) values
@@ -346,12 +336,12 @@ select is(pg_temp.error_de($$ select * from public.validacion_de_ticket(pg_temp.
 -- 3. La vista previa (c1): no cambia nada
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.pv('11'), 'DEPOSITO|CASA_EDITORA|180000|150000|30000|500000|320000|0|0',
-          'depósito de 180000 con dos cobros (150000): diferencia 30000 y la deuda baja a 320000');
+select is(pg_temp.pv('11'), 'DEPOSITO|CASA_EDITORA|180000|0|180000|500000|320000|0|0',
+          'depósito de 180000 con 0 en mano (desde 0152 se compara con lo que tenía en mano, no con cobros marcados): diferencia 180000 y la deuda baja a 320000');
 select is(pg_temp.pv('12'), 'DEPOSITO|CASA_EDITORA|800000|0|800000|500000|0|300000|300000',
           'pago de más: 800000 contra una deuda de 500000 supera por 300000 y queda 300000 a favor');
-select is(pg_temp.pv('13'), 'DEPOSITO|ALQUILER|80000|0|80000|50000|0|30000|30000',
-          'alquiler: debe 150000 - 100000 = 50000; paga 80000: supera por 30000, a favor 30000');
+select is(pg_temp.pv('13'), 'DEPOSITO|ALQUILER|80000|0|80000|50000|0|30000|0',
+          'alquiler: debe 150000 - 100000 = 50000; paga 80000: supera por 30000, que pasan a la deuda con la casa editora (a favor del alquiler: 0)');
 select is(pg_temp.pv('14'), 'COBRO_TARJETA|CASA_EDITORA|120000|120000|0|500000|380000|0|0',
           'cobro con tarjeta: casa editora, y los dos cobros del ticket suman lo mismo');
 select is(pg_temp.pv('15'), 'OTRO' || repeat('|', 8), 'un ticket de otro tipo: no acredita nada');
@@ -372,7 +362,7 @@ select is(pg_temp.validado('21'), false, 'ni el depósito');
 -- 4. Validar
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.vt('11'), 'VALIDADO|180000|150000|30000|500000|320000|0|0|f', 'c1 valida el ticket de b1');
+select is(pg_temp.vt('11'), 'VALIDADO|180000|0|180000|500000|320000|0|0|f', 'c1 valida el ticket de b1');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.estado_t('11'), 'VALIDADO', 'el ticket queda VALIDADO');
 select is((select (revisado_por = pg_temp.u('c1') and revisado_en is not null) from public.ticket where id = pg_temp.u('11')),
@@ -384,7 +374,7 @@ select is((select validado_en = revisado_en from public.deposito d join public.t
 select is(pg_temp.cuenta('b1'), '320000|180000', 'Depositado sube 180000 y la deuda baja de 500000 a 320000');
 select is(pg_temp.n_audit('ticket_validado', '11'), 1::bigint, 'deja un evento en la auditoría');
 select is(pg_temp.audit_claves('ticket_validado', '11'),
-          array['cobros_vinculados', 'concepto', 'deposito_id', 'deuda_antes', 'deuda_despues', 'monto', 'tipo'],
+          array['cobros_vinculados', 'concepto', 'deposito_id', 'deuda_antes', 'deuda_despues', 'en_mano', 'monto', 'tipo'],
           'con solo ids, montos y estados');
 select is(pg_temp.audit_texto('ticket_validado', '11'), format('(%s,%s,ticket)', pg_temp.u('c1'), pg_temp.u('b1')),
           'quién lo validó, sobre quién y en qué tabla');
@@ -392,7 +382,7 @@ select ok(auditoria.metadata_sin_datos_personales(pg_temp.audit_meta('ticket_val
           'el detalle no lleva datos personales');
 
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.vt('11'), 'VALIDADO|180000|150000|30000|||||t', 'un reintento de quien ya lo validó: ya_estaba, sin cifras de deuda');
+select is(pg_temp.vt('11'), 'VALIDADO|180000|0|180000|||||t', 'un reintento de quien ya lo validó: ya_estaba, sin cifras de deuda');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.cuenta('b1'), '320000|180000', 'no acredita dos veces');
 select is(pg_temp.n_audit('ticket_validado', '11'), 1::bigint, 'ni deja otro evento');
@@ -414,23 +404,23 @@ select is(pg_temp.pr('2b'), '|CASA_EDITORA|500000|0|500000|-480000|0|500000|9800
           'el saldo a favor se descuenta de la próxima deuda: el próximo depósito lo suma a lo que ya estaba a favor');
 
 -- Alquiler: no toca la deuda con la casa editora y se cuenta por campaña.
-select is(pg_temp.vt('13'), 'VALIDADO|80000|0|80000|50000|0|30000|30000|f', 'alquiler: supera la deuda de la campaña por 30000');
+select is(pg_temp.vt('13'), 'VALIDADO|80000|0|80000|50000|0|30000|0|f', 'alquiler: supera la deuda de la campaña por 30000');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.cuenta('b1'), '-480000|1060000', 'la deuda con la casa editora no cambia; Depositado sube 80000');
+select is(pg_temp.cuenta('b1'), '-510000|1060000', 'Depositado sube 80000 y los 30000 que el alquiler pagó de más bajan la deuda con la casa editora (0152)');
 select is(pg_temp.validado('23'), true, 'y su depósito queda validado');
 
 -- Cobro con tarjeta: el ticket acredita su monto como casa editora y no tiene depósito.
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.vt('14'), 'VALIDADO|120000|120000|0|-480000|0|120000|600000|f', 'cobro con tarjeta: acredita 120000');
+select is(pg_temp.vt('14'), 'VALIDADO|120000|120000|0|-510000|0|120000|630000|f', 'cobro con tarjeta: acredita 120000');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.cuenta('b1'), '-600000|1180000', 'la deuda baja y Depositado sube');
+select is(pg_temp.cuenta('b1'), '-630000|1180000', 'la deuda baja y Depositado sube');
 select is(pg_temp.estado_t('14'), 'VALIDADO', 'el ticket queda validado');
 
 -- Un ticket de otro tipo: validado, sin acreditar.
 select pg_temp.actuar_como(pg_temp.u('c1'));
 select is(pg_temp.vt('15'), 'VALIDADO' || repeat('|', 7) || '|f', 'un ticket de otro tipo queda validado sin cifras');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.cuenta('b1'), '-600000|1180000', 'y no toca la cuenta');
+select is(pg_temp.cuenta('b1'), '-630000|1180000', 'y no toca la cuenta');
 select is(pg_temp.estado_t('15'), 'VALIDADO', 'queda validado');
 
 -- Los errores de validar.
@@ -441,7 +431,7 @@ select is(pg_temp.mensaje_de($$ select * from public.validar_ticket(pg_temp.u('1
           'Todavía no llegó el depósito de este ticket: el teléfono del colportor tiene que sincronizar. Probá de nuevo más tarde.',
           'con su aviso');
 select is(pg_temp.error_de($$ select * from public.validar_ticket(pg_temp.u('17')) $$), 'TV004 ', 'ticket de tarjeta sin monto: TV004');
-select is(pg_temp.rt('17', repeat('x', 500)), 'RECHAZADO|0|f', 'un motivo de justo 500 caracteres pasa (y un ticket de tarjeta no libera cobros)');
+select is(pg_temp.rt('17', repeat('x', 500)), 'RECHAZADO|f', 'un motivo de justo 500 caracteres pasa');
 select is(pg_temp.estado_t('16'), 'PENDIENTE', 'el de TV005 sigue pendiente');
 select is(pg_temp.estado_t('17'), 'RECHAZADO', 'el de TV004 se pudo rechazar en cambio');
 
@@ -467,88 +457,67 @@ select is(pg_temp.error_de($$ select * from public.rechazar_ticket(pg_temp.u('18
 select is(pg_temp.mensaje_de($$ select * from public.rechazar_ticket(pg_temp.u('18'), '') $$),
           'Escribí el motivo del rechazo (hasta 500 caracteres) para que el colportor sepa qué corregir.', 'con su aviso');
 select is(pg_temp.estado_t('18'), 'PENDIENTE', 'sigue pendiente');
-select is(pg_temp.rt('18', '   El monto no coincide con el cobro  '), 'RECHAZADO|2|f',
-          'rechazar: libera los dos vínculos del depósito');
+select is(pg_temp.rt('18', '   El monto no coincide con el cobro  '), 'RECHAZADO|f', 'rechazar');
 select pg_temp.actuar_como_servidor();
 select is((select motivo_rechazo from public.ticket where id = pg_temp.u('18')), 'El monto no coincide con el cobro',
           'el motivo se guarda recortado');
 select is((select (estado = 'RECHAZADO' and revisado_por = pg_temp.u('c1') and revisado_en is not null)
              from public.ticket where id = pg_temp.u('18')), true, 'ticket RECHAZADO, con quién y cuándo');
-select is((select count(*)::int from public.deposito_cobro where deposito_id = pg_temp.u('28') and deleted_at is not null),
-          2, 'los vínculos del depósito quedan dados de baja');
 select is(pg_temp.validado('28'), false, 'el depósito no se valida');
-select is(pg_temp.cuenta('b1'), '-600000|1180000', 'la cuenta no cambia: la deuda no cambia');
+select is(pg_temp.cuenta('b1'), '-630000|1180000', 'la cuenta no cambia: la deuda no cambia');
 select is(pg_temp.n_audit('ticket_rechazado', '18'), 1::bigint, 'deja un evento en la auditoría');
-select is(pg_temp.audit_claves('ticket_rechazado', '18'), array['cobros_liberados', 'tipo'], 'con solo el tipo y los cobros liberados');
+select is(pg_temp.audit_claves('ticket_rechazado', '18'), array['tipo'], 'con solo el tipo');
 select ok(position('coincide' in pg_temp.audit_meta('ticket_rechazado', '18')) = 0, 'el motivo escrito no se copia a la auditoría');
 
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.rt('18', 'El monto no coincide con el cobro'), 'RECHAZADO|0|t', 'un reintento con el mismo motivo: ya_estaba');
+select is(pg_temp.rt('18', 'El monto no coincide con el cobro'), 'RECHAZADO|t', 'un reintento con el mismo motivo: ya_estaba');
 select is(pg_temp.error_de($$ select * from public.rechazar_ticket(pg_temp.u('18'), 'Otro motivo') $$), 'TV002 ',
           'con otro motivo: TV002');
 select is(pg_temp.error_de($$ select * from public.validar_ticket(pg_temp.u('18')) $$), 'TV002 ', 'un ticket rechazado no se valida');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.n_audit('ticket_rechazado', '18'), 1::bigint, 'el reintento no suma eventos');
 
--- El colportor sube el depósito nuevo y vuelve a incluir el cobro que había quedado libre.
+-- El colportor sube el depósito nuevo con el ticket corregido.
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.deposito (id, monto, fecha, destino, concepto, ticket_id)
                               values (pg_temp.u('40'), 30000, now(), 'BANCO', 'CASA_EDITORA', pg_temp.u('1d')) $$), 'ok',
           'b1 sube el depósito nuevo con el ticket corregido');
-select is(pg_temp.error_de($$ insert into public.deposito_cobro (id, deposito_id, cobranza_id)
-                              values (pg_temp.u('41'), pg_temp.u('40'), pg_temp.u('a3')) $$), 'ok',
-          'y vuelve a incluir el cobro que estaba en el depósito rechazado');
 
--- El depósito y sus vínculos llegan DESPUÉS de que el ticket fue rechazado (otro lote del push): el vínculo nace
--- dado de baja y el cobro queda libre para el depósito corregido.
+-- El depósito llega DESPUÉS de que el ticket fue rechazado (otro lote del push): entra sin error.
 select pg_temp.actuar_como_servidor();
 insert into public.ticket (id, usuario_id, tipo, monto, fecha, estado) values
   (pg_temp.u('3a'), pg_temp.u('b1'), 'DEPOSITO', 22222, now(), 'PENDIENTE'),
   (pg_temp.u('3c'), pg_temp.u('b1'), 'DEPOSITO', 22222, now(), 'PENDIENTE');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.rt('3a', 'No se lee la foto'), 'RECHAZADO|0|f', 'se rechaza antes de que llegue el depósito: nada que liberar');
+select is(pg_temp.rt('3a', 'No se lee la foto'), 'RECHAZADO|f', 'se rechaza antes de que llegue el depósito');
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.deposito (id, monto, fecha, destino, concepto, ticket_id)
                               values (pg_temp.u('3b'), 22222, now(), 'BANCO', 'CASA_EDITORA', pg_temp.u('3a')) $$), 'ok',
           'después llega el depósito del ticket rechazado');
-select is(pg_temp.error_de($$ insert into public.deposito_cobro (id, deposito_id, cobranza_id)
-                              values (pg_temp.u('3e'), pg_temp.u('3b'), pg_temp.u('a9')) $$), 'ok',
-          'y su vínculo con el cobro: entra sin error');
 select pg_temp.actuar_como_servidor();
-select is((select deleted_at is not null from public.deposito_cobro where id = pg_temp.u('3e')), true,
-          'pero nace dado de baja: el cobro no queda atrapado');
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.deposito (id, monto, fecha, destino, concepto, ticket_id)
                               values (pg_temp.u('3d'), 22222, now(), 'BANCO', 'CASA_EDITORA', pg_temp.u('3c')) $$), 'ok',
           'b1 sube el depósito corregido');
-select is(pg_temp.error_de($$ insert into public.deposito_cobro (id, deposito_id, cobranza_id)
-                              values (pg_temp.u('3f'), pg_temp.u('3d'), pg_temp.u('a9')) $$), 'ok',
-          'y vuelve a incluir el mismo cobro (sin 23505)');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is((select format('%s|%s', p.cobros_vinculados, p.diferencia) from public.validacion_de_ticket(pg_temp.u('3c')) p),
-          '22222|0', 'la vista previa del corregido ve su cobro y no marca diferencia');
-select pg_temp.actuar_como_servidor();
-select is((select count(*)::int from public.deposito_cobro where cobranza_id = pg_temp.u('a9') and deleted_at is null), 1,
-          'el cobro está en un solo depósito vivo');
 select pg_temp.actuar_como(pg_temp.u('c1'));
 select is(pg_temp.error_de($$ select * from public.rechazar_ticket(pg_temp.u('3a'), 'Otra vez') $$), 'TV002 ',
           'rechazar el mismo ticket otra vez da TV002, y ya no hace falta');
 select pg_temp.actuar_como_servidor();
-select has_trigger('public', 'deposito_cobro', 'deposito_cobro_de_ticket_rechazado', 'el trigger que da de baja el vínculo tardío');
 
 -- ---------------------------------------------------------------------------
 -- 6. Confirmar un retiro sin ticket
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.cr('2b'), 'VALIDADO|500000|0|500000|-600000|0|500000|1100000|f',
+select is(pg_temp.cr('2b'), 'VALIDADO|500000|0|500000|-630000|0|500000|1130000|f',
           'c1 confirma el retiro de 500000: se acredita como casa editora');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.cuenta('b1'), '-1100000|1680000', 'la cuenta de b1 sube y baja');
+select is(pg_temp.cuenta('b1'), '-1130000|1680000', 'la cuenta de b1 sube y baja');
 select is((select (validado_por = pg_temp.u('c1') and validado_en is not null) from public.deposito where id = pg_temp.u('2b')),
           true, 'el retiro queda validado, por c1');
 select is(pg_temp.n_audit('retiro_confirmado', '2b'), 1::bigint, 'deja un evento en la auditoría');
 select is(pg_temp.audit_claves('retiro_confirmado', '2b'),
-          array['cobros_vinculados', 'concepto', 'deuda_antes', 'deuda_despues', 'monto'], 'con solo montos y ids');
+          array['cobros_vinculados', 'concepto', 'deuda_antes', 'deuda_despues', 'en_mano', 'monto'], 'con solo montos y ids');
 select is(pg_temp.audit_texto('retiro_confirmado', '2b'), format('(%s,%s,deposito)', pg_temp.u('c1'), pg_temp.u('b1')),
           'quién, sobre quién y en qué tabla');
 select pg_temp.actuar_como(pg_temp.u('c1'));
@@ -558,11 +527,11 @@ select is(pg_temp.error_de($$ select * from public.confirmar_retiro(pg_temp.u('2
 select is(pg_temp.mensaje_de($$ select * from public.confirmar_retiro(pg_temp.u('2b')) $$),
           'Este retiro ya lo confirmó otra persona. Recargá la lista para ver cómo quedó.', 'con su aviso');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.cuenta('b1'), '-1100000|1680000', 'el reintento y el error no acreditan de nuevo');
+select is(pg_temp.cuenta('b1'), '-1130000|1680000', 'el reintento y el error no acreditan de nuevo');
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(pg_temp.cr('30'), 'VALIDADO|6000|0|6000|0|0|6000|36000|f', 'un retiro de alquiler: se compara con la deuda de la campaña');
+select is(pg_temp.cr('30'), 'VALIDADO|6000|0|6000|0|0|6000|0|f', 'un retiro de alquiler: se compara con la deuda de la campaña');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.cuenta('b1'), '-1100000|1686000', 'el alquiler suma a Depositado y no toca la deuda con la casa editora');
+select is(pg_temp.cuenta('b1'), '-1136000|1686000', 'el alquiler suma a Depositado y, como ya estaba todo pagado, los 6000 bajan la deuda con la casa editora');
 
 -- ---------------------------------------------------------------------------
 -- 7. Un depósito validado no se edita; el teléfono no se valida solo
@@ -631,7 +600,7 @@ select is((select c.alquiler_ultimo_pago_fecha = now() from public.cuentas_de_ca
           'con la fecha del último pago validado (no la del retiro sin confirmar, que es más nueva)');
 select is((select format('%s|%s', c.deuda_total, c.dinero_depositado)
              from public.cuentas_de_campania(pg_temp.u('e1')) c where c.colportor_id = pg_temp.u('b1')),
-          '-1100000|1686000', 'las cifras de la cuenta de b1: la deuda a favor y Depositado');
+          '-1136000|1686000', 'las cifras de la cuenta de b1: la deuda a favor y Depositado');
 
 select * from finish();
 rollback;

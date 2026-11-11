@@ -62,8 +62,8 @@ select ok((select exists (select 1 from jsonb_array_elements(d -> 'rows' -> 'pro
           'sin código la clave viaja en null: el teléfono lo distingue de «campo que no conoce»');
 select is(pg_temp.dias(d), '15', 'los días de antigüedad bajan con su valor por defecto: 15') from pull_b1;
 select ok((select not jsonb_path_exists(d, '$.rows.parametro_global[*].xmin_w') from pull_b1), 'xmin_w no viaja');
-select is((select jsonb_array_length(d -> 'rows' -> 'parametro_global') from pull_b1), 1,
-          'una sola fila de parámetros, aunque el colportor no tenga campaña ni zona');
+select is((select jsonb_array_length(d -> 'rows' -> 'parametro_global') from pull_b1), 2,
+          'dos filas de parámetros (los días de antigüedad y la versión vigente de los Términos, 0182), aunque el colportor no tenga campaña ni zona');
 
 -- ---------------------------------------------------------------------------
 -- 2. Sin cambios no baja nada; un cambio del servidor llega en el pull siguiente

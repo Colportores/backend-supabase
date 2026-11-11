@@ -5,7 +5,7 @@
 -- escritura no; qué cuenta como un acompañamiento de la campaña (fechas, baja de la inscripción,
 -- jornadas abiertas o dadas de baja, el día de Montevideo); los días sin acompañar (desde el
 -- último o desde el inicio de la campaña) y el orden; el historial; cada error de la escritura
--- (JO001..JO004, CZ011, 22023) sin tocar la fila; la idempotencia; que las lecturas reflejan lo
+-- (JO001, JO002, JO004, CZ011, 22023; JO003 ya no existe desde la 0177) sin tocar la fila; la idempotencia; que las lecturas reflejan lo
 -- escrito; que no se devuelve nada de más.
 begin;
 select * from no_plan();
@@ -458,8 +458,6 @@ grant select on pg_temp.antes to authenticated;
 select pg_temp.actuar_como(pg_temp.u('a1'));
 
 -- Los errores de la jornada, y que ninguno toca nada.
-select is(split_part(pg_temp.agregar('e1', 'f2'), '|', 1), 'JO003', 'f2 ya está acompañada por otra persona: JO003');
-select alike(pg_temp.agregar('e1', 'f2'), '%Nora Quiroga%', 'y el aviso dice quién');
 select is(split_part(pg_temp.agregar('e1', 'fe'), '|', 1), 'JO002', 'una jornada abierta sin acompañante: JO002');
 select is(split_part(pg_temp.agregar('e1', 'f4'), '|', 1), 'JO002', 'una jornada abierta ya acompañada por mí: JO002 (la abierta va primero)');
 select is(split_part(pg_temp.agregar('e1', 'f5'), '|', 1), 'JO001', 'una jornada de antes de la campaña: JO001');
@@ -485,6 +483,15 @@ select is((select count(*) from public.jornada j join pg_temp.antes a using (id)
 
 -- Agregar de verdad.
 select pg_temp.actuar_como(pg_temp.u('a1'));
+-- 0176/0177 (#254, «Dos acomp.»): f2 ya está acompañada por Nora; a1 se suma como segundo acompañante (antes: JO003).
+select is(split_part(pg_temp.agregar('e1', 'f2'), '|', 1), 'false', 'f2 ya está acompañada por otra persona: a1 se suma como segundo acompañante (ya no hay JO003)');
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.jornada_acompaniante where jornada_id = pg_temp.u('f2') and deleted_at is null), 2::bigint,
+          'y f2 queda con los dos acompañantes');
+select is((select j.acompaniante_id from public.jornada j where j.id = pg_temp.u('f2')),
+          (select a.acompaniante_id from pg_temp.antes a where a.id = pg_temp.u('f2')),
+          'la columna de la jornada sigue en el primero (Nora): una jornada acompañada cuenta una sola vez');
+select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.agregar('e1', 'f7'), 'false|Mariela Pereyra|' || (pg_temp.hoy() - 2),
           'f7 (b2, hace 2 días) queda acompañada por a1: ya_estaba false');
 select pg_temp.actuar_como_servidor();
@@ -503,9 +510,12 @@ select pg_temp.actuar_como_servidor();
 select is((select j.sync_version - a.sync_version from public.jornada j join pg_temp.antes a using (id) where j.id = pg_temp.u('f7')),
           1::bigint, 'y la versión no sube otra vez');
 
--- Otro coordinador (el ADMIN) ya no puede pisarla.
+-- Otro coordinador (el ADMIN) no pisa el de a1: se suma al lado (0176, ya no hay JO003).
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is(split_part(pg_temp.agregar('e1', 'f7'), '|', 1), 'JO003', 'el ADMIN no pisa el acompañamiento de a1: JO003');
+select is(split_part(pg_temp.agregar('e1', 'f7'), '|', 1), 'false', 'el ADMIN se suma a f7 sin pisar el acompañamiento de a1');
+select pg_temp.actuar_como_servidor();
+select is((select j.acompaniante_id from public.jornada j where j.id = pg_temp.u('f7')), pg_temp.u('a1'), 'y f7 sigue con a1 como primer acompañante');
+select pg_temp.actuar_como(pg_temp.u('ad'));
 -- ...pero sí agrega el suyo en una jornada libre, y es el que queda.
 select is(pg_temp.agregar('e1', 'f8'), 'false|Admin Zeta|' || (pg_temp.hoy() - 1), 'el ADMIN agrega el suyo en f8');
 -- La jornada que cruza la medianoche cuenta en el día en que empezó (hace 6 días, no hace 5).
@@ -525,9 +535,9 @@ select is(pg_temp.fila('e1', 'b2'),
           format('3|%s|1|%s|Ciudad uno q97', pg_temp.hoy() - 1, pg_temp.hoy() - 1),
           'b2 ahora tiene 3 acompañamientos y el último hace 1 día');
 select is(pg_temp.historial('e1', 'b2'),
-          '-1|1.00|false|Admin;-2|3.00|false|Mariela;-6|3.00|false|Admin',
+          '-1|1.00|false|Admin;-2|3.00|false|Mariela;-2|3.00|false|Admin;-6|3.00|false|Admin',
           'el historial de b2, con la de la medianoche el día en que empezó');
-select is(pg_temp.jornadas('e1', 'b2'), '-1|1.00|Admin;-2|3.00|Mariela;-6|3.00|Admin',
+select is(pg_temp.jornadas('e1', 'b2'), '-1|1.00|Admin;-2|3.00|Mariela;-2|3.00|Admin;-6|3.00|Admin',
           'y las jornadas de b2 muestran ahora quién las acompañó');
 -- b1: f3 (hace 20) entra y queda entre las anteriores.
 select is(pg_temp.fila('e1', 'b1'),

@@ -244,8 +244,9 @@ select is((select sync.expresion_json('public.venta_item'::regclass) like '%''co
 select is((select sync.expresion_json('public.venta'::regclass) like '%''motivo_monto_manual''%'), true, 'y el de venta, el motivo');
 
 -- Las ventas de b1 y b2 (como postgres: el dueño va explícito).
-insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id) values
-  (pg_temp.u('b0'), pg_temp.u('ca'), 'T-71', 220000, now(), pg_temp.u('b1'));
+-- Con motivo: los ítems de los casos de abajo suman más que el total (0150: sin motivo, el servidor lo rechaza).
+insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, motivo_monto_manual) values
+  (pg_temp.u('b0'), pg_temp.u('ca'), 'T-71', 220000, now(), pg_temp.u('b1'), 'fixture: los ítems suman más (0150)');
 
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.error_de($$ insert into public.venta_item (id, venta_id, coleccion_id, cantidad, precio_unitario, subtotal, componentes)
@@ -474,8 +475,8 @@ select is((select pg_get_expr(indpred, indrelid) from pg_index
           '(deleted_at IS NULL)', 'y solo de las ventas vivas');
 select is((select regexp_replace(pg_get_indexdef(indexrelid), '^.* USING ', '') from pg_index
             where indexrelid = 'public.venta_talonario_por_colportor_y_anio_idx'::regclass),
-          'btree (colportor_id, numero_talonario, anio_de_la_venta(fecha)) WHERE (deleted_at IS NULL)',
-          'por colportor, número y año de la fecha de la venta');
+          'btree (colportor_id, lower(btrim(numero_talonario)), anio_de_la_venta(fecha)) WHERE (deleted_at IS NULL)',
+          'por colportor, número (sin mayúsculas ni espacios en los extremos, 0155) y año de la fecha de la venta');
 
 select is(public.anio_de_la_venta('2026-06-15 12:00:00+00'), 2026, 'el año de una fecha cualquiera');
 select is(public.anio_de_la_venta('2027-01-01 02:30:00+00'), 2026, 'el 01/01 a las 02:30 UTC todavía es 2026 en Uruguay (-03)');
@@ -518,7 +519,7 @@ select is(pg_temp.error_de($$ insert into public.venta (id, espacio_persona_id, 
 select is(pg_temp.error_de($$ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id)
      values ('01920000-0000-7000-8000-0000000071f6', '01920000-0000-7000-8000-0000000071ca', 't-1', 10000,
              '2026-03-12 15:00:00+00', '01920000-0000-7000-8000-0000000071b1') $$),
-          'ok', 'el número se compara tal cual (T-1 y t-1 son distintos: la normalización es del teléfono)');
+          '23505', 'el número se compara sin mayúsculas (T-1 y t-1 son el mismo, desde 0155)');
 
 -- El borde del año es el de Uruguay, no el de UTC.
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id) values

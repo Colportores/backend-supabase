@@ -3,7 +3,8 @@
 --   1. La forma: columnas, CHECK, columnas del servidor, una sola agregar_acompaniamiento y sus privilegios.
 --   2. «Quién acompaña»: «Yo» (sin parámetro o el propio) y otro colportor inscripto vivo de la campaña; el
 --      que no lo es (de otra campaña, dado de baja, un coordinador, inexistente) da JO005; el dueño de la
---      jornada, JO004; lo ya registrado, idempotente o JO003.
+--      jornada, JO004; lo ya registrado, idempotente. Desde la 0177 una jornada puede tener varios acompañantes (no hay JO003) y un
+--      coordinador o administrador de cualquier campaña se puede anotar (JO005 solo para un colportor que no es del equipo).
 --   3. Nota y origen: la RPC pone COORDINADOR y la nota recortada; el cliente (UPDATE, INSERT, sync_push) no
 --      elige ninguno de los dos; las lecturas los devuelven; el CHECK de la forma; la auditoría no copia la nota.
 --   4. Los 15 días: el día 15 entra, el 16 da CZ011; las lecturas leen cualquier campaña terminada.
@@ -272,8 +273,8 @@ select is(pg_temp.guardado('f1'), 'null|null|null', 'quitar al acompañante desd
 select is((select count(*) from public.jornada_acompaniamiento where jornada_id = pg_temp.u('f1')), 0::bigint,
           'porque la fila se borra');
 select is((select count(*) from pg_constraint where conrelid = 'public.jornada_acompaniamiento'::regclass
-              and conname = 'jornada_acompaniamiento_jornada_key'), 1::bigint,
-          'y hay una sola fila por jornada (UNIQUE)');
+              and conname = 'jornada_acompaniamiento_jornada_acompaniante_key'), 1::bigint,
+          'y hay una sola fila por jornada y acompañante (UNIQUE, 0176)');
 
 -- ---------------------------------------------------------------------------
 -- 2. «Quién acompaña»
@@ -301,17 +302,13 @@ select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.cod('e1', 'f9', 'b5'), 'JO001', 'sanity: f9 está en el hueco de b4 (JO001 va antes que el acompañante)');
 select is(pg_temp.cod('e1', 'fc', 'b5'), 'JO005', 'un colportor de otra campaña: JO005');
 select is(pg_temp.cod('e1', 'fc', 'b3'), 'JO005', 'un colportor dado de baja de esta campaña: JO005');
-select is(pg_temp.cod('e1', 'fc', 'a2'), 'JO005', 'un coordinador que no está inscripto: JO005');
 select is(pg_temp.cod('e1', 'fc', 'ba'), 'JO005', 'uno con la inscripción de baja (b10): JO005');
 select is(pg_temp.agregar_u('e1', 'fc', gen_random_uuid()), (select pg_temp.agregar('e1', 'fc', 'b5')), 'un uuid que no existe contesta igual que uno de otra campaña');
 select alike(pg_temp.agregar('e1', 'fc', 'b5'), '%no está inscripto en esta campaña. Elegí a alguien de su equipo%',
              'y el aviso dice qué hacer');
 select is(pg_temp.cod('e1', 'fc', 'b1'), 'JO004', 'el dueño de la jornada como acompañante: JO004');
 select alike(pg_temp.agregar('e1', 'fc', 'b1'), '%no puede figurar como acompañante de su propia jornada%', 'con su propio aviso');
-select is(pg_temp.cod('e1', 'f3', 'b2'), 'JO003', 'una jornada que ya acompañó otra persona: JO003, también si eligen a otro');
-select is(pg_temp.cod('e1', 'f3', 'b5'), 'JO003', 'y si el elegido tampoco es de la campaña, gana JO003 (nada se puede hacer)');
-select is(pg_temp.cod('e1', 'f1', 'b2'), 'JO003', 'f1 ya figura con a1: otro colportor no la pisa');
-select alike(pg_temp.agregar('e1', 'f1', 'b2'), '%Mariela Pereyra%', 'y el aviso dice quién');
+select is(pg_temp.cod('e1', 'f3', 'b5'), 'JO005', 'una jornada ya acompañada: el elegido de otra campaña sigue dando JO005');
 select is(pg_temp.cod('e1', 'fc', null, repeat('x', 501)), '22023', 'una nota de 501 caracteres: 22023, antes de tocar nada');
 select pg_temp.actuar_como_servidor();
 select is((select count(*) from public.jornada j join antes a using (id)
@@ -320,7 +317,7 @@ select is((select count(*) from public.jornada j join antes a using (id)
                or j.acompaniante_id is distinct from a.acompaniante_id
                or d.origen is distinct from a.origen
                or d.nota is distinct from a.nota), 0::bigint,
-          'ningún error tocó una jornada (JO001..JO005, 22023)');
+          'ningún error tocó una jornada (JO001, JO002, JO004, JO005, 22023)');
 select is((select count(*) from auditoria.audit_log) - (select n from eventos_antes), 0::bigint, 'ni dejó un evento en la auditoría');
 
 -- Idempotente con otro colportor: la misma persona no vuelve a escribir, y la nota nueva no pisa la vieja.
@@ -602,6 +599,30 @@ select is((select tramos_afuera from public.campania_colportor where campania_id
           '{}'::tstzrange[], 'y empieza sin huecos');
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is(pg_temp.fila('e1', 'bc'), format('0|null|0|%s', pg_temp.hoy()), 'y sin acompañar desde hoy (se sumó hoy): 0 días');
+
+-- ---------------------------------------------------------------------------
+-- Varios acompañantes por jornada y «Valida acomp» (0176/0177, backend-supabase#254, decisión del 05/11)
+-- ---------------------------------------------------------------------------
+-- f3 ya la acompaña a2; f1 quedó libre. Antes: JO003 en una ya acompañada. Ahora se agrega al lado y la columna sigue en el primero.
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is(pg_temp.agregar('e1', 'f3', 'b2'), 'false|Beto Bravo|COORDINADOR|null', 'f3 ya acompañada por a2: a1 suma a b2 (ya no hay JO003)');
+select is(pg_temp.agregar('e1', 'f1', 'a2'), 'false|Nora Quiroga|COORDINADOR|null',
+          'un coordinador de otra campaña (a2) se puede anotar sin estar inscripto (ya no es JO005)');
+select is(pg_temp.agregar('e1', 'f3', 'b2'), 'true|Beto Bravo|COORDINADOR|null', 'repetir a la misma persona es ya_estaba');
+select is(pg_temp.cod('e1', 'f3', 'b5'), 'JO005', 'un colportor de otra campaña sigue dando JO005, también en una jornada con varios');
+select pg_temp.actuar_como_servidor();
+select is((select count(*) from public.jornada_acompaniante where jornada_id = pg_temp.u('f3') and deleted_at is null), 2::bigint,
+          'f3 queda con dos acompañantes');
+select is((select acompaniante_id from public.jornada where id = pg_temp.u('f3')), pg_temp.u('a2'),
+          'y la columna de la jornada sigue en el primero (a2)');
+select is((select acompaniante_id from public.jornada where id = pg_temp.u('f1')), pg_temp.u('a2'), 'f1 (sin acompañante hasta acá) queda con a2 como único');
+select is((select count(*) from public.jornadas_acompaniadas_de_campania(pg_temp.u('e1')) where jornada_id = pg_temp.u('f3')), 1::bigint,
+          'la jornada acompañada cuenta una sola vez aunque tenga dos acompañantes');
+select pg_temp.actuar_como(pg_temp.u('a1'));
+select is((select count(*) from public.historial_de_acompaniamientos(pg_temp.u('e1')) where jornada_id = pg_temp.u('f3')), 2::bigint,
+          'y el historial trae una fila por acompañante');
+select is((select count(distinct jornada_id) from public.historial_de_acompaniamientos(pg_temp.u('e1'), pg_temp.u('b1'))
+            where jornada_id in (pg_temp.u('f1'), pg_temp.u('f3'))), 2::bigint, 'dos jornadas distintas en total');
 
 select * from finish();
 rollback;

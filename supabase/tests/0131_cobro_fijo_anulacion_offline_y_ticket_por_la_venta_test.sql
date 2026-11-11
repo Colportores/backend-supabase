@@ -119,11 +119,14 @@ select pg_temp.u(x.s), r.id
                ('b1', 'COLPORTOR'), ('b2', 'COLPORTOR'), ('b3', 'COLPORTOR'), ('b4', 'COLPORTOR'),
                ('b5', 'COLPORTOR'), ('b6', 'COLPORTOR'), ('b7', 'COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
+-- c4: su fin se cuenta desde el día de Montevideo de los cobros «de hoy» (hasta 3 h atrás), no desde hoy a secas. Entre
+-- las 00:00 y las 03:00 de Montevideo esos cobros caen en el día anterior y, con fin = hoy - 16, la gracia de c4 (fin + 15
+-- días) todavía estaba abierta al cobrar: el escenario «gracia ya vencida al cobrar» solo se rompía a esas horas (CI, 03/11).
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('c1'), 'c1 en curso', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('d1')),
   (pg_temp.u('c2'), 'c2 hace 20 dias', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo() - 20, pg_temp.u('d2')),
   (pg_temp.u('c3'), 'c3 hace 15 dias', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo() - 15, pg_temp.u('d2')),
-  (pg_temp.u('c4'), 'c4 hace 16 dias', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo() - 16, pg_temp.u('d2')),
+  (pg_temp.u('c4'), 'c4 hace 16 dias', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo(now() - interval '3 hours') - 16, pg_temp.u('d2')),
   (pg_temp.u('c5'), 'c5 vieja', 'VERANO', public.hoy_montevideo() - 120, public.hoy_montevideo() - 60, pg_temp.u('d1')),
   (pg_temp.u('c6'), 'c6 en curso', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('d2'));
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
@@ -204,7 +207,6 @@ begin
   update public.cobranza set tarjeta_tipo = 'DEBITO', tarjeta_marca = 'Visa', numero_aprobacion = '123456'
    where id in (pg_temp.uc(42), pg_temp.uc(45), pg_temp.uc(46));
   update public.cobranza set referencia_transferencia = '88213', banco_origen = 'BROU' where id = pg_temp.uc(43);
-  update public.cobranza set numero_cuota = 1 where id = pg_temp.uc(44);
   -- el borde
   perform pg_temp.cb(40, '71', now() - interval '72 hours');
   perform pg_temp.cb(41, '71', now() - interval '72 hours 1 second');
@@ -276,7 +278,7 @@ select is(pg_temp.mensaje_de($$ update public.cobranza set anulado_at = now() - 
 select is(pg_temp.anulado(3), false, 'y el cobro sigue vivo');
 select is(pg_temp.anular_a(3, now()), 'CB001', 'con la hora del servidor (80 h) tampoco: lo que cuenta es la hora que dice el teléfono');
 -- Una hora del futuro, o anterior al cobro, no es de fiar.
-select is(pg_temp.anular_a(4, now() + interval '1 minute'), 'CB008', 'una hora del futuro no vale');
+select is(pg_temp.anular_a(4, now() + interval '6 minutes'), 'CB008', 'una hora del futuro (más de los 5 minutos de margen de 0151) no vale');
 select is(pg_temp.mensaje_de($$ update public.cobranza set anulado_at = now() + interval '1 hour', motivo_anulacion = 'Otro'
                                 where id = pg_temp.uc(4) $$),
           'CB008: La hora de la anulación no es válida: no puede ser del futuro ni anterior al cobro. Revisá la fecha y la hora de tu teléfono.',
@@ -304,16 +306,14 @@ select is(pg_temp.anular_a(1, now() - interval '8 hours'), 'CB003', 'pero cambia
 select is(pg_temp.anular_a(7, now() - interval '9 hours'), 'CB002', 'con el ticket validado la colportora no anula, tampoco offline');
 -- Los 15 días de gracia de las ventas: la campaña de la venta.
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is(pg_temp.anular_a(8, now()), 'CB009', 'la venta es de una campaña que terminó hace 20 días: ya no se anula');
-select is(pg_temp.mensaje_de($$ update public.cobranza set anulado_at = now(), motivo_anulacion = 'Otro' where id = pg_temp.uc(15) $$),
-          'CB009: La campaña de esta venta terminó hace más de 15 días: el cobro ya no se puede anular. Pedile a tu coordinador que lo revise.',
-          'y el aviso dice a quién pedírselo');
-select is(pg_temp.anulado(8), false, 'el cobro sigue vivo');
+-- Desde 0151 («Anular sin c.»): la campaña terminó hace 20 días, pero el cobro es de hoy; con la gracia ya vencida al
+-- cobrar rigen los 15 días desde el cobro. El CB009 se prueba en 0151_el_reloj_del_telefono_..._test.sql.
+select is(pg_temp.anular_a(8, now()), 'ok', 'la venta es de una campaña que terminó hace 20 días, pero se cobró hoy: vale (0151)');
+select is(pg_temp.anulado(8), true, 'y queda anulado');
 select pg_temp.actuar_como(pg_temp.u('b3'));
 select is(pg_temp.anular_a(9, now()), 'ok', 'a los 15 días justos del fin de la campaña todavía vale');
 select pg_temp.actuar_como(pg_temp.u('b4'));
-select is(pg_temp.anular_a(10, now()), 'CB009', 'a los 16 días no');
-select is(pg_temp.anular_a(10, now() - interval '1 hour'), 'CB009', 'ni con una hora vieja del teléfono: la gracia mira cuándo sube');
+select is(pg_temp.anular_a(10, now()), 'ok', 'a los 16 días, con un cobro de hoy: vale, la gracia ya estaba vencida al cobrar (0151)');
 select pg_temp.actuar_como(pg_temp.u('b5'));
 select is(pg_temp.anular_a(11, now()), 'ok', 'una venta que no es de ninguna campaña: no hay gracia que medir, vale la ventana de 72 h');
 -- El coordinador usa la hora del servidor.
@@ -389,11 +389,10 @@ select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA' w
 select is(pg_temp.error_de($$ update public.cobranza set numero_aprobacion = '999999' where id = pg_temp.uc(42) $$), 'CB007', 'ni la aprobación');
 select is(pg_temp.error_de($$ update public.cobranza set referencia_transferencia = '1' where id = pg_temp.uc(43) $$), 'CB007', 'ni la referencia de la transferencia');
 select is(pg_temp.error_de($$ update public.cobranza set banco_origen = 'Itaú' where id = pg_temp.uc(43) $$), 'CB007', 'ni el banco');
-select is(pg_temp.error_de($$ update public.cobranza set numero_cuota = 2 where id = pg_temp.uc(44) $$), 'CB007', 'ni el número de cuota');
 select is(pg_temp.error_de($$ update public.cobranza set tarjeta_tipo = tarjeta_tipo, tarjeta_marca = tarjeta_marca, numero_aprobacion = numero_aprobacion,
-                                     referencia_transferencia = referencia_transferencia, banco_origen = banco_origen, numero_cuota = numero_cuota
+                                     referencia_transferencia = referencia_transferencia, banco_origen = banco_origen
                               where id = pg_temp.uc(42) $$), 'ok', 'el reenvío idéntico con esos datos pasa');
-select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA', numero_aprobacion = '999999', numero_cuota = 2 where id = pg_temp.uc(45) $$), 'ok',
+select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA', numero_aprobacion = '999999' where id = pg_temp.uc(45) $$), 'ok',
           'dentro del plazo se corrigen junto con el monto y el medio');
 select is(pg_temp.error_de($$ update public.cobranza set tarjeta_marca = 'OCA' where id = pg_temp.uc(46) $$), 'CB007', 'con el ticket validado, la marca tampoco');
 -- El borde: 72 h inclusive.
@@ -438,9 +437,9 @@ select is(pg_temp.codigos((select r from lote)), array['CB007', '-', '-', '-', '
 select pg_temp.actuar_como(pg_temp.u('b4'));
 select is(pg_temp.codigos(pg_temp.push(jsonb_build_array(
             pg_temp.job_upd('e5', 55, jsonb_build_object('anulado_at', now() - interval '1 hour', 'motivo_anulacion', 'Otro'))))),
-          array['CB009'], 'por el push, CB009: la campaña de la venta terminó hace más de 15 días');
+          array['-'], 'por el push, la campaña de la venta terminó hace 16 días pero el cobro es de hace 3 h: entra (0151)');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.anulado(55), false, 'y el cobro no se anuló');
+select is(pg_temp.anulado(55), true, 'y el cobro quedó anulado');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.monto_de(50), 1000, 'el cobro fijo no cambió');
 select is(pg_temp.monto_de(51), 1500, 'el corregido dentro del plazo sí');
