@@ -1,4 +1,4 @@
--- pgTAP · la cédula se guarda en 7 u 8 dígitos y el registro rechaza otra (migración 0189,
+-- pgTAP · la cédula se guarda en 7 u 8 dígitos y el registro rechaza otra (migración 0190,
 -- backend-supabase#266, P1: decisión del orquestador del 11/11, seguridad barata)
 --   1. La forma: cedula_normalizada() (interna) y el CHECK de 7 u 8 dígitos.
 --   2. El registro normaliza lo que la app deja pasar (puntos, guion, espacios) y guarda solo dígitos.
@@ -9,7 +9,7 @@ begin;
 select * from no_plan();
 
 create or replace function pg_temp.u(p_sufijo text) returns uuid language sql immutable as $$
-  select ('01920000-0000-7000-8000-0000000189' || p_sufijo)::uuid
+  select ('01920000-0000-7000-8000-0000000190' || p_sufijo)::uuid
 $$;
 
 create or replace function pg_temp.error_de(p_sql text) returns text language plpgsql as $$

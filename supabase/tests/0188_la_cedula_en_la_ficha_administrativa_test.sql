@@ -130,7 +130,7 @@ select ok(not has_function_privilege('authenticated', 'public.tg_auth_usuario_nu
 select is(pg_temp.registrar('a1',
   '{"nombre":"Rocío","apellido":"Alfa","cedula":"4.567.890-1","terminos_version":"v1"}'), 'ok',
   'el registro con la cédula se crea');
-select is(pg_temp.ficha('a1'), '45678901', 'la ficha guarda la cédula en solo dígitos (0189)');
+select is(pg_temp.ficha('a1'), '45678901', 'la ficha guarda la cédula en solo dígitos (0190)');
 select row_eq(
   $$ select created_by = usuario_id, deleted_at is null, sync_version
        from public.ficha_administrativa where usuario_id = pg_temp.u('a1') $$,
@@ -155,7 +155,7 @@ select is(pg_temp.registrar('a4', '{"nombre":"Bruno","apellido":"Beta","cedula":
 
 -- Los espacios de los extremos no se guardan.
 select is(pg_temp.registrar('a5', '{"cedula":"  1234567-8 "}'), 'ok', 'cédula con espacios: el registro se crea');
-select is(pg_temp.ficha('a5'), '12345678', 'se guarda sin espacios ni guion (0189)');
+select is(pg_temp.ficha('a5'), '12345678', 'se guarda sin espacios ni guion (0190)');
 -- Un número JSON se guarda como texto.
 select is(pg_temp.registrar('a6', '{"cedula":12345678}'), 'ok', 'cédula como número JSON: el registro se crea');
 select is(pg_temp.ficha('a6'), '12345678', 'se guarda como texto');
@@ -194,7 +194,7 @@ select is((select count(*) from public.usuario where id = pg_temp.u('c1')), 0::b
 select pg_temp.actuar_como_service_role();
 select is(left(pg_temp.error_de($$ insert into public.ficha_administrativa (usuario_id, cedula)
                                   values (pg_temp.u('b1'), '  ') $$), 5),
-          '23514', 'el servidor no guarda una cédula en blanco (desde la 0189, solo 7 u 8 dígitos)');
+          '23514', 'el servidor no guarda una cédula en blanco (desde la 0190, solo 7 u 8 dígitos)');
 select is(left(pg_temp.error_de($$ insert into public.ficha_administrativa (usuario_id, cedula)
                                   values (pg_temp.u('a1'), '99999999') $$), 5),
           '23505', 'ni una segunda ficha para la misma cuenta');
