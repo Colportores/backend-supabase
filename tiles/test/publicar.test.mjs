@@ -21,6 +21,7 @@ import {
   serializarEstilo,
   versionDeEstilo,
 } from '../src/publicar.mjs';
+import { clienteStorage } from '../src/storage.mjs';
 
 const AMBITO = '09990000-0000-7000-8003-000000000001';
 const ESTILO_V = 'e'.repeat(64);
@@ -712,6 +713,11 @@ async function servidorVacio({ ciudades = () => [], catalogo } = {}) {
     if (req.url.startsWith('/rest/v1/')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(req.url.startsWith('/rest/v1/ciudad?') ? ciudades(new URL(req.url, 'http://x').searchParams) : []));
+    } else if (req.method === 'POST' && req.url.startsWith('/storage/v1/object/list/')) {
+      // El listado del bucket: el catálogo con el eTag (MD5) de lo que sirve el GET de abajo, o nada (#271).
+      const etag = catalogo && createHash('md5').update(JSON.stringify(catalogo)).digest('hex');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(catalogo ? [{ id: 'cat', name: 'catalogo.json', metadata: { eTag: `"${etag}"` } }] : []));
     } else if (catalogo && req.url.includes('catalogo.json')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(catalogo));
@@ -890,4 +896,97 @@ test('dos ciudades que se intercambian los nombres tampoco chocan: los dos paque
       }),
     );
     assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-libertad', A], ['ciudad-san-jose', B]]);
+  }));
+
+/**
+ * El Storage de Supabase detrás de su CDN, para `clienteStorage` (#271): guarda los objetos con su eTag (MD5) y su
+ * Cache-Control, y el CDN contesta los GET y HEAD (también los autenticados) con la copia que guardó hasta que vence su
+ * `max-age`, aunque el pedido diga `no-cache`. El listado (POST) va a la base: siempre dice la verdad. El reloj lo
+ * mueve `esperar`, que es lo que el cliente usa para esperar.
+ */
+function storageConCdn() {
+  const objetos = new Map();
+  const cdn = new Map();
+  const estado = { reloj: 0, objetos };
+  const ruta = (url, raiz) => decodeURIComponent(url.slice(url.indexOf(raiz) + raiz.length));
+  const maxAge = (cacheControl) => Number(/max-age=(\d+)/.exec(cacheControl ?? '')?.[1] ?? 60) * 1000;
+  const respuestaDe = (copia, metodo) =>
+    copia.status === 200
+      ? new Response(metodo === 'HEAD' ? null : copia.bytes, { status: 200, headers: { etag: `"${copia.etag}"` } })
+      : new Response(metodo === 'HEAD' ? null : JSON.stringify({ error: 'not_found' }), { status: 400 });
+  const fetchFn = async (url, { method, headers = {}, body } = {}) => {
+    if (method === 'POST' && url.includes('/object/list/mapas')) {
+      const { prefix, search = '' } = JSON.parse(body);
+      const hijos = [...objetos.entries()]
+        .filter(([r]) => (prefix ? r.startsWith(`${prefix}/`) : true) && !r.slice(prefix ? prefix.length + 1 : 0).includes('/'))
+        .map(([r, o]) => ({ id: `id-${r}`, name: r.slice(prefix ? prefix.length + 1 : 0), updated_at: o.subido, metadata: { eTag: `"${o.etag}"` } }))
+        .filter((o) => o.name.startsWith(search));
+      return new Response(JSON.stringify(hijos), { status: 200 });
+    }
+    if (method === 'POST') {
+      const r = ruta(url, '/object/mapas/');
+      const bytes = Buffer.from(body);
+      objetos.set(r, { bytes, etag: createHash('md5').update(bytes).digest('hex'), maxAge: maxAge(headers['cache-control']), subido: new Date(estado.reloj).toISOString() });
+      return new Response('{}', { status: 200 });
+    }
+    if (method === 'DELETE') {
+      for (const r of JSON.parse(body).prefixes) objetos.delete(r);
+      return new Response('[]', { status: 200 });
+    }
+    // GET y HEAD por el endpoint autenticado: pasan por el CDN.
+    const r = ruta(url, '/object/authenticated/mapas/');
+    const clave = `${method} ${r}`;
+    const guardada = cdn.get(clave);
+    if (guardada && estado.reloj < guardada.hasta) return respuestaDe(guardada, method);
+    const o = objetos.get(r);
+    const copia = o ? { status: 200, bytes: o.bytes, etag: o.etag } : { status: 400 };
+    cdn.set(clave, { ...copia, hasta: estado.reloj + (o?.maxAge ?? 60_000) });
+    return respuestaDe(copia, method);
+  };
+  return { estado, fetchFn, esperar: async (ms) => (estado.reloj += ms) };
+}
+
+const MALDONADO = { slug: 'maldonado', nombre: 'Maldonado', ciudad_id: '09990000-0000-7000-8003-000000000002', bbox: [-55.0, -34.95, -54.9, -34.88] };
+const SALTO = { slug: 'salto', nombre: 'Salto', ciudad_id: '09990000-0000-7000-8003-000000000003', bbox: [-58.0, -31.42, -57.9, -31.35] };
+const catalogoDelBucket = (estado) => JSON.parse(estado.objetos.get(RUTA_CATALOGO).bytes.toString());
+
+test('#271: dos publicar --ciudad seguidos (menos de 60 s) dejan las dos ciudades en el catálogo, aunque el CDN tenga el viejo', () =>
+  conTmp(async (tmp) => {
+    const { estado, fetchFn, esperar } = storageConCdn();
+    const storage = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar });
+    const publicar = (ciudad, ahora) =>
+      publicarCiudades({ ...opciones(storage, recorteFalso(), tmp), ciudades: [ciudad], ahora, avisar: false });
+
+    await publicar(MONTEVIDEO, '2026-11-11T09:00:00Z');
+    estado.reloj += 3_600_000; // una hora después: el CDN ya no tiene nada vigente
+    await publicar(MALDONADO, '2026-11-11T10:00:00Z'); // lee el catálogo con Montevideo y el CDN lo guarda 60 s
+    const conMaldonado = catalogoDelBucket(estado).paquetes.map((p) => p.id);
+    assert.deepEqual(conMaldonado, ['ciudad-maldonado', 'ciudad-montevideo']);
+
+    const antes = estado.reloj;
+    estado.reloj += 5_000; // la segunda corrida, a los pocos segundos
+    const { catalogo } = await publicar(SALTO, '2026-11-11T10:00:05Z');
+
+    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo', 'ciudad-salto']);
+    assert.deepEqual(catalogoDelBucket(estado).paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo', 'ciudad-salto']);
+    assert.deepEqual(catalogoDelBucket(estado).retirados, [], 'nada salió del catálogo');
+    assert.ok(estado.reloj - antes >= 60_000, 'esperó a que el CDN soltara el catálogo viejo');
+  }));
+
+test('#271: si el CDN no suelta el catálogo viejo, la segunda corrida falla antes de subir nada y el catálogo sigue con la primera ciudad', () =>
+  conTmp(async (tmp) => {
+    const { estado, fetchFn, esperar } = storageConCdn();
+    const storage = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar });
+    const publicar = (ciudad, ahora, cliente = storage) =>
+      publicarCiudades({ ...opciones(cliente, recorteFalso(), tmp), ciudades: [ciudad], ahora, avisar: false });
+    await publicar(MONTEVIDEO, '2026-11-11T09:00:00Z');
+    estado.reloj += 3_600_000;
+    await publicar(MALDONADO, '2026-11-11T10:00:00Z');
+    const guardados = [...estado.objetos.keys()];
+
+    // Un CDN que no vence en el tiempo que espera el cliente: una sola lectura, sin esperar.
+    const impaciente = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar, intentosVigente: 1 });
+    await assert.rejects(publicar(SALTO, '2026-11-11T10:00:05Z', impaciente), /copia vigente de catalogo\.json/);
+    assert.deepEqual([...estado.objetos.keys()], guardados, 'no subió el paquete de Salto ni un catálogo sin Maldonado');
+    assert.deepEqual(catalogoDelBucket(estado).paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo']);
   }));
