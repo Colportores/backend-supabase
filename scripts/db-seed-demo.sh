@@ -5,6 +5,8 @@
 #   scripts/db-seed-demo.sh                 carga la demo en la base LOCAL ($DB_URL)
 #   scripts/db-seed-demo.sh --chequeo       conteos por tabla y coherencia (solo lectura), base local
 #   scripts/db-seed-demo.sh --retirar       vista previa del retiro (no cambia nada); con --aplicar lo hace de verdad
+#   scripts/db-seed-demo.sh --coordinador   suma a coordinador.demo como coordinador de las campañas de la demo
+#                                           (solo agrega; sin esa cuenta no hace nada). Ver supabase/seed-demo/README.md
 #   scripts/db-seed-demo.sh --remoto <modo> lo mismo contra el proyecto de DEMO ohdsavwpasfpapbyutrv, con el CLI de
 #                                           Supabase ya logueado (o SUPABASE_ACCESS_TOKEN en el entorno)
 #
@@ -28,8 +30,9 @@ for a in "$@"; do
     --remoto) remoto=1 ;;
     --chequeo) modo="chequeo" ;;
     --retirar) modo="retirar" ;;
+    --coordinador) modo="coordinador" ;;
     --aplicar) aplicar=1 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $a (ver --help)" >&2; exit 2 ;;
   esac
 done
@@ -41,6 +44,7 @@ case "$modo" in
   cargar)  archivo="$DIR/demo-datos.sql" ;;
   chequeo) archivo="$DIR/chequeo-demo.sql" ;;
   retirar) archivo="$DIR/retirar-demo-datos.sql" ;;
+  coordinador) archivo="$DIR/sumar-coordinador-demo.sql" ;;
 esac
 
 # Para --aplicar se arma una copia temporal con la confirmación activa dentro del propio DO (el original queda en vista
