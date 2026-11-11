@@ -12,6 +12,6 @@
     "cli": "node src/cli.mjs"
   },
   "dependencies": {
-    "@colportores/lib-mapa": "github:Colportores/lib-mapa#94b24cfbf5756994307b75aada177a3b3a9b419f"
+    "@colportores/lib-mapa": "github:Colportores/lib-mapa#v1.0.0"
   }
 }
