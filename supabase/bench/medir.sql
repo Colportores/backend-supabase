@@ -109,6 +109,30 @@ select (sync.push(
 ) -> 'results') is not null as push_ok;
 \timing off
 
+\echo ''
+\echo '============================================================'
+\echo ' 6. Descarga completa: todas las páginas de cada entidad (sync.pull de a 500)'
+\echo '    Lo que paga un teléfono nuevo la primera vez. El delta incremental recorre solo'
+\echo '    lo que está por encima de su cursor, así que cuesta una fracción de esto.'
+\echo '============================================================'
+do $$
+declare
+  w jsonb; r jsonb; n int; filas int; t0 timestamptz; e text;
+begin
+  foreach e in array array['ubicacion','espacio','house_status','venta_item','visita','venta','jornada'] loop
+    w := '{}'; n := 0; filas := 0; t0 := clock_timestamp();
+    loop
+      r := sync.pull(array[e], w, 500);
+      n := n + 1; w := r -> 'watermark';
+      filas := filas + coalesce(jsonb_array_length(r #> array['rows', e]), 0);
+      exit when not (r ->> 'has_more')::boolean;
+    end loop;
+    raise notice '%: % filas, % páginas, % ms', e, filas, n,
+                 round(extract(epoch from clock_timestamp() - t0) * 1000);
+  end loop;
+end
+$$;
+
 reset role;
 select set_config('request.jwt.claims', '', false);
 select set_config('request.jwt.claim.sub', '', false);
