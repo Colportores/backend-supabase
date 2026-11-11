@@ -10,6 +10,7 @@
 \if :{?ciudades_ajenas} \else \set ciudades_ajenas 4 \endif
 
 \echo '-- limpiando corrida anterior'
+delete from public.venta_item     where venta_id in (select id from public.venta where numero_talonario like 'BENCH-%');
 delete from public.venta          where numero_talonario like 'BENCH-%';
 delete from public.visita         where id in (select id from public.visita where created_by in (select id from public.usuario where email like 'bench-%@bench.local'));
 delete from public.espacio_persona where created_by in (select id from public.usuario where email like 'bench-%@bench.local');
@@ -137,7 +138,7 @@ select '01920000-0000-7000-8000-0000000be0e1', 'BENCH libro', 'LIBRO'
 where not exists (select 1 from public.producto where id = '01920000-0000-7000-8000-0000000be0e1');
 
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)
-select public.uuid_generate_v7(), ep.id, 'BENCH-' || ep.created_by || '-' || ep.rn,
+select public.uuid_generate_v7(), ep.id, 'BENCH-' || left(replace(ep.created_by::text, '-', ''), 12) || '-' || ep.rn,
        50000 + ep.rn, now() - (ep.rn || ' hours')::interval, ep.created_by, ep.created_by
 from (
   select id, created_by, row_number() over (partition by created_by order by id) rn
