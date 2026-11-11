@@ -12,6 +12,7 @@ lo reciben.
 | `demo-datos.sql` | La carga. Un solo `DO`: o carga todo o no carga nada. |
 | `chequeo-demo.sql` | Solo lectura: conteo por tabla y reglas de coherencia (`ok = true` cuando cierran). |
 | `retirar-demo-datos.sql` | Baja lógica de todo lo de la demo (vista previa por defecto). |
+| `sumar-coordinador-demo.sql` | Suma a `coordinador.demo` como coordinador de las campañas de la demo (solo agrega). |
 
 ## Cómo se corre
 
@@ -28,6 +29,9 @@ scripts/db-seed-demo.sh --remoto --chequeo  # conteos y coherencia
 # Retirar la demo
 scripts/db-seed-demo.sh [--remoto] --retirar            # vista previa, no cambia nada
 scripts/db-seed-demo.sh [--remoto] --retirar --aplicar  # lo hace
+
+# Que coordinador.demo (la cuenta con la que se entra al panel) vea la demo
+scripts/db-seed-demo.sh [--remoto] --coordinador
 ```
 
 Reglas que el script hace cumplir: nunca `db reset`, nunca borra ni trunca; en remoto solo acepta el proyecto
@@ -35,6 +39,21 @@ Reglas que el script hace cumplir: nunca `db reset`, nunca borra ni trunca; en r
 Supabase. La contraseña de los usuarios de la demo (`DEMO_PASSWORD`) solo se aplica en local y se lee con `\getenv`:
 no se escribe en archivos ni pasa por la línea de comandos. Sin ella, los usuarios de la demo no pueden iniciar
 sesión; en remoto se les pone contraseña desde Supabase Studio (Authentication) si hace falta entrar con ellos.
+
+## Entrar al panel y ver la demo
+
+El generador deja las dos campañas a cargo de su propio coordinador (`demo.gustavo.ferreira`), que no tiene contraseña.
+El panel muestra solo las campañas que coordina quien entra (`campanias_del_coordinador()` y la RLS), así que con
+`coordinador.demo` no se ve nada de la demo hasta correr `--coordinador`: suma a `coordinador.demo` como coordinador de
+las campañas de la demo (una campaña admite varios, migración 0174). El coordinador generado sigue y
+`campania.coordinador_id` no cambia. Es idempotente, sin esa cuenta no hace nada, y el retiro también da de baja estas
+filas. La campaña de invierno ya terminó: el panel no la lista.
+
+**Limitación conocida (11/11):** las inscripciones de la demo quedan con la fecha de alta (`campania_colportor.created_at`)
+y el primer tramo del historial de zonas del momento de la carga, posteriores a toda la actividad (que termina el 03/11).
+Inicio (`tablero_de_inicio`) y Reportes (`horas_por_ciudad_y_colportor`, `ventas_por_ciudad_y_colportor`) cuentan solo lo
+que pasó con la inscripción vigente, así que con estos datos no muestran la historia: Equipo y Ciudades sí. La
+corrección (alta y tramo en la fecha de inicio de cada inscripción) no es aditiva y queda pendiente de autorización.
 
 ## Cómo está armado
 
