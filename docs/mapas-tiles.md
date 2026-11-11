@@ -146,9 +146,13 @@ ciudad traiga su `ambito_id` y que un archivo no esté a la vez en un paquete y 
 no se publica.
 
 El publicador **lee el catálogo anterior y pregunta si un paquete ya está por la API autenticada del Storage**
-(`/storage/v1/object/authenticated/…`, con la clave de servicio), no por la URL pública: así decide con lo que
-hay en el bucket y no con una copia que el CDN guardó hasta 60 s (el catálogo se sirve con `max-age=60`). Sin
-clave (`--dry-run`) lee por la URL pública.
+(`/storage/v1/object/authenticated/…`, con la clave de servicio), no por la URL pública. Esa API también puede
+contestar con la copia que el CDN guardó hasta 60 s (el catálogo se sirve con `max-age=60`), aunque se pida con
+`no-cache`: dos `publicar --ciudad` seguidos perdían la ciudad de la primera corrida (backend-supabase#271). Por eso
+el catálogo leído **solo vale si su eTag es el que da el listado del bucket** (`POST /storage/v1/object/list`, que va
+a la base y no pasa por el CDN); si no coinciden, el publicador espera 15 s y vuelve a leer, y si en 75 s no consigue
+la copia vigente **falla sin subir nada** («esperá un par de minutos y volvé a correr»): nunca fusiona sobre un
+catálogo viejo. Sin clave (`--dry-run`) lee por la URL pública, sin esa comprobación (un simulacro no escribe).
 
 ### Privacidad
 
