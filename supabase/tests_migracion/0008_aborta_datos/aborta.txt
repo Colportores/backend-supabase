@@ -1,0 +1,6 @@
+no se aplicó
+No se cambió nada
+«Sin campaña» (01920000-0000-7000-8000-0000000081d1): no tiene campaña
+«Sin forma» (01920000-0000-7000-8000-0000000081d2): no tiene forma
+«Forma rota» (01920000-0000-7000-8000-0000000081d3): su forma no sirve: el borde se cruza a sí mismo
+volvé a aplicar la migración

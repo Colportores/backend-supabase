@@ -1,0 +1,13 @@
+La migración 0017 (dirección única a menos de 100 m) no se aplicó: hay 5 par(es)
+No se cambió nada
+Av. Itália 100 (01920000-0000-7000-8000-0000000097a2, registrada por nadie el 02/09/2026)
+de Av. Italia 100 (01920000-0000-7000-8000-0000000097a1, registrada el 01/09/2026), con la misma dirección, y tiene personas en sus espacios.
+rivera 9 (01920000-0000-7000-8000-0000000097a4
+(01920000-0000-7000-8000-0000000097a3, registrada el 01/09/2026), con la misma dirección, y tiene estado en el mapa.
+(01920000-0000-7000-8000-0000000097a5, registrada el 01/09/2026), con la misma dirección, y tiene departamentos o espacios cargados.
+Colonia 2 (01920000-0000-7000-8000-0000000097a8
+(01920000-0000-7000-8000-0000000097a7, registrada el 01/09/2026), con la misma dirección, y el servidor no ve nada colgado de ella (el teléfono puede tener personas o ventas sin subir).
+(01920000-0000-7000-8000-0000000097a9, registrada el 01/09/2026), con la misma dirección, y tiene cobranzas o agendas que la usan como dirección alternativa.
+marcá la más nueva como duplicado de la otra desde la app (vista 10, «Posibles duplicados»
+Resolvé cada par desde la vista 10 de la app y volvé a aplicar la migración.
+La migración no da de baja ninguna, ni las que no tienen nada colgado

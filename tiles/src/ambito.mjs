@@ -1,0 +1,170 @@
+// Qué ciudades se publican y con qué rectángulo: lo dice la base, no el repo.
+//
+// Decisión de Cristian del 06/10 («Área ciudad», backend-supabase#42 etapa 2): cada ciudad guarda su
+// rectángulo en `public.ciudad` (bbox_oeste, bbox_sur, bbox_este, bbox_norte; migración 0031) y el
+// publicador publica **las ciudades que lo tienen**, sin ninguna lista en el repo. El publicador lee
+// `public.ciudad` por PostgREST con la clave de servicio.
+//
+// El catálogo lleva, en cada paquete de ciudad, el `ambito_id`: el id de la ciudad en la base. Es lo que la
+// app usa para elegir SU paquete (PaqueteTiles.cubre), no el slug ni el bbox. Nunca se publica un paquete de
+// ciudad sin él: al leerlo de la fila, no puede faltar.
+
+/** Para comparar nombres: sin tildes, sin mayúsculas y con los espacios normalizados. */
+export function normalizar(nombre) {
+  return String(nombre)
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+/** El slug de una ciudad: su nombre normalizado, en minúsculas y con guiones (`San José` → `san-jose`). */
+export function slugDe(nombre) {
+  return normalizar(nombre)
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+const COLUMNAS = 'id,nombre,departamento,lat_centro,lon_centro,bbox_oeste,bbox_sur,bbox_este,bbox_norte';
+
+/** El país que se publica cuando nadie elige otro: el dominio es Uruguay. */
+export const PAIS_POR_DEFECTO = 'UY';
+
+/**
+ * El código de país (ISO 3166-1 alpha-2) que llegó por `--pais`: dos letras, y `ar` se lee como `AR`.
+ * Cualquier otra cosa (`A`, `ARG`, `1R`, vacío) lanza con el valor recibido, así que se puede llamar ANTES
+ * de leer la base o de escribir en el bucket. Lo que sale de acá es seguro para ir dentro de una consulta.
+ */
+export function normalizarPais(valor) {
+  const codigo = typeof valor === 'string' ? valor.toUpperCase() : valor;
+  if (typeof codigo !== 'string' || !/^[A-Z]{2}$/.test(codigo)) {
+    throw new Error(`--pais tiene que ser un código de país de dos letras (ISO 3166-1, p. ej. UY o AR); llegó ${JSON.stringify(valor ?? null)}. No se leyó ni se subió nada.`);
+  }
+  return codigo;
+}
+
+/**
+ * Las ciudades (no borradas) del país `pais` (ISO 3166-1 alpha-2, `UY` si no se dice) en public.ciudad, con su
+ * rectángulo si lo tienen: [{ id, nombre, departamento, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte }].
+ * Con `pais: null` son las de **todos** los países (para avisar de lo ya publicado y detectar choques de
+ * paquetes entre países; lo que se publica siempre es de un solo país por corrida).
+ */
+export async function leerCiudades({ url, clave, pais = PAIS_POR_DEFECTO, fetchImpl = fetch }) {
+  const consulta =
+    pais === null
+      ? `select=${COLUMNAS}&deleted_at=is.null&order=nombre.asc&limit=1000`
+      : `select=${COLUMNAS},pais!inner(iso_code)&pais.iso_code=eq.${normalizarPais(pais)}&deleted_at=is.null&order=nombre.asc&limit=1000`;
+  let respuesta;
+  try {
+    respuesta = await fetchImpl(`${url.replace(/\/+$/, '')}/rest/v1/ciudad?${consulta}`, {
+      headers: { apikey: clave, authorization: `Bearer ${clave}`, accept: 'application/json' },
+    });
+  } catch (error) {
+    throw new Error(`No pude leer public.ciudad (${error.cause?.code ?? error.message})`);
+  }
+  if (!respuesta.ok) {
+    const texto = await respuesta.text().catch(() => '');
+    throw new Error(`Leer public.ciudad falló: ${respuesta.status} ${texto.slice(0, 300)}`);
+  }
+  return respuesta.json();
+}
+
+const tieneRectangulo = (fila) =>
+  [fila.bbox_oeste, fila.bbox_sur, fila.bbox_este, fila.bbox_norte].every((n) => typeof n === 'number' && Number.isFinite(n));
+
+/**
+ * De las filas de public.ciudad, las que se publican y las que no.
+ *
+ * Devuelve `{ publicables: [{ ciudad_id, slug, nombre, bbox }], sinRectangulo: [nombre] }`. Una ciudad sin
+ * rectángulo no se publica (no tiene mapa propio) y se lista para que se vea.
+ *
+ * El slug (el nombre del archivo y el `id` del paquete, `ciudad-<slug>`) es el nombre de la ciudad. **Dos ciudades
+ * del mismo nombre en distintos departamentos son válidas** (hay dos «La Paz», en Canelones y en Colonia; el
+ * catálogo de OSM de la 0109 trae diez nombres así, y `agregar_ciudad_a_mano` lo marca como
+ * `MISMO_NOMBRE_OTRO_DEPARTAMENTO`): a esas, y solo a esas, el slug les suma el departamento
+ * (`la-paz-canelones`, `la-paz-colonia`), igual que el paquete de departamento (`departamento-<slug>`). Las demás
+ * conservan el slug de siempre, así que un paquete ya publicado no cambia de nombre (backend-supabase#259).
+ *
+ * Lanza, **antes de que se suba nada**, si aun así dos ciudades con rectángulo darían el mismo slug: mismo nombre
+ * en el mismo departamento (casi seguro una repetida) o mismo nombre y a alguna le falta el departamento. No hay
+ * forma de saber cuál es cuál sin que alguien lo decida, y el error dice qué hacer.
+ */
+export function ciudadesPublicables(filas) {
+  const sinRectangulo = [];
+  const conRectangulo = [];
+  const porNombre = new Map();
+  for (const fila of filas) {
+    if (!tieneRectangulo(fila)) {
+      sinRectangulo.push(fila.nombre);
+      continue;
+    }
+    const base = slugDe(fila.nombre);
+    if (base === '') {
+      throw new Error(`La ciudad ${fila.id} (${JSON.stringify(fila.nombre)}) no tiene un nombre con letras o números: no se puede armar su paquete. No se subió nada.`);
+    }
+    conRectangulo.push({ fila, base });
+    porNombre.set(base, [...(porNombre.get(base) ?? []), fila]);
+  }
+
+  const publicables = [];
+  const porSlug = new Map();
+  for (const { fila, base } of conRectangulo) {
+    const homonimas = porNombre.get(base);
+    let slug = base;
+    if (homonimas.length > 1) {
+      const sinDepartamento = homonimas.filter((h) => slugDe(h.departamento ?? '') === '');
+      if (sinDepartamento.length > 0) {
+        throw new Error(
+          `Hay ${homonimas.length} ciudades con rectángulo que se llaman «${fila.nombre}» y ${sinDepartamento.map((h) => h.id).join(', ')} no tiene departamento: ` +
+            'sin él no se puede distinguir su paquete. Cargá el departamento de la ciudad (docs/guia-carga-manual.md § 2, «Ciudades sin departamento»). No se subió nada.',
+        );
+      }
+      slug = `${base}-${slugDe(fila.departamento)}`;
+    }
+    if (porSlug.has(slug)) {
+      const otra = porSlug.get(slug);
+      throw new Error(
+        `Hay dos ciudades con rectángulo que dan el mismo paquete «${slug}»: ${otra.id} («${otra.nombre}») y ${fila.id} («${fila.nombre}»). ` +
+          'No sé cuál es. Dejá una sola (dar de baja la otra o sacarle el rectángulo). No se subió nada.',
+      );
+    }
+    porSlug.set(slug, fila);
+    publicables.push({
+      ciudad_id: fila.id,
+      slug,
+      nombre: fila.nombre,
+      bbox: [fila.bbox_oeste, fila.bbox_sur, fila.bbox_este, fila.bbox_norte],
+    });
+  }
+  return { publicables, sinRectangulo };
+}
+
+/**
+ * Avisos sobre los paquetes de ciudad que el catálogo ya publicó y que esta corrida no vuelve a publicar:
+ * la ciudad ya no existe (o está dada de baja) o ya no tiene rectángulo. **No se retiran solos**: el
+ * paquete sigue en el catálogo hasta que alguien lo decida (retirar un mapa a los teléfonos es una decisión
+ * de producto). Solo se avisa, y el aviso dice cómo sacarlo (`publicar --solo ciudades --quitar <id>`) o cómo
+ * volver a dejarlo como estaba.
+ */
+export function avisosDeCiudades(catalogo, filas) {
+  const porId = new Map(filas.map((f) => [f.id, f]));
+  const avisos = [];
+  for (const paquete of catalogo?.paquetes ?? []) {
+    if (paquete.nivel !== 'ciudad') continue;
+    const fila = porId.get(paquete.ambito_id);
+    const sacarlo = `Si fue a propósito, sacalo con \`publicar --solo ciudades --quitar ${paquete.id}\``;
+    if (!fila) {
+      avisos.push(
+        `${paquete.id} sigue en el catálogo, pero su ciudad (${paquete.ambito_id}) ya no está en public.ciudad o está dada de baja. ` +
+          `${sacarlo}; si no, volvé a dejarla viva con su rectángulo (docs/guia-carga-manual.md § 2).`,
+      );
+    } else if (!tieneRectangulo(fila)) {
+      avisos.push(
+        `${paquete.id} sigue en el catálogo, pero la ciudad «${fila.nombre}» ya no tiene rectángulo. ` +
+          `${sacarlo}; si no, volvé a cargar su rectángulo (docs/guia-carga-manual.md § 2).`,
+      );
+    }
+  }
+  return avisos;
+}

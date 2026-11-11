@@ -1,0 +1,4 @@
+node_modules/
+# el CLI pmtiles que se baja la primera vez, y lo que genera `estilo`
+.cache/
+dist/

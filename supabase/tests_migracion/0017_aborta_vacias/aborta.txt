@@ -1,0 +1,11 @@
+La migración 0017 (dirección única a menos de 100 m) no se aplicó: hay 4 par(es)
+No se cambió nada
+(01920000-0000-7000-8000-0000000098a2, registrada por nadie el 02/09/2026) está a
+de Av. Italia 100 (01920000-0000-7000-8000-0000000098a1, registrada el 01/09/2026), con la misma dirección, y el servidor no ve nada colgado de ella
+(01920000-0000-7000-8000-0000000098a3, registrada por nadie el 03/09/2026) está a
+(01920000-0000-7000-8000-0000000098a2, registrada el 02/09/2026), con la misma dirección, y el servidor no ve nada colgado de ella
+(01920000-0000-7000-8000-0000000098a5, registrada por nadie el 02/09/2026) está a
+(01920000-0000-7000-8000-0000000098a4, registrada el 01/09/2026), con la misma dirección, y el servidor no ve nada colgado de ella
+Rivera 9 (01920000-0000-7000-8000-0000000098ae, registrada por nadie el 05/09/2026) está a
+de Rivera 9 (01920000-0000-7000-8000-0000000098af, registrada el 04/09/2026), con la misma dirección, y el servidor no ve nada colgado de ella
+La migración no da de baja ninguna, ni las que no tienen nada colgado

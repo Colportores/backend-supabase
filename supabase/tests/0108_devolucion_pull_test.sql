@@ -1,0 +1,228 @@
+-- pgTAP · migración 0108 (backend-supabase#134): devolucion en el pull. Tras reinstalar, la app baja de
+-- cero las devoluciones de la colportora (fase 3 de recover(), contrato §7), con los productos devueltos y la
+-- plata tal cual; los cambios siguientes (corregir, dar de baja) llegan por el delta; y nadie baja las de otro.
+--
+-- Como 0004, 0014 y 0041, NO va en una transacción: el delta solo sirve filas commiteadas (en producción el
+-- push y el pull son dos requests). Limpia al final, y también al empezar: si una corrida se cortó antes de
+-- la limpieza, la siguiente no choca con lo que dejó.
+
+select * from no_plan();
+
+create or replace function pg_temp.actuar_como(p_uid uuid) returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, false);
+  perform set_config('request.jwt.claim.sub', p_uid::text, false);
+  perform set_config('role', 'authenticated', false);
+end $$;
+
+create or replace function pg_temp.como_servidor() returns void language plpgsql as $$
+begin
+  perform set_config('role', 'postgres', false);
+  perform set_config('request.jwt.claims', '', false);
+  perform set_config('request.jwt.claim.sub', '', false);
+end $$;
+
+-- Ids (prefijo 82): usuarios 82b1.., productos 8211.., ventas 8271.., devoluciones 82d1..; los client_op_id,
+-- 82 y dos dígitos.
+create or replace function pg_temp.u(p text) returns uuid language sql as $$
+  select ('01920000-0000-7000-8000-00000000' || '82' || p)::uuid;
+$$;
+create or replace function pg_temp.op(p text) returns uuid language sql as $$
+  select ('01920000-0000-7000-8000-0000000082' || p)::uuid;
+$$;
+
+-- Borra todo lo de este archivo (como postgres). Las devoluciones primero: borrar al usuario con ellas
+-- puestas daría 23503 (tg_auditoria_update deshace el ON DELETE SET NULL).
+create or replace function pg_temp.limpiar() returns void language plpgsql as $$
+begin
+  -- Los triggers de auditoría de 0121 se apagan mientras dura el test (abajo) y se reactivan acá: un evento en
+  -- audit_log no se borra (AU001) y tiene FK al actor, así que dejaría los usuarios de prueba sin poder borrarse.
+  alter table public.devolucion enable trigger devolucion_auditar_alta;
+  alter table public.devolucion enable trigger devolucion_auditar_baja;
+  alter table public.devolucion enable trigger devolucion_devuelve_stock;
+  delete from public.movimiento_stock where devolucion_id in
+    (select id from public.devolucion where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad')));
+  delete from public.stock where usuario_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+  delete from public.devolucion where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+  delete from public.venta_item where venta_id in (pg_temp.u('71'), pg_temp.u('72'));
+  delete from public.venta where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'));
+  delete from public.espacio_persona where created_by in (pg_temp.u('b1'), pg_temp.u('b2'));
+  delete from public.espacio where created_by in (pg_temp.u('b1'), pg_temp.u('b2'));
+  delete from public.ubicacion where ciudad_id = pg_temp.u('f1');
+  delete from public.producto where id in (pg_temp.u('11'), pg_temp.u('12'));
+  delete from public.ciudad where id = pg_temp.u('f1');
+  delete from public.pais where id = pg_temp.u('f0');
+  delete from public.usuario_rol where usuario_id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+  delete from auth.users where id in (pg_temp.u('b1'), pg_temp.u('b2'), pg_temp.u('ad'));
+end $$;
+
+-- Un job de push de la entidad; devuelve el resultado.
+create or replace function pg_temp.push1(p_op uuid, p_tipo text, p_payload jsonb, p_version bigint default null)
+returns text language sql as $$
+  select sync.push(jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+           'client_op_id', p_op, 'entity', 'devolucion', 'op', p_tipo,
+           'sync_version', p_version, 'payload', p_payload)))) -> 'results' -> 0 ->> 'outcome';
+$$;
+-- «Hace 2 horas»: la fecha de las devoluciones (0172: anular exige las 24 h del teléfono con el reloj de verdad, y la
+-- fecha de una devolución no se cambia con sesión, DV004).
+create or replace function pg_temp.f() returns timestamptz language sql stable as $$
+  select date_trunc('second', now() - interval '2 hours');
+$$;
+create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb)
+returns jsonb language sql as $$
+  select jsonb_build_object('id', p_id, 'venta_id', p_venta, 'productos_devueltos', p_items,
+                            'fecha_devolucion', pg_temp.f());
+$$;
+-- El renglón de la venta de b1 (71) con ese libro; item72() el de la venta de b2 (0136: tres claves).
+create or replace function pg_temp.item(p_producto text, p_cantidad int) returns jsonb language sql as $$
+  select jsonb_build_object('producto_id', pg_temp.u(p_producto), 'cantidad', p_cantidad,
+                            'venta_item_id', pg_temp.u(case p_producto when '11' then '81' else '82' end));
+$$;
+create or replace function pg_temp.item72(p_producto text, p_cantidad int) returns jsonb language sql as $$
+  select jsonb_build_object('producto_id', pg_temp.u(p_producto), 'cantidad', p_cantidad,
+                            'venta_item_id', pg_temp.u(case p_producto when '11' then '84' else '85' end));
+$$;
+
+-- Una columna de las filas de la entidad en un pull, ordenadas por id.
+create or replace function pg_temp.col(p_delta jsonb, p_col text) returns text[] language sql as $$
+  select coalesce(array_agg(coalesce(e ->> p_col, '-') order by e ->> 'id'), array[]::text[])
+    from jsonb_array_elements(coalesce(p_delta -> 'rows' -> 'devolucion', '[]'::jsonb)) e;
+$$;
+-- Los sufijos de los ids (los dos últimos caracteres) de lo que bajó.
+create or replace function pg_temp.ids(p_delta jsonb) returns text[] language sql as $$
+  select coalesce(array_agg(right(e ->> 'id', 2) order by e ->> 'id'), array[]::text[])
+    from jsonb_array_elements(coalesce(p_delta -> 'rows' -> 'devolucion', '[]'::jsonb)) e;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Fixtures (como postgres). b1 y b2 colportoras, ad ADMIN; una venta de cada una; dos productos.
+-- ---------------------------------------------------------------------------
+select pg_temp.limpiar();
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
+       'authenticated', 'authenticated', 'dev82-' || s || '@example.com', 'x', now(), now(), now()
+  from unnest(array['b1','b2','ad']) s;
+insert into public.usuario_rol (usuario_id, rol_id)
+select pg_temp.u(x.s), r.id
+  from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('ad','ADMIN')) x(s, codigo)
+  join public.rol r on r.codigo = x.codigo;
+insert into public.producto (id, nombre, tipo) values
+  (pg_temp.u('11'), 'Libro 1 t82', 'LIBRO'),
+  (pg_temp.u('12'), 'Libro 2 t82', 'LIBRO');
+insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais dev82', 'ZS');
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values (pg_temp.u('f1'), 'Ciudad dev82', 'Departamento de prueba', pg_temp.u('f0'), -34.90, -56.20);
+insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by) values
+  (pg_temp.u('a1'), 'CASA', 'Av. Italia', '100', -34.900, -56.200, pg_temp.u('f1'), pg_temp.u('b1')),
+  (pg_temp.u('a2'), 'CASA', 'Calle Dos',  '2',   -34.905, -56.195, pg_temp.u('f1'), pg_temp.u('b2'));
+insert into public.espacio (id, ubicacion_id, created_by) values
+  (pg_temp.u('e1'), pg_temp.u('a1'), pg_temp.u('b1')),
+  (pg_temp.u('e2'), pg_temp.u('a2'), pg_temp.u('b2'));
+insert into public.espacio_persona (id, espacio_id, persona_id, created_by) values
+  (pg_temp.u('51'), pg_temp.u('e1'), pg_temp.u('c2'), pg_temp.u('b1')),
+  (pg_temp.u('53'), pg_temp.u('e2'), pg_temp.u('c4'), pg_temp.u('b2'));
+insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by, motivo_monto_manual) values
+  (pg_temp.u('71'), pg_temp.u('51'), 'T-8271', 5100000, '2026-10-01 15:00:00+00', pg_temp.u('b1'), pg_temp.u('b1'), 'fixture: ítems que no cuadran con el total (0150)'),
+  (pg_temp.u('72'), pg_temp.u('53'), 'T-8272', 5100000, '2026-10-01 16:00:00+00', pg_temp.u('b2'), pg_temp.u('b2'), 'fixture: ítems que no cuadran con el total (0150)');
+
+-- Cantidades holgadas: lo que se devuelve no pasa del tope del renglón (0142).
+insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal) values
+  (pg_temp.u('81'), pg_temp.u('71'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('82'), pg_temp.u('71'), pg_temp.u('12'), 30, 50000, 1500000),
+  (pg_temp.u('84'), pg_temp.u('72'), pg_temp.u('11'), 30, 100000, 3000000),
+  (pg_temp.u('85'), pg_temp.u('72'), pg_temp.u('12'), 30, 50000, 1500000);
+
+-- Sin los eventos de 0121 (ver limpiar()): este archivo prueba el pull, y los eventos de la auditoría tienen su
+-- propio test (0121_devolucion_auditoria_test.sql).
+alter table public.devolucion disable trigger devolucion_auditar_alta;
+alter table public.devolucion disable trigger devolucion_auditar_baja;
+-- Tampoco el que devuelve el stock (0136): su evento de auditoría tampoco se borra; tiene su test.
+alter table public.devolucion disable trigger devolucion_devuelve_stock;
+
+-- ---------------------------------------------------------------------------
+-- 1. El teléfono de b1 sube tres devoluciones y el de b2, una
+-- ---------------------------------------------------------------------------
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.push1(pg_temp.op('01'), 'insert',
+                        pg_temp.dev(pg_temp.u('d1'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('11', 2), pg_temp.item('12', 1)))),
+          'accepted', 'b1 sube una devolución de dos productos');
+select is(pg_temp.push1(pg_temp.op('02'), 'insert',
+                        pg_temp.dev(pg_temp.u('d2'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('11', 1)))),
+          'accepted', 'b1 sube otra de un producto');
+select is(pg_temp.push1(pg_temp.op('03'), 'insert',
+                        pg_temp.dev(pg_temp.u('d3'), pg_temp.u('71'), jsonb_build_array(pg_temp.item('12', 1)))),
+          'accepted', 'y una tercera');
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is(pg_temp.push1(pg_temp.op('04'), 'insert',
+                        pg_temp.dev(pg_temp.u('d4'), pg_temp.u('72'), jsonb_build_array(pg_temp.item72('11', 1)))),
+          'accepted', 'b2 sube la suya');
+
+-- ---------------------------------------------------------------------------
+-- 2. Reinstalar: pull de cero
+-- ---------------------------------------------------------------------------
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table pull_b1 as
+select sync.pull(array['devolucion'], '{}'::jsonb, 1000) as d;
+select is(pg_temp.ids(d), array['d1', 'd2', 'd3'], 'b1 baja sus tres devoluciones y nada más (no la d4 de b2)') from pull_b1;
+select ok((select not jsonb_path_exists(d, '$.rows.devolucion[*].dinero_retenido')
+                  and not jsonb_path_exists(d, '$.rows.devolucion[*].monto_reembolsado') from pull_b1),
+          'ya no bajan los campos de la plata (0157)');
+select is(pg_temp.col(d, 'venta_id'), array[pg_temp.u('71')::text, pg_temp.u('71')::text, pg_temp.u('71')::text],
+          'de la venta que corresponde') from pull_b1;
+select is((select (e -> 'productos_devueltos')
+             from pull_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
+            where e ->> 'id' = pg_temp.u('d1')::text),
+          jsonb_build_array(pg_temp.item('11', 2), pg_temp.item('12', 1)),
+          'los productos devueltos bajan como un arreglo, tal cual se subieron') from pull_b1;
+select is((select bool_and((e ->> 'fecha_devolucion')::timestamptz = pg_temp.f())
+             from pull_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e), true,
+          'con la fecha que registró el teléfono') from pull_b1;
+select is(pg_temp.col(d, 'colportor_id'), array[pg_temp.u('b1')::text, pg_temp.u('b1')::text, pg_temp.u('b1')::text],
+          'todas suyas') from pull_b1;
+select is((select d ->> 'has_more' from pull_b1), 'false', 'sin más páginas');
+select ok((select not jsonb_path_exists(d, '$.rows.devolucion[*].xmin_w') from pull_b1), 'xmin_w no viaja');
+select ok((select jsonb_path_exists(d, '$.rows.devolucion[*].sync_version') from pull_b1),
+          'sync_version sí (el teléfono la manda en el próximo update)');
+
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is((select pg_temp.ids(sync.pull(array['devolucion'], '{}'::jsonb, 1000))), array['d4'], 'b2 baja solo la suya');
+
+select pg_temp.actuar_como(pg_temp.u('ad'));
+select is(pg_temp.ids(sync.pull(array['devolucion'], '{}'::jsonb, 1000)), array[]::text[],
+          'el ADMIN no baja las de nadie');
+
+-- Sin cambios, el pull siguiente no trae nada.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select sync.pull(array['devolucion'], d -> 'watermark', 1000) -> 'rows' from pull_b1), '{}'::jsonb,
+          'sin cambios, el pull siguiente no trae nada');
+
+-- ---------------------------------------------------------------------------
+-- 3. Los cambios llegan por el delta
+-- ---------------------------------------------------------------------------
+-- b1 corrige los productos de la d2 y da de baja la d3.
+select is(pg_temp.push1(pg_temp.op('05'), 'update', jsonb_build_object('id', pg_temp.u('d2'), 'productos_devueltos', jsonb_build_array(pg_temp.item('11', 2))), 0),
+          'accepted', 'b1 corrige los productos de la d2');
+select is(pg_temp.push1(pg_temp.op('06'), 'delete', jsonb_build_object('id', pg_temp.u('d3')), 0),
+          'accepted', 'y da de baja la d3');
+create temp table delta_b1 as
+select sync.pull(array['devolucion'], d -> 'watermark', 1000) as d from pull_b1;
+select is(pg_temp.ids(d), array['d2', 'd3'], 'el delta trae solo lo que cambió: d2 y d3') from delta_b1;
+select is((select e -> 'productos_devueltos' -> 0 ->> 'cantidad'
+              from delta_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
+             where e ->> 'id' = pg_temp.u('d2')::text),
+           '2', 'la d2 con los productos corregidos') from delta_b1;
+select is((select (e ->> 'deleted_at') is not null
+             from delta_b1, jsonb_array_elements(d -> 'rows' -> 'devolucion') e
+            where e ->> 'id' = pg_temp.u('d3')::text), true,
+          'y la d3 baja como tombstone (deleted_at), no desaparece') from delta_b1;
+
+-- El teléfono de b2 no se entera de nada de lo de b1.
+select pg_temp.actuar_como(pg_temp.u('b2'));
+select is((select pg_temp.ids(sync.pull(array['devolucion'], '{}'::jsonb, 1000))), array['d4'], 'b2 sigue bajando solo la suya');
+
+select pg_temp.como_servidor();
+select pg_temp.limpiar();
+select is((select count(*)::int from public.devolucion where colportor_id in (pg_temp.u('b1'), pg_temp.u('b2'))), 0,
+          'limpio: no quedó nada de este archivo');
+
+select * from finish();
