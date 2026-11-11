@@ -52,7 +52,7 @@ export const serializarEstilo = (estilo) => Buffer.from(`${JSON.stringify(estilo
 /** La versión del estilo en el catálogo: el SHA-256 de esos bytes (como la de los paquetes). */
 export const versionDeEstilo = (contenido) => createHash('sha256').update(contenido).digest('hex');
 
-/** Sube el estilo y sus glyphs y sprites; devuelve su `version`. `estilo` es el objeto de armarEstilo(). */
+/** Sube el estilo y sus glyphs y sprites; devuelve su `version`. `estilo` es el de lib-mapa (estiloDeLaLibreria). */
 export async function publicarEstilo({ storage, estilo, raizAssets, log = () => {} }) {
   const archivos = [
     ...(await listarArchivos(join(raizAssets, 'glyphs'), 'estilo/glyphs')),

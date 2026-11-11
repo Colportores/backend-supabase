@@ -14,14 +14,14 @@
 //   OVERPASS_URL                 otro servidor de Overpass para `catalogo-uruguay` (si el público está saturado)
 //   PMTILES_BIN                  ruta al CLI `pmtiles` (si no, se usa el del PATH o se baja el de la release fijada)
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { PAIS_POR_DEFECTO, ciudadesPublicables, leerCiudades, normalizarPais } from './ambito.mjs';
 import { BUCKET } from './bucket.mjs';
-import { armarEstilo, leerPaleta } from './estilo.mjs';
+import { RAIZ_ASSETS, estiloDeLaLibreria } from './lib-mapa.mjs';
 import {
   ahoraIso,
   publicarCatalogoDeEstilo,
@@ -62,21 +62,12 @@ function entorno(nombre) {
 
 const urlPublicaDe = (supabaseUrl) => `${supabaseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${BUCKET.id}`;
 
-async function versionDeBasemaps() {
-  const paquete = JSON.parse(await readFile(join(RAIZ, 'package.json'), 'utf8'));
-  return paquete.dependencies['@protomaps/basemaps'];
-}
-
-async function generarEstilo(urlBase) {
-  const paleta = await leerPaleta(join(RAIZ, 'paleta.json'));
-  return armarEstilo({ urlBase, paleta, version: await versionDeBasemaps() });
-}
-
+// El estilo sale de lib-mapa (src/lib-mapa.mjs): acá solo se le pone la URL del bucket.
 async function comandoEstilo(opciones) {
   const urlBase = opciones['url-base'] ?? `${urlPublicaDe(entorno('SUPABASE_URL'))}/estilo`;
   const salida = opciones.salida ?? join(RAIZ, 'dist', 'estilo');
   await mkdir(salida, { recursive: true });
-  await writeFile(join(salida, 'colportores.json'), `${JSON.stringify(await generarEstilo(urlBase), null, 2)}\n`);
+  await writeFile(join(salida, 'colportores.json'), `${JSON.stringify(await estiloDeLaLibreria(urlBase), null, 2)}\n`);
   log(`estilo escrito en ${join(salida, 'colportores.json')}`);
 }
 
@@ -163,12 +154,13 @@ async function comandoPublicar(opciones) {
 
   let estiloVersion;
   if (solo === 'todo' || solo === 'estilo') {
-    const estilo = await generarEstilo(`${urlPublicaDe(supabaseUrl)}/estilo`);
+    const estilo = await estiloDeLaLibreria(`${urlPublicaDe(supabaseUrl)}/estilo`);
+    log(`estilo de lib-mapa ${estilo.metadata['colportores:estilo']}`);
     if (dryRun) {
       estiloVersion = versionDeEstilo(serializarEstilo(estilo));
       log(`[dry-run] estilo con ${estilo.layers.length} capas, no se sube`);
     } else {
-      ({ version: estiloVersion } = await publicarEstilo({ storage, estilo, raizAssets: join(RAIZ, 'assets'), log }));
+      ({ version: estiloVersion } = await publicarEstilo({ storage, estilo, raizAssets: RAIZ_ASSETS, log }));
     }
     // El estilo nuevo tiene que verse en el catálogo (estilo.version): con `todo`, lo escribe publicarCiudades.
     if (solo === 'estilo') await publicarCatalogoDeEstilo({ storage, estiloVersion, ahora: ahoraIso(), dryRun, log });
