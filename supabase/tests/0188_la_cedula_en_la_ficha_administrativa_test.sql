@@ -130,7 +130,7 @@ select ok(not has_function_privilege('authenticated', 'public.tg_auth_usuario_nu
 select is(pg_temp.registrar('a1',
   '{"nombre":"Rocío","apellido":"Alfa","cedula":"4.567.890-1","terminos_version":"v1"}'), 'ok',
   'el registro con la cédula se crea');
-select is(pg_temp.ficha('a1'), '4.567.890-1', 'la ficha guarda la cédula tal como llegó');
+select is(pg_temp.ficha('a1'), '45678901', 'la ficha guarda la cédula en solo dígitos (0189)');
 select row_eq(
   $$ select created_by = usuario_id, deleted_at is null, sync_version
        from public.ficha_administrativa where usuario_id = pg_temp.u('a1') $$,
@@ -155,7 +155,7 @@ select is(pg_temp.registrar('a4', '{"nombre":"Bruno","apellido":"Beta","cedula":
 
 -- Los espacios de los extremos no se guardan.
 select is(pg_temp.registrar('a5', '{"cedula":"  1234567-8 "}'), 'ok', 'cédula con espacios: el registro se crea');
-select is(pg_temp.ficha('a5'), '1234567-8', 'se guarda sin los espacios de los extremos');
+select is(pg_temp.ficha('a5'), '12345678', 'se guarda sin espacios ni guion (0189)');
 -- Un número JSON se guarda como texto.
 select is(pg_temp.registrar('a6', '{"cedula":12345678}'), 'ok', 'cédula como número JSON: el registro se crea');
 select is(pg_temp.ficha('a6'), '12345678', 'se guarda como texto');
@@ -194,7 +194,7 @@ select is((select count(*) from public.usuario where id = pg_temp.u('c1')), 0::b
 select pg_temp.actuar_como_service_role();
 select is(left(pg_temp.error_de($$ insert into public.ficha_administrativa (usuario_id, cedula)
                                   values (pg_temp.u('b1'), '  ') $$), 5),
-          '23514', 'el servidor no guarda una cédula en blanco');
+          '23514', 'el servidor no guarda una cédula en blanco (desde la 0189, solo 7 u 8 dígitos)');
 select is(left(pg_temp.error_de($$ insert into public.ficha_administrativa (usuario_id, cedula)
                                   values (pg_temp.u('a1'), '99999999') $$), 5),
           '23505', 'ni una segunda ficha para la misma cuenta');
@@ -213,7 +213,7 @@ select pg_temp.u(x.s), r.id
 
 -- Administración: la de cualquiera, por la RPC.
 select pg_temp.actuar_como(pg_temp.u('a3'));
-select is(public.cedula_de_la_cuenta(pg_temp.u('a1')), '4.567.890-1', 'Administración lee la cédula de Rocío');
+select is(public.cedula_de_la_cuenta(pg_temp.u('a1')), '45678901', 'Administración lee la cédula de Rocío');
 select is(public.cedula_de_la_cuenta(pg_temp.u('a4')), '33333333', 'y la de otro colportor');
 select is(public.cedula_de_la_cuenta(pg_temp.u('a2')), '11111111', 'y la de la coordinadora');
 select is(public.cedula_de_la_cuenta(pg_temp.u('b1')), null, 'una cuenta sin ficha da null');
@@ -244,7 +244,7 @@ select is(pg_temp.error_de($$ insert into public.ficha_administrativa (usuario_i
 select is(pg_temp.error_de($$ delete from public.ficha_administrativa $$),
           '42501|permission denied for table ficha_administrativa', 'Rocío no la borra');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.ficha('a1'), '4.567.890-1', 'y su ficha sigue igual');
+select is(pg_temp.ficha('a1'), '45678901', 'y su ficha sigue igual');
 
 -- La coordinadora: tampoco.
 select pg_temp.actuar_como(pg_temp.u('a2'));
@@ -273,7 +273,7 @@ select pg_temp.actuar_como_service_role();
 select is(pg_temp.error_de($$ select public.cedula_de_la_cuenta(pg_temp.u('a1')) $$),
           '42501|permission denied for function cedula_de_la_cuenta',
           'service_role no la llama (lee la tabla si hace falta)');
-select is(pg_temp.ficha('a1'), '4.567.890-1', 'service_role lee la tabla');
+select is(pg_temp.ficha('a1'), '45678901', 'service_role lee la tabla');
 select pg_temp.actuar_como_servidor();
 select pg_temp.actuar_como_anon();
 select is(pg_temp.error_de($$ select public.cedula_de_la_cuenta(pg_temp.u('a1')) $$),
@@ -300,7 +300,7 @@ select pg_temp.actuar_como_servidor();
 update auth.users
    set raw_user_meta_data = raw_user_meta_data || '{"cedula":"00000000"}'::jsonb
  where id = pg_temp.u('a1');
-select is(pg_temp.ficha('a1'), '4.567.890-1',
+select is(pg_temp.ficha('a1'), '45678901',
           'cambiar la cédula en los metadatos de Auth (auth.updateUser) no toca la ficha');
 update auth.users
    set raw_user_meta_data = '{"cedula":"77777777"}'::jsonb
@@ -322,7 +322,7 @@ select row_eq(
 -- ---------------------------------------------------------------------------
 select is(
   (select count(*) from auditoria.audit_log l
-    where l.metadata::text ~ '4\.567\.890-1|11111111|22222222|33333333|1234567-8|12345678|55555555'),
+    where l.metadata::text ~ '45678901|4\.567\.890-1|11111111|22222222|33333333|1234567-8|12345678|55555555'),
   0::bigint,
   'ningún evento del audit_log lleva una cédula'
 );

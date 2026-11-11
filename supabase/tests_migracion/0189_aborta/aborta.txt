@@ -1,0 +1,4 @@
+La migración 0189 (la cédula en 7 u 8 dígitos) no se aplicó: hay 2 ficha(s) con una cédula que no queda en 7 u 8 dígitos. No se cambió nada.
+· cuenta 01920000-0000-7000-8000-0000000189d2: la cédula no queda en 7 u 8 dígitos.
+· cuenta 01920000-0000-7000-8000-0000000189d3 (dada de baja): la cédula no queda en 7 u 8 dígitos.
+Corregila a mano con service_role (solo dígitos) y volvé a aplicar la migración.
