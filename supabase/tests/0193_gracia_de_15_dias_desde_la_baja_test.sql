@@ -1,13 +1,15 @@
--- pgTAP · migración 0193 (backend-supabase#280, HU-CAM-005; decisión de Cristian del 11/11 «Gracia baja»): la
--- inscripción dada de baja escribe 15 días desde la baja, como tras el fin de la campaña (0020).
---   1. Forma: mis_campanias_para_escribir() y mis_campanias_en_curso_para_escribir() siguen internas.
+-- pgTAP · migraciones 0193 y 0194 (backend-supabase#280, HU-CAM-005; decisión de Cristian del 11/11 «Gracia baja»): la
+-- inscripción dada de baja escribe 15 días desde la baja, con la cuenta de la gracia tras el fin (0020), y también
+-- corrige lo ajeno (aclaración del 11/11 en #280, comentario 6809838196).
+--   1. Forma y privilegios.
 --   2. El caso de la decisión: Ana carga sin señal el depto 2 de una casa ajena, la persona, la visita y la
 --      venta; Luis la quita con quitar_de_campania(); el push entra entero (y el estado nuevo de otra casa
 --      ajena y la corrección de su propio depto).
---   3. Igual que tras el fin: la corrección de lo AJENO vuelve CG001.
+--   3. La corrección de lo AJENO que ya no lee entra por el push (depto, estado, casa; baja del depto), con
+--      conflict por versión como siempre y el WITH CHECK de 0021; CG001 sigue solo tras el fin de la campaña.
 --   4. Lo que no cambia: la lectura, la campaña vigente y la cuenta.
 --   5. El plazo en el día de Montevideo: la baja a las 00:00 del día hoy-15 entra; un minuto antes (día hoy-16),
---      42501 como hoy.
+--      42501 como hoy, también la corrección de lo ajeno.
 --   6. La baja no estira el fin: campaña terminada hace 20 días y baja hace 2, 42501.
 --   7. Una baja anterior al comienzo de la campaña no da gracia.
 begin;
@@ -66,8 +68,9 @@ $$;
 -- --- fixtures (como postgres) --------------------------------------------------
 -- a1 Luis coordina Verano (e1, en curso desde hoy-60), Otoño (e2, empezó hoy-5) y Vieja (e3, terminó hace 20 días).
 -- b1 Ana colportora en las tres; b2 Beto en Verano (el que cargó las casas ajenas).
--- c1 es la ciudad de Verano y de Vieja; c2 la de Otoño.
--- Casas de c1: 0a (de Beto, con su depto 0b y su estado) y 0e (de Beto, sin estado). Casa de c2: 0f (de Beto).
+-- c1 es la ciudad de Verano y de Vieja; c2 la de Otoño; c3 la de Corta (e4, terminó hace 3 días).
+-- Casas de c1: 0a (de Beto, con su depto 0b y su estado) y 0e (de Beto, sin estado). Casa de c2: 0f (de Beto). Casa de c3: 09
+-- (de Beto, con su depto 08).
 -- Ana ya había cargado su depto 0c en la casa ajena 0a, antes de la baja.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at,
                         raw_user_meta_data)
@@ -83,29 +86,37 @@ select pg_temp.u(x.s), r.id
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais gracia193', 'ZJ');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
   (pg_temp.u('c1'), 'Ciudad gracia193',  'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16),
-  (pg_temp.u('c2'), 'Ciudad otoño193',   'Departamento de prueba', pg_temp.u('c0'), -34.80, -56.10);
+  (pg_temp.u('c2'), 'Ciudad otoño193',   'Departamento de prueba', pg_temp.u('c0'), -34.80, -56.10),
+  (pg_temp.u('c3'), 'Ciudad corta193',   'Departamento de prueba', pg_temp.u('c0'), -34.70, -56.00);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'Verano193', 'VERANO', public.hoy_montevideo() - 60, public.hoy_montevideo() + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'Otoño193',  'VERANO', public.hoy_montevideo() - 5,  public.hoy_montevideo() + 30, pg_temp.u('a1')),
-  (pg_temp.u('e3'), 'Vieja193',  'VERANO', public.hoy_montevideo() - 90, public.hoy_montevideo() - 20, pg_temp.u('a1'));
+  (pg_temp.u('e3'), 'Vieja193',  'VERANO', public.hoy_montevideo() - 90, public.hoy_montevideo() - 20, pg_temp.u('a1')),
+  (pg_temp.u('e4'), 'Corta193',  'VERANO', public.hoy_montevideo() - 40, public.hoy_montevideo() - 3,  pg_temp.u('a1'));
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1')),
   (pg_temp.u('f2'), pg_temp.u('e2'), pg_temp.u('c2')),
-  (pg_temp.u('f3'), pg_temp.u('e3'), pg_temp.u('c1'));
--- Ana: 11 en Verano (viva, la quita Luis), 12 en Otoño (de baja antes del comienzo), 13 en Vieja (viva por ahora).
+  (pg_temp.u('f3'), pg_temp.u('e3'), pg_temp.u('c1')),
+  (pg_temp.u('f4'), pg_temp.u('e4'), pg_temp.u('c3'));
+-- Ana: 11 en Verano (viva, la quita Luis), 12 en Otoño (de baja antes del comienzo), 13 en Vieja (viva por ahora),
+-- 15 en Corta (de baja hace 5 días, antes del fin).
 insert into public.campania_colportor (id, campania_id, usuario_id, created_at, deleted_at) values
   (pg_temp.u('11'), pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '50 days', null),
   (pg_temp.u('12'), pg_temp.u('e2'), pg_temp.u('b1'), now() - interval '9 days',  now() - interval '7 days'),
   (pg_temp.u('13'), pg_temp.u('e3'), pg_temp.u('b1'), now() - interval '80 days', null),
-  (pg_temp.u('14'), pg_temp.u('e1'), pg_temp.u('b2'), now() - interval '50 days', null);
+  (pg_temp.u('14'), pg_temp.u('e1'), pg_temp.u('b2'), now() - interval '50 days', null),
+  (pg_temp.u('15'), pg_temp.u('e4'), pg_temp.u('b1'), now() - interval '30 days', now() - interval '5 days'),
+  (pg_temp.u('16'), pg_temp.u('e4'), pg_temp.u('b2'), now() - interval '30 days', null);
 
 insert into public.ubicacion (id, tipo, lat, lon, ciudad_id, created_by) values
   (pg_temp.u('0a'), 'CASA', -34.88, -56.15, pg_temp.u('c1'), pg_temp.u('b2')),
   (pg_temp.u('0e'), 'CASA', -34.87, -56.15, pg_temp.u('c1'), pg_temp.u('b2')),
-  (pg_temp.u('0f'), 'CASA', -34.80, -56.10, pg_temp.u('c2'), pg_temp.u('b2'));
+  (pg_temp.u('0f'), 'CASA', -34.80, -56.10, pg_temp.u('c2'), pg_temp.u('b2')),
+  (pg_temp.u('09'), 'CASA', -34.70, -56.00, pg_temp.u('c3'), pg_temp.u('b2'));
 insert into public.espacio (id, ubicacion_id, numero_depto, created_by) values
   (pg_temp.u('0b'), pg_temp.u('0a'), '1', pg_temp.u('b2')),
-  (pg_temp.u('0c'), pg_temp.u('0a'), '3', pg_temp.u('b1'));
+  (pg_temp.u('0c'), pg_temp.u('0a'), '3', pg_temp.u('b1')),
+  (pg_temp.u('08'), pg_temp.u('09'), '1', pg_temp.u('b2'));
 insert into public.house_status (ubicacion_id, lat, lon, tipo_ubicacion, color, prioridad, created_by)
 values (pg_temp.u('0a'), -34.88, -56.15, 'CASA', 'RECHAZO', 7, pg_temp.u('b2'));
 
@@ -118,6 +129,14 @@ select ok(not has_function_privilege('authenticated', 'public.mis_campanias_en_c
           'mis_campanias_en_curso_para_escribir sigue interna');
 select ok(has_function_privilege('authenticated', 'public.mis_ciudades_de_campania()', 'execute'),
           'mis_ciudades_de_campania conserva sus privilegios');
+select ok(not has_function_privilege('authenticated', 'public.gracia_de_baja_en_ubicacion(uuid)', 'execute'),
+          'gracia_de_baja_en_ubicacion es interna');
+select ok(has_function_privilege('authenticated', 'public.corregir_en_gracia_de_baja(text, text, jsonb, bigint)', 'execute')
+          and not has_function_privilege('anon', 'public.corregir_en_gracia_de_baja(text, text, jsonb, bigint)', 'execute'),
+          'corregir_en_gracia_de_baja: la ejecuta authenticated (el push es INVOKER), no anon');
+select is((select p.prosecdef from pg_proc p
+            where p.oid = 'public.corregir_en_gracia_de_baja(text, text, jsonb, bigint)'::regprocedure), true,
+          'corregir_en_gracia_de_baja es SECURITY DEFINER');
 
 -- Vieja terminó hace 20 días: fuera de toda gracia. La dejamos de baja ya para que no cuente en lo que sigue.
 select pg_temp.baja_en('13', now() - interval '2 days');
@@ -155,15 +174,76 @@ select is((select color::text from public.house_status where ubicacion_id = pg_t
 select is((select piso from public.espacio where id = pg_temp.u('0c')), '2', 'y la corrección de su depto');
 
 -- ---------------------------------------------------------------------------
--- 3. Igual que tras el fin: lo ajeno no se corrige en la gracia (CG001, decisión del 02/10 en #52)
+-- 3. Lo ajeno que ya no lee: la corrección entra (aclaración del 11/11 en #280)
 -- ---------------------------------------------------------------------------
+-- Las versiones, leídas como servidor (Ana ya no las lee).
+select pg_temp.actuar_como_servidor();
+select set_config('t193.v0b', (select sync_version from public.espacio where id = pg_temp.u('0b'))::text, true);
+select set_config('t193.v0a', (select sync_version from public.house_status where ubicacion_id = pg_temp.u('0a'))::text, true);
+select set_config('t193.vu0a', (select sync_version from public.ubicacion where id = pg_temp.u('0a'))::text, true);
+
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is((select count(*) from public.espacio where id = pg_temp.u('0b')), 0::bigint,
+          'Ana ya no lee el depto de Beto (la lectura no tiene gracia)');
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('0b'), 'piso', '4'),
+                        current_setting('t193.v0b')::bigint),
+            pg_temp.job('house_status', 'update', jsonb_build_object('ubicacion_id', pg_temp.u('0a'), 'color', 'SIN_CONTESTAR',
+                                                                     'prioridad', 6), current_setting('t193.v0a')::bigint),
+            pg_temp.job('ubicacion', 'update', jsonb_build_object('id', pg_temp.u('0a'), 'numero', '12'),
+                        current_setting('t193.vu0a')::bigint)))),
+          array['accepted', 'accepted', 'accepted'],
+          'quitada de una campaña en curso, corrige el depto, el estado y la casa que cargó Beto: entran (sin CG001)');
+select pg_temp.actuar_como_servidor();
+select ok((select piso = '4' and sync_version > current_setting('t193.v0b')::bigint
+             from public.espacio where id = pg_temp.u('0b')), 'el depto de Beto queda con el piso de Ana y sube la versión');
+select is((select color::text || '|' || prioridad from public.house_status where ubicacion_id = pg_temp.u('0a')),
+          'SIN_CONTESTAR|6', 'y el estado');
+select is((select numero from public.ubicacion where id = pg_temp.u('0a')), '12', 'y la casa');
+
+-- La versión vieja: conflict con la fila del servidor, como siempre.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table conflicto_193 as
+select sync.push(jsonb_build_array(
+         pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('0b'), 'piso', '5'),
+                     current_setting('t193.v0b')::bigint))) as r;
+select is((select pg_temp.resultados(r) from conflicto_193), array['conflict'], 'con la versión vieja: conflict');
+select is((select r -> 'results' -> 0 -> 'server_row' ->> 'piso' from conflicto_193), '4',
+          'con la fila del servidor para resolver');
+
+-- La baja del depto ajeno también es una corrección: entra.
+select pg_temp.actuar_como_servidor();
+select set_config('t193.v0b', (select sync_version from public.espacio where id = pg_temp.u('0b'))::text, true);
 select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.resultados(sync.push(jsonb_build_array(
-            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('0b'), 'piso', '4'), 0),
-            pg_temp.job('house_status', 'update', jsonb_build_object('ubicacion_id', pg_temp.u('0a'), 'color', 'SIN_CONTESTAR',
-                                                                     'prioridad', 6), 0)))),
-          array['invalid CG001', 'invalid CG001'],
-          'corregir el depto y el estado que cargó Beto, en la gracia de la baja: CG001 como tras el fin');
+            pg_temp.job('espacio', 'delete', jsonb_build_object('id', pg_temp.u('0b')), current_setting('t193.v0b')::bigint)))),
+          array['accepted'], 'dar de baja el depto de Beto: entra');
+select pg_temp.actuar_como_servidor();
+select ok((select deleted_at is not null from public.espacio where id = pg_temp.u('0b')), 'el depto queda de baja');
+
+-- Mover la casa a una ciudad donde no escribe: el WITH CHECK de 0021, repetido en el DEFINER, la frena.
+select set_config('t193.vu0a', (select sync_version from public.ubicacion where id = pg_temp.u('0a'))::text, true);
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('ubicacion', 'update', jsonb_build_object('id', pg_temp.u('0a'), 'ciudad_id', pg_temp.u('c2')),
+                        current_setting('t193.vu0a')::bigint)))),
+          array['invalid 42501'], 'mover la casa a Otoño (donde no escribe): 42501');
+select pg_temp.actuar_como_servidor();
+select is((select ciudad_id from public.ubicacion where id = pg_temp.u('0a')), pg_temp.u('c1'), 'y la casa sigue en c1');
+
+-- Solo esas tres entidades, y nada sin sesión.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(public.corregir_en_gracia_de_baja('venta', 'update', jsonb_build_object('id', pg_temp.u('25')), 1), null,
+          'otra entidad: null (el push sigue como antes)');
+select pg_temp.actuar_como_servidor();
+select is(public.corregir_en_gracia_de_baja('espacio', 'update', jsonb_build_object('id', pg_temp.u('0b'), 'piso', '9'), 1),
+          null, 'sin sesión: null');
+
+-- Tras el FIN de la campaña manda #52: Corta terminó hace 3 días (a Ana la quitaron hace 5): lo ajeno, CG001.
+select pg_temp.actuar_como(pg_temp.u('b1'));
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('08'), 'piso', '2'), 1)))),
+          array['invalid CG001'], 'campaña ya terminada: corregir el depto de Beto sigue en CG001');
 
 -- ---------------------------------------------------------------------------
 -- 4. Lo que no cambia: solo es para escribir
@@ -192,6 +272,10 @@ select is(pg_temp.resultados(sync.push(jsonb_build_array(
             pg_temp.job('house_status', 'insert', jsonb_build_object('ubicacion_id', pg_temp.u('0a'), 'tipo_ubicacion', 'CASA',
                                                                      'color', 'VENTA_COMPLETA', 'prioridad', 4))))),
           array['invalid 42501'], 'ni carga un estado en una casa ajena');
+select is(pg_temp.resultados(sync.push(jsonb_build_array(
+            pg_temp.job('house_status', 'update', jsonb_build_object('ubicacion_id', pg_temp.u('0a'), 'color', 'RECHAZO',
+                                                                     'prioridad', 7), 1)))),
+          array['invalid 42501'], 'día 16: la corrección de lo ajeno que ya no lee, 42501 (aclaración del 11/11)');
 
 -- ---------------------------------------------------------------------------
 -- 6. La baja no estira el fin de la campaña
