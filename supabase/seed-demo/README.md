@@ -13,6 +13,7 @@ lo reciben.
 | `chequeo-demo.sql` | Solo lectura: conteo por tabla y reglas de coherencia (`ok = true` cuando cierran). |
 | `retirar-demo-datos.sql` | Baja lógica de todo lo de la demo (vista previa por defecto). |
 | `sumar-coordinador-demo.sql` | Suma a `coordinador.demo` como coordinador de las campañas de la demo (solo agrega). |
+| `sumar-colportor-demo.sql` | Inscribe a `colportor.demo` en la campaña de la demo, con su ciudad, su zona, su stock y dos semanas de actividad (solo agrega). |
 
 ## Cómo se corre
 
@@ -32,6 +33,9 @@ scripts/db-seed-demo.sh [--remoto] --retirar --aplicar  # lo hace
 
 # Que coordinador.demo (la cuenta con la que se entra al panel) vea la demo
 scripts/db-seed-demo.sh [--remoto] --coordinador
+
+# Que colportor.demo (la cuenta con la que se entra a la app) tenga ciudad, campaña, zona y datos para probar
+scripts/db-seed-demo.sh [--remoto] --colportor
 ```
 
 Reglas que el script hace cumplir: nunca `db reset`, nunca borra ni trunca; en remoto solo acepta el proyecto
@@ -39,6 +43,22 @@ Reglas que el script hace cumplir: nunca `db reset`, nunca borra ni trunca; en r
 Supabase. La contraseña de los usuarios de la demo (`DEMO_PASSWORD`) solo se aplica en local y se lee con `\getenv`:
 no se escribe en archivos ni pasa por la línea de comandos. Sin ella, los usuarios de la demo no pueden iniciar
 sesión; en remoto se les pone contraseña desde Supabase Studio (Authentication) si hace falta entrar con ellos.
+
+## Entrar a la app como colportor.demo
+
+`colportor.demo` la crea Auth, no el seed, y para el teléfono sin inscripción no hay ciudad ni zona: la app entra vacía
+(backend-supabase#286, lo que vieron los evaluadores). `sumar-colportor-demo.sql` (`--colportor`) la inscribe en la campaña de verano
+de la demo, en la zona **Pocitos** de **Montevideo** (alta el 14/09, como los demás colportores de la demo, y primer tramo de
+zona desde ese día), le deja stock inicial (ajuste `STOCK_INICIAL`, el mismo movimiento de la app: 12 ejemplares de cada libro,
+20 de cada revista y folleto) y dos semanas de trabajo hasta el 17/11 (jornadas, visitas a las casas de Pocitos, ventas con sus
+renglones, cobros en efectivo al contado o en parte), que suma a su cuenta de saldo si la tiene viva. Con eso puede elegir ciudad,
+ver el mapa con sus casas, abrir una jornada y registrar una venta con entrega.
+
+Reglas: sin la cuenta (base local, CI) o sin la demo base, no hace nada; solo agrega (el único UPDATE es el de su cuenta de
+saldo y el del primer tramo de la inscripción nueva); si ya tiene inscripción en esa campaña, viva o de baja, no la toca y avisa
+(una baja se revierte con `inscribir_colportor()`, no con un INSERT); si hay jornadas de esta carga, no repite. Lo que crea lleva el
+prefijo de la demo, así que `--retirar` lo da de baja (el usuario `colportor.demo`, que no es de la demo generada, se queda).
+No toca contraseñas ni Auth.
 
 ## Entrar al panel y ver la demo
 
