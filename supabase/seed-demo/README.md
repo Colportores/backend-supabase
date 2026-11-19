@@ -4,8 +4,9 @@ Generador versionado e idempotente que llena una base con una historia creíble:
 dos campañas, diez colportores y un coordinador, casas visitadas, ventas, cobros, deudas, depósitos, pedidos y stock.
 **Todo es ficticio** (nombres, correos `@example.com`, direcciones, montos): no hay producción hasta diciembre.
 
-No es una migración ni el seed de ejemplo (`supabase/seed.sql`, que usa `scripts/db-seed.sh`). Staging y producción no
-lo reciben.
+No es una migración ni el seed de ejemplo (`supabase/seed.sql`, que usa `scripts/db-seed.sh`, solo para la base local).
+Producción no lo recibe. Solo se carga en la base local o en el proyecto de demo de abajo (referencia fija en el script);
+`scripts/db-seed.sh` sigue rechazando cualquier base remota.
 
 | Archivo | Para qué |
 |---|---|
@@ -14,6 +15,7 @@ lo reciben.
 | `retirar-demo-datos.sql` | Baja lógica de todo lo de la demo (vista previa por defecto). |
 | `sumar-coordinador-demo.sql` | Suma a `coordinador.demo` como coordinador de las campañas de la demo (solo agrega). |
 | `sumar-colportor-demo.sql` | Inscribe a `colportor.demo` en la campaña de la demo, con su ciudad, su zona, su stock y dos semanas de actividad (solo agrega). |
+| `demo-volumen.sql` | Segunda tanda, para las pruebas de los evaluadores: 150 ciudades, 54 colportores, seis semanas de actividad (ver abajo). |
 
 ## Cómo se corre
 
@@ -36,6 +38,8 @@ scripts/db-seed-demo.sh [--remoto] --coordinador
 
 # Que colportor.demo (la cuenta con la que se entra a la app) tenga ciudad, campaña, zona y datos para probar
 scripts/db-seed-demo.sh [--remoto] --colportor
+# Más volumen para las pruebas de los evaluadores (después de la carga base; ver «Volumen para las pruebas»)
+scripts/db-seed-demo.sh [--remoto] --volumen
 ```
 
 Reglas que el script hace cumplir: nunca `db reset`, nunca borra ni trunca; en remoto solo acepta el proyecto
@@ -59,6 +63,27 @@ saldo y el del primer tramo de la inscripción nueva); si ya tiene inscripción 
 (una baja se revierte con `inscribir_colportor()`, no con un INSERT); si hay jornadas de esta carga, no repite. Lo que crea lleva el
 prefijo de la demo, así que `--retirar` lo da de baja (el usuario `colportor.demo`, que no es de la demo generada, se queda).
 No toca contraseñas ni Auth.
+## Volumen para las pruebas de los evaluadores
+
+`demo-volumen.sql` (`scripts/db-seed-demo.sh [--remoto] --volumen`, backend-supabase#285) suma, sobre la campaña de verano
+ya cargada, lo que las listas largas y los reportes necesitan para verse como en uso real:
+
+- **150 ciudades más** (del catálogo de Uruguay de la migración 0109; si la base no lo tiene, el script corre
+  `public.cargar_catalogo_ciudades()`, que no borra ni duplica), cada una con su ciudad de campaña y dos zonas radiales
+  (`Centro` y `Zona Norte`); una de cada tres con precios propios (±6 % sobre el general en tres libros).
+- **54 colportores nuevos** (`demo.<nombre>.<apellido>.<n>@example.com`, sin contraseña), tres en cada una de las 18 primeras
+  ciudades, con inscripciones escalonadas entre el 28/09 y el 12/10.
+- **Seis semanas de actividad** (hasta el 17/11, de lunes a sábado): unas 1.150 jornadas, 7.000 visitas (ventas, entrevistas,
+  rechazos y puertas sin respuesta), 1.000 ventas con sus renglones, 1.085 cobros en efectivo (al contado, en parte o en dos
+  cuotas, con clientes que quedan debiendo), casas coloreadas en el mapa y la cuenta de cada colportor.
+
+Qué **no** suma: entregas, stock, pedidos, depósitos ni agenda (la tanda base ya ejercita esos flujos). Requiere la demo base
+(usa su campaña, su coordinador y sus productos): sin ella se detiene con un mensaje y no cambia nada. Es idempotente y
+determinístico, y usa ids con el mismo prefijo `5eed0000-0000-7000-8…` y el código de tabla corrido 256 lugares
+(`5eed0000-0000-7000-81xx-…`), así que `--retirar` también la retira y `--chequeo` la cuenta. El coordinador de la campaña es
+el mismo (`demo.gustavo.ferreira`; con `--coordinador`, también `coordinador.demo`): Inicio, Equipo, Ciudades y Reportes la ven
+sin más pasos. El test `supabase/tests/ops_seed_demo_volumen_test.sql` corre la base y la tanda completas, el panel sobre
+ellas, la segunda pasada y el retiro.
 
 ## Entrar al panel y ver la demo
 
