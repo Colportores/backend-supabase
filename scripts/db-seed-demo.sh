@@ -9,6 +9,8 @@
 #                                           (solo agrega; sin esa cuenta no hace nada). Ver supabase/seed-demo/README.md
 #   scripts/db-seed-demo.sh --fechas        vista previa de la corrección de la fecha de alta de las inscripciones de una
 #                                           demo cargada antes del 11/11; con --aplicar lo hace de verdad
+#   scripts/db-seed-demo.sh --colportor    inscribe a colportor.demo en la campaña de la demo (ciudad, zona, stock y dos semanas
+#                                           de actividad) para probar la app desde el lado del colportor (sin esa cuenta no hace nada)
 #   scripts/db-seed-demo.sh --volumen       segunda tanda: 150 ciudades, 54 colportores y seis semanas de jornadas, ventas y cobros
 #                                           para las pruebas de los evaluadores (requiere la demo base ya cargada; idempotente)
 #   scripts/db-seed-demo.sh --remoto <modo> lo mismo contra el proyecto de DEMO ohdsavwpasfpapbyutrv, con el CLI de
@@ -36,9 +38,10 @@ for a in "$@"; do
     --retirar) modo="retirar" ;;
     --coordinador) modo="coordinador" ;;
     --fechas) modo="fechas" ;;
+    --colportor) modo="colportor" ;;
     --volumen) modo="volumen" ;;
     --aplicar) aplicar=1 ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $a (ver --help)" >&2; exit 2 ;;
   esac
 done
@@ -52,6 +55,7 @@ case "$modo" in
   retirar) archivo="$DIR/retirar-demo-datos.sql" ;;
   coordinador) archivo="$DIR/sumar-coordinador-demo.sql" ;;
   fechas)  archivo="$DIR/corregir-fechas-de-alta-demo.sql" ;;
+  colportor) archivo="$DIR/sumar-colportor-demo.sql" ;;
   volumen) archivo="$DIR/demo-volumen.sql" ;;
 esac
 
