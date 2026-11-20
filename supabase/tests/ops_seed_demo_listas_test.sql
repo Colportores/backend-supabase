@@ -14,12 +14,10 @@ create or replace function pg_temp.u(p text) returns uuid language sql as $$
   select ('01920000-0000-7000-8000-0000000289' || p)::uuid;
 $$;
 
--- Las dos cuentas de la demo (las crea Auth en el proyecto real; el seed no las crea) y la base de la demo.
+-- La cuenta de coordinador.demo (la crea Auth en el proyecto real; el seed no la crea) y la base de la demo.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
-values (pg_temp.u('a1'), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'coordinador.demo@example.com', 'x', now(), now(), now()),
-       (pg_temp.u('a2'), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'colportor.demo@example.com', 'x', now(), now(), now());
+values (pg_temp.u('a1'), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'coordinador.demo@example.com', 'x', now(), now(), now());
 insert into public.usuario_rol (usuario_id, rol_id) select pg_temp.u('a1'), r.id from public.rol r where r.codigo = 'COORDINADOR';
-insert into public.usuario_rol (usuario_id, rol_id) select pg_temp.u('a2'), r.id from public.rol r where r.codigo = 'COLPORTOR';
 
 \o /dev/null
 \i supabase/seed-demo/demo-datos.sql
@@ -38,9 +36,32 @@ select is((select count(*) from public.producto where id = '5eed0000-0000-7000-8
 \o /dev/null
 \i supabase/seed-demo/sumar-coordinador-demo.sql
 \i supabase/seed-demo/demo-volumen.sql
+\i supabase/seed-demo/demo-listas.sql
+\o
+
+-- 1b. Primera pasada SIN colportor.demo (todavía no corrió --colportor): carga lo común y se queda a la espera de su historia
+select is((select count(*) from public.producto where id::text like '5eed0000-0000-7000-8005-%'), 27::bigint, 'primera pasada sin colportor.demo: el catálogo ya está');
+select is((select count(*) from public.pedido_casa_editora where id::text like '5eed0000-0000-7000-8210-%'), (54 * 4)::bigint, 'primera pasada sin colportor.demo: solo los pedidos de los del volumen');
+select is((select count(*) from public.agenda where id::text like '5eed0000-0000-7000-821a-%'), 0::bigint, 'primera pasada sin colportor.demo: no hay agenda suya todavía');
+
+-- Aparece colportor.demo (la crea Auth), corre --colportor y se repite --listas: se le carga solo su historia, sin repetir lo común
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
+values (pg_temp.u('a2'), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'colportor.demo@example.com', 'x', now(), now(), now());
+insert into public.usuario_rol (usuario_id, rol_id) select pg_temp.u('a2'), r.id from public.rol r where r.codigo = 'COLPORTOR';
+create temp table antes_comun as
+  select (select count(*) from public.producto) productos, (select count(*) from public.usuario where id::text like '5eed0000-0000-7000-8200-%') sueltas,
+         (select count(*) from public.deposito where colportor_id::text like '5eed0000-0000-7000-8100-%') depositos_volumen,
+         (select count(*) from public.transferencia_stock) transferencias;
+\o /dev/null
 \i supabase/seed-demo/sumar-colportor-demo.sql
 \i supabase/seed-demo/demo-listas.sql
 \o
+select results_eq(
+  $$ select (select count(*) from public.producto), (select count(*) from public.usuario where id::text like '5eed0000-0000-7000-8200-%'),
+            (select count(*) from public.deposito where colportor_id::text like '5eed0000-0000-7000-8100-%'), (select count(*) from public.transferencia_stock) $$,
+  $$ select productos, sueltas, depositos_volumen, transferencias from antes_comun $$,
+  'la segunda pasada, con colportor.demo lista, no repite lo común');
+select cmp_ok((select count(*) from public.agenda where colportor_id = pg_temp.u('a2')), '>', 100::bigint, 'la segunda pasada le carga la historia a colportor.demo');
 
 -- 2. Qué suma
 select is((select count(*) from public.producto where id::text like '5eed0000-0000-7000-8005-%'), 27::bigint, '27 productos en el catálogo de la demo (16 más)');

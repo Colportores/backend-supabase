@@ -96,8 +96,9 @@ ellas, la segunda pasada y el retiro.
 cubrían, para que los evaluadores abran cualquier lista y vean volumen (front-coordinadores-web#192 y
 front-colportores-mobile#720 revisan cómo se muestran y si hace falta paginar). **Orden de carga**: base, `--coordinador`,
 `--colportor`, `--volumen` y `--listas` (sin la base o sin el volumen se detiene con un mensaje y no cambia nada; sin `colportor.demo`
-o sin `--colportor` carga todo menos la historia de esa cuenta, y avisa). Después, `--chequeo-listas` mide cada lista con la
-sesión de cada cuenta. Es idempotente (la guarda es el producto 12 del catálogo) y la retira `--retirar` junto con el resto.
+o sin `--colportor` carga todo menos la historia de esa cuenta, y avisa: al repetir `--listas` después de `--colportor` se le carga solo
+su historia). Después, `--chequeo-listas` mide cada lista con la sesión de cada cuenta. Es idempotente (lo común lo guarda el producto 12
+del catálogo y la historia de colportor.demo, su primera jornada) y la retira `--retirar` junto con el resto.
 
 Lo que suma, sobre lo que ya había:
 

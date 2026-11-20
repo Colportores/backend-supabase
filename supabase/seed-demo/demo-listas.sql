@@ -35,7 +35,9 @@
 --   · Las filas que crea llevan el prefijo de la demo (5eed0000-0000-7000-8…), con el código de tabla corrido 512 lugares
 --     (hexadecimal 2xx), así que retirar-demo-datos.sql las retira junto con el resto. Los productos nuevos usan el
 --     código de tabla de la base (8005) con los números 12 a 27.
---   · Idempotente: si el producto 12 ya existe, avisa y no hace nada; cada INSERT lleva además `on conflict do nothing`.
+--   · Idempotente: lo común (catálogo, cuentas, barrios, colportores del volumen) lo guarda el producto 12 del catálogo y la historia de
+--     colportor.demo, su primera jornada: si colportor.demo no estaba lista, repetir --listas después de --colportor carga solo su
+--     historia; si ya está todo, avisa y no hace nada. Cada INSERT lleva además `on conflict do nothing`.
 --   · Determinístico: sin random(); los "azares" salen de un hash. Anclado en fechas absolutas (hasta el 17/11/2026).
 --   · Sin contraseña para las cuentas nuevas (no se entra con ellas).
 --
@@ -53,6 +55,7 @@ declare
   v_cd_zona constant uuid := '5eed0000-0000-7000-8004-000000000001';  -- Pocitos
   v_mvd     uuid;      -- ciudad de campaña de Montevideo
   v_n       int;
+  v_base_hecha boolean;  -- los catálogos, las cuentas, los barrios y los colportores del volumen ya están (producto 12)
 begin
   -- --------------------------------------------------------------------------------------------------
   -- 0. Ayudas de la sesión y guardas
@@ -85,10 +88,7 @@ begin
   if not exists (select 1 from public.campania_ciudad cc where cc.id = pg_temp.vdid(9, 1)) then
     raise exception 'Falta el volumen: corré scripts/db-seed-demo.sh --volumen antes de esta tanda.';
   end if;
-  if exists (select 1 from public.producto p where p.id = pg_temp.bdid(5, 12)) then
-    raise notice 'Las listas largas de la demo ya están cargadas (producto %). No se cambió nada.', pg_temp.bdid(5, 12);
-    return;
-  end if;
+  v_base_hecha := exists (select 1 from public.producto p where p.id = pg_temp.bdid(5, 12));
   if not exists (select 1 from public.rol where codigo = 'COLPORTOR') or not exists (select 1 from public.rol where codigo = 'COORDINADOR') then
     raise exception 'Faltan los roles COLPORTOR y COORDINADOR: aplicá las migraciones antes de cargar la demo.';
   end if;
@@ -108,10 +108,17 @@ begin
      and exists (select 1 from public.jornada j where j.id = pg_temp.bdid(15, 99000001) and j.colportor_id = u.id)
      and exists (select 1 from public.campania_colportor cc
                   where cc.usuario_id = u.id and cc.campania_id = v_camp and cc.deleted_at is null and cc.zona_id = v_cd_zona);
-  if v_cd is not null then
-    select cc.id into v_cd_ins from public.campania_colportor cc where cc.usuario_id = v_cd and cc.campania_id = v_camp;
+  -- Su historia tiene su propia guarda (la primera jornada de esta tanda): si colportor.demo no estaba lista en la primera
+  -- pasada (sin --colportor), basta repetir --listas después de correrlo y se le carga solo la suya.
+  if v_cd is not null and exists (select 1 from public.jornada j where j.id = pg_temp.ldid(15, 90000001)) then
+    v_cd := null;
+  end if;
+  if v_base_hecha and v_cd is null then
+    raise notice 'Las listas largas de la demo ya están cargadas (producto %) y no falta la historia de colportor.demo. No se cambió nada.', pg_temp.bdid(5, 12);
+    return;
   end if;
 
+  if not v_base_hecha then
   -- --------------------------------------------------------------------------------------------------
   -- 1. Catálogo: 16 productos más (códigos 12 a 27), cada uno con su precio general
   -- --------------------------------------------------------------------------------------------------
@@ -454,6 +461,8 @@ begin
     ) x
    where cu.usuario_id = x.uid and cu.deleted_at is null;
 
+  end if;  -- not v_base_hecha
+
   -- --------------------------------------------------------------------------------------------------
   -- 5. colportor.demo: su historia desde el 14/09 (la de las dos últimas semanas ya la dejó --colportor)
   -- --------------------------------------------------------------------------------------------------
@@ -678,8 +687,9 @@ begin
      where cu.usuario_id = v_cd and cu.deleted_at is null;
   end if;
 
-  raise notice 'Listas largas cargadas: % productos, % cuentas sueltas, % colportores del volumen con depósitos, pedidos y transferencias%.',
-    (select count(*) from public.producto where id::text like '5eed0000-0000-7000-8005-%'), (select count(*) from tl_ext),
-    (select count(*) from tl_vcol), case when v_cd is not null then ' y colportor.demo con su historia completa' else ' (colportor.demo no está listo: corré --colportor y repetí)' end;
+  raise notice 'Listas largas: % (catálogo, cuentas sueltas, barrios y colportores del volumen); %.',
+    case when v_base_hecha then 'ya estaban cargadas' else 'cargadas ahora' end,
+    case when v_cd is not null then 'se cargó la historia de colportor.demo'
+         else 'colportor.demo no está lista (corré --colportor y repetí --listas: se le carga solo su historia)' end;
 end
 $listas$;
