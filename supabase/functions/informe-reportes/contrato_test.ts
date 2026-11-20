@@ -99,8 +99,16 @@ Deno.test("contrato · las RPC de horas y de ventas se llaman con los mismos arg
     const { argumentos } = await definicionDe(rpc);
     assertEquals(argumentos, ["p_campania_id", "p_desde", "p_hasta", "p_agrupar", "p_ciudad_id", "p_colportor_ids"]);
   }
-  assertEquals((await definicionDe("zonas_por_colportor")).argumentos, ["p_campania_id"]);
-  assertEquals((await definicionDe("ciudades_de_campania")).argumentos, ["p_campania_id"]);
+  assertEquals((await definicionDe("zonas_por_colportor")).argumentos, [
+    "p_campania_id",
+    "p_limite",
+    "p_desplazamiento",
+  ]);
+  assertEquals((await definicionDe("ciudades_de_campania")).argumentos, [
+    "p_campania_id",
+    "p_limite",
+    "p_desplazamiento",
+  ]);
   assertEquals((await definicionDe("campanias_del_coordinador")).argumentos, []);
 });
 

@@ -438,6 +438,22 @@ select public.tablero_de_inicio(campania_id, '2026-10-21'); -- un día anterior 
 - **Pendientes.** `pendientes` es `[]` hasta que V2 conecte los tickets por validar y los pedidos por autorizar.
 - **Quién.** Con el JWT del coordinador de la campaña (o un ADMIN): sin sesión, colportor, sin rol, rol vencido o coordinador de otra campaña, `42501`, antes de mirar nada; `CZ001` si la campaña no existe; una campaña terminada se lee. Solo cifras: ni clientes, ni ubicaciones, ni talonarios, ni emails.
 
+### Listas del panel por páginas (`0196`, backend-supabase#290)
+
+PostgREST corta toda respuesta en 1000 filas (`max_rows` de `supabase/config.toml`) sin avisar: una lista que pase de ahí se ve completa y le faltan filas (`historial_de_acompaniamientos` con 100 colportores y 60 días son 6000). Desde la migración `0196` (seguimiento de front-coordinadores-web#192) las siete RPC de lista del panel que pueden pasar de 1000 suman, al final de sus parámetros, dos opcionales:
+
+```sql
+select * from public.historial_de_acompaniamientos(campania_id);                                 -- como siempre (PostgREST corta en 1000)
+select * from public.historial_de_acompaniamientos(campania_id, null, p_limite => 1000);          -- la primera página
+select * from public.historial_de_acompaniamientos(campania_id, null, 1000, 1000);               -- la siguiente
+```
+
+- **Cuáles.** `colportores_de_campania`, `ciudades_de_campania`, `zonas_por_colportor`, `acompaniamientos_por_colportor`, `historial_de_acompaniamientos`, `jornadas_cerradas_de_colportor` y `becas_de_campania`. `tablero_de_inicio` devuelve un `jsonb` y no se corta: queda como está.
+- **Parámetros.** `p_limite` (de 1 a 1000; `null`, el valor por defecto, es todas, como hasta hoy) y `p_desplazamiento` (cuántas filas saltear; 0 por defecto). La misma forma que `retiros_de_campania` y `tickets_de_campania`. Un `p_limite` fuera de 1 a 1000 o un desplazamiento negativo o `null` es `22023` (nunca se recorta en silencio: con más de 1000 el panel creería que la página corta es la última). El permiso (`42501`, `CZ001`) se mira antes que la página.
+- **Cómo recorrerlas.** Pedir páginas de 1000 hasta que una venga con menos filas que `p_limite`. El orden es fijo y termina en una clave única (el id de la fila), así que páginas seguidas no repiten ni saltean filas mientras los datos no cambien entre una y otra. Sin los parámetros nuevos, cada función devuelve las mismas filas, en el mismo orden y con las mismas columnas que antes (regla R1: solo suma).
+- **Firma.** Agregar parámetros cambia la firma: cada función se recrea con `drop` + `create` (si quedara la firma vieja al lado, la llamada por nombre de PostgREST sería ambigua) y conserva sus privilegios (`authenticated`; `colportores_de_campania` también `service_role`). La validación vive en `validar_pagina_de_lista()`, interna (nadie la ejecuta directo). Los tests que nombran la firma (`public.<función>(uuid)`) pasan a la nueva.
+- **Qué falta en docs-organizacion.** El contrato y `esquema-datos.md` anotan los parámetros nuevos de las siete.
+
 ## El cobro: tarjeta, transferencia y anulación (0072)
 
 Desde la migración `0072` (backend-supabase#133, decisiones de Cristian del 23/10 en front-colportores-mobile#164 y #168: «Datos cobro», «Anulación» y «Anular 72 h») `cobranza`:
