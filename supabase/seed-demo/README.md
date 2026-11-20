@@ -16,6 +16,8 @@ Producción no lo recibe. Solo se carga en la base local o en el proyecto de dem
 | `sumar-coordinador-demo.sql` | Suma a `coordinador.demo` como coordinador de las campañas de la demo (solo agrega). |
 | `sumar-colportor-demo.sql` | Inscribe a `colportor.demo` en la campaña de la demo, con su ciudad, su zona, su stock y dos semanas de actividad (solo agrega). |
 | `demo-volumen.sql` | Segunda tanda, para las pruebas de los evaluadores: 150 ciudades, 54 colportores, seis semanas de actividad (ver abajo). |
+| `demo-listas.sql` | Tercera tanda: que toda lista desplazable del panel y de la app tenga más de 25 registros (ver «Listas largas»). |
+| `chequeo-listas-demo.sql` | Solo lectura: cuántos registros ve cada lista con `coordinador.demo` y `colportor.demo` (`ok` cuando llega a 26). |
 
 ## Cómo se corre
 
@@ -40,6 +42,9 @@ scripts/db-seed-demo.sh [--remoto] --coordinador
 scripts/db-seed-demo.sh [--remoto] --colportor
 # Más volumen para las pruebas de los evaluadores (después de la carga base; ver «Volumen para las pruebas»)
 scripts/db-seed-demo.sh [--remoto] --volumen
+# Que toda lista desplazable tenga más de 25 registros (después de lo anterior; ver «Listas largas»)
+scripts/db-seed-demo.sh [--remoto] --listas
+scripts/db-seed-demo.sh [--remoto] --chequeo-listas
 ```
 
 Reglas que el script hace cumplir: nunca `db reset`, nunca borra ni trunca; en remoto solo acepta el proyecto
@@ -85,6 +90,72 @@ el mismo (`demo.gustavo.ferreira`; con `--coordinador`, también `coordinador.de
 sin más pasos. El test `supabase/tests/ops_seed_demo_volumen_test.sql` corre la base y la tanda completas, el panel sobre
 ellas, la segunda pasada y el retiro.
 
+## Listas largas (más de 25 registros en toda lista desplazable)
+
+`demo-listas.sql` (`scripts/db-seed-demo.sh [--remoto] --listas`, backend-supabase#289) completa lo que la base y el volumen no
+cubrían, para que los evaluadores abran cualquier lista y vean volumen (front-coordinadores-web#192 y
+front-colportores-mobile#720 revisan cómo se muestran y si hace falta paginar). **Orden de carga**: base, `--coordinador`,
+`--colportor`, `--volumen` y `--listas` (sin la base o sin el volumen se detiene con un mensaje y no cambia nada; sin `colportor.demo`
+o sin `--colportor` carga todo menos la historia de esa cuenta, y avisa). Después, `--chequeo-listas` mide cada lista con la
+sesión de cada cuenta. Es idempotente (la guarda es el producto 12 del catálogo) y la retira `--retirar` junto con el resto.
+
+Lo que suma, sobre lo que ya había:
+
+- **Catálogo**: 16 productos más (27 en total, 26 a la venta), cada uno con su precio general: el catálogo de la app y los
+  precios de una ciudad pasan de 13 filas a 26 o más. **Los códigos 12 a 27 (`DEMO26-012` a `DEMO26-027`) son de relleno**, solo
+  para las listas largas: mismos tipos y categorías que los diez títulos de la tanda base, sin significado de negocio.
+- **Cuentas sueltas**: 24 coordinadores (la lista de acompañantes del panel llega a 26) y 30 cuentas de colportor sin campaña
+  (lo que «Añadir colportor» sugiere y busca: la búsqueda pagina de a 10).
+- **26 barrios de Montevideo** como zonas radiales (la lista de zonas de la ciudad).
+- **Colportores del volumen (54)**: un depósito por semana con sus tickets (por validar las dos últimas semanas, validados y
+  rechazados) y sus retiros del coordinador (por confirmar, confirmados y rechazados); cuatro pedidos cada uno (el kit de 26
+  títulos y una reposición, recibidos; un tercero por autorizar o autorizado; un cuarto rechazado o despachado) con su stock;
+  transferencias entre los de una misma ciudad (por autorizar, autorizadas, rechazadas); acompañamientos del coordinador (todas
+  las jornadas de quienes tienen 26 o más); 40 ventas con un monto acordado y su motivo; y sus cuentas al día
+  (`efectivo_en_mano()`, deuda con la casa, depositado).
+- **colportor.demo**: su historia desde el 14/09 (44 jornadas, 87 ventas de las que 54 tienen saldo, 40 entregas pendientes, 91
+  hechas, la agenda de cobranzas, entregas y entrevistas, un depósito por día hábil con sus tickets y retiros, 49 pedidos a la
+  casa editora de los que 39 con saldo) y su cuenta al día.
+
+Inventario de listas (qué tabla o RPC lee cada una; «filas» es lo que mide `--chequeo-listas` en una base local con todo cargado;
+el mínimo es 26):
+
+| Dónde | Lista | Fuente | Filas |
+|---|---|---|---|
+| Panel · Inicio y Ciudades | Ciudades de la campaña | `ciudades_de_campania` | 153 |
+| Panel · Ciudades | Zonas de Montevideo / zonas para asignar / catálogo de ciudades | `zonas_de_ciudad`, `zonas_asignables`, `ciudades_del_catalogo` | 30 / 334 / 197 |
+| Panel · Ciudades (precios) | Precios de una ciudad | `precios_de_la_ciudad` | 29 |
+| Panel · Equipo | Colportores, zonas, becas, acompañamientos por colportor | `colportores_de_campania`, `zonas_por_colportor`, `becas_de_campania`, `acompaniamientos_por_colportor` | 65 |
+| Panel · Equipo | Historial de acompañamientos (campaña / un colportor) y jornadas cerradas de un colportor | `historial_de_acompaniamientos`, `jornadas_cerradas_de_colportor` | 575 / 35 / 35 |
+| Panel · Equipo | Acompañantes y búsqueda para añadir colportor | `acompaniantes_del_panel`, `buscar_candidatos` (páginas de 10) | 26 / 30 |
+| Panel · Cuentas | Cuentas de los colportores | `cuentas_de_campania` | 65 |
+| Panel · Cuentas · Validar tickets | Tickets: todos / por validar / validados / rechazados | `tickets_de_campania` | 184 / 54 / 97 / 33 |
+| Panel · Cuentas · Validar tickets | Retiros: todos / por confirmar / confirmados / rechazados | `retiros_de_campania` | 132 / 38 / 59 / 35 |
+| Panel · Reportes | Horas y ventas por ciudad y colportor; ventas con monto acordado | `horas_por_ciudad_y_colportor`, `ventas_por_ciudad_y_colportor`, `ventas_con_motivo_de_campania` | 400 / 384 / 40 |
+| Panel · Stock | Stock por ciudad y producto | `stock_por_ciudad` | 1.690 |
+| Panel · Pedidos | Pedidos (todos / por autorizar / autorizados / despachados / recibidos / rechazados) | `pedidos_de_campania` | 211 / 30 / 49 / 49 / 54 / 29 |
+| Panel · Pedidos | Transferencias (todas / por autorizar / autorizadas / rechazadas) | `transferencias_de_campania` | 108 / 36 / 39 / 33 |
+| App · Mapa | Ciudades (y mapas sin conexión) y casas | `mis_campania_ciudades()`, `ubicacion` | 153 / 192 |
+| App · Nueva venta y Precios | Catálogo y precios | `producto`, `precio_general` | 26 |
+| App · Jornada | Jornadas y visitas | `jornada`, `visita` | 44 / 307 |
+| App · Ventas y Cobros | Ventas, ventas con saldo, cobros | `venta`, `cobranza` | 87 / 54 / 69 |
+| App · Mi plata | Depósitos | `deposito` | 31 |
+| App · Entregas | Pendientes y hechas (devolución) | `entrega` | 40 / 91 |
+| App · Agenda | Cobranzas, entregas y entrevistas | `agenda` | 54 / 40 / 55 |
+| App · Deuda con la casa | Pedidos con saldo | `mi_deuda_con_la_casa_editora()` | 39 |
+| App · Pedidos y stock | Pedidos a la casa editora, títulos en stock, movimientos | `pedido_casa_editora`, `stock`, `movimiento_stock` | 49 / 26 / 127 |
+
+Lo que **no** se puede sembrar desde la nube: las personas, las notas, los posibles duplicados y el «con quién» (viven solo en
+el teléfono, ADR-018: el teléfono las crea y la nube solo guarda `espacio_persona`) y el historial del centro de notificaciones
+(lo arma la app al recibir cada aviso). Esas listas se llenan usando la app. En el panel, **Cuentas, Stock y Pedidos todavía leen
+datos simulados del propio front** (V2, después del 20/11: backend-supabase#101 y #104); el seed ya deja las filas que esas RPC
+devolverán, así que ahí se verán largas cuando se conecten.
+
+**Límite conocido**: las 10 inscripciones de la demo base quedan con el alta del día de la carga (ver «Limitación conocida (11/11)»):
+`tickets_de_campania`, `retiros_de_campania` y `pedidos_de_campania` no las cuentan hasta que `corregir-fechas-de-alta-demo.sql`
+(en `develop`) llegue a esta base. Las listas largas salen de los 54 colportores del volumen y de colportor.demo, que sí tienen el
+alta en su primer día.
+
 ## Entrar al panel y ver la demo
 
 El generador deja las dos campañas a cargo de su propio coordinador (`demo.gustavo.ferreira`), que no tiene contraseña.
@@ -119,5 +190,5 @@ corrección (alta y tramo en la fecha de inicio de cada inscripción) no es adit
 
 ## Qué NO se puede retirar del todo
 
-Un depósito ya validado no se da de baja ni desde el servidor (trigger `DP001`, migración 0129). El retiro lo deja
-vivo y lo cuenta en el resumen ("AVISO …"). Quitarlos es una decisión de dominio, no de este script.
+Un depósito ya validado no se da de baja ni desde el servidor (trigger `DP001`, migración 0129), y un retiro rechazado queda
+como historia. El retiro los deja vivos y los cuenta en el resumen ("AVISO …"). Quitarlos es una decisión de dominio, no de este script.

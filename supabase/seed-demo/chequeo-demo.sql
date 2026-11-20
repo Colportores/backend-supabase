@@ -35,6 +35,8 @@ conteos as (
   union all select 23, 'cuentas de colportor', count(*) from public.cuenta_colportor, d where id::text like d.pre
   union all select 24, 'cuentas de alquiler', count(*) from public.cuenta_alquiler c
          where c.usuario_id in (select id from public.usuario, d where id::text like d.pre)
+  union all select 25, 'transferencias de stock', count(*) from public.transferencia_stock, d where id::text like d.pre
+  union all select 26, 'acompañamientos de jornadas', count(*) from public.jornada_acompaniante, d where id::text like d.pre
 ),
 reglas as (
   -- 101: toda venta suma sus renglones, salvo las que llevan motivo del monto
@@ -61,12 +63,12 @@ reglas as (
                                         where c.venta_id = v.id and c.anulado_at is null and c.deleted_at is null)), 0), true
     from public.venta v, d where v.id::text like d.pre
   union all
-  -- 105: el stock de cada colportor es lo recibido menos lo entregado, y nunca queda negativo
+  -- 105: el stock de cada colportor es lo que entró (pedidos, transferencias, ajustes, devoluciones) menos lo que salió, y nunca queda negativo
   select 105, 'filas de stock que no cierran con sus movimientos o negativas (debe ser 0)', count(*), count(*) = 0
     from public.stock s, d
    where s.id::text like d.pre
      and (s.cantidad_disponible < 0
-          or s.cantidad_disponible <> (select coalesce(sum(case when m.tipo = 'ENTRADA_PEDIDO' then m.cantidad when m.tipo = 'SALIDA_ENTREGA' then -m.cantidad else 0 end), 0)
+          or s.cantidad_disponible <> (select coalesce(sum(case when m.tipo like 'ENTRADA%' or m.tipo = 'AJUSTE_ENTRADA' then m.cantidad else -m.cantidad end), 0)
                                          from public.movimiento_stock m
                                         where m.usuario_id = s.usuario_id and m.producto_id = s.producto_id and m.deleted_at is null))
   union all
@@ -74,6 +76,7 @@ reglas as (
     from public.entrega e, d where e.id::text like d.pre and e.stock_inconsistente
   union all
   -- 107: la deuda con la casa editora = pedidos autorizados/recibidos - depósitos validados - tarjetas validadas
+  --      + transferencias autorizadas que recibió - las que dio (trasladar_deuda_casa_editora)
   select 107, 'cuentas cuya deuda no cierra con pedidos y pagos (debe ser 0)', count(*), count(*) = 0
     from public.cuenta_colportor cu, d
    where cu.id::text like d.pre
@@ -83,6 +86,10 @@ reglas as (
                                where dp.colportor_id = cu.usuario_id and dp.deleted_at is null and dp.concepto = 'CASA_EDITORA' and dp.validado_en is not null)
                            - (select coalesce(sum(t.monto), 0) from public.ticket t
                                where t.usuario_id = cu.usuario_id and t.deleted_at is null and t.tipo = 'COBRO_TARJETA' and t.estado = 'VALIDADO')
+                           + (select coalesce(sum(tr.monto_deuda), 0) from public.transferencia_stock tr
+                               where tr.destino_id = cu.usuario_id and tr.deleted_at is null and tr.estado = 'AUTORIZADO')
+                           - (select coalesce(sum(tr.monto_deuda), 0) from public.transferencia_stock tr
+                               where tr.origen_id = cu.usuario_id and tr.deleted_at is null and tr.estado = 'AUTORIZADO')
   union all
   select 108, 'deuda total con la casa editora de los colportores de la demo (centavos)', coalesce(sum(cu.deuda_total), 0), true
     from public.cuenta_colportor cu, d where cu.id::text like d.pre
