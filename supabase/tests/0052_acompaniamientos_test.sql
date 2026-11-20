@@ -254,24 +254,24 @@ update public.jornada set acompaniante_id = null where id = pg_temp.u('f7');
 
 select is((select array_agg(p order by p collate "C") from (
             select format('%s:%s:%s', f, has_function_privilege(r, f, 'execute'), r) p
-              from unnest(array['public.acompaniamientos_por_colportor(uuid)',
-                                'public.historial_de_acompaniamientos(uuid,uuid)',
+              from unnest(array['public.acompaniamientos_por_colportor(uuid,integer,integer)',
+                                'public.historial_de_acompaniamientos(uuid,uuid,integer,integer)',
                                 'public.agregar_acompaniamiento(uuid,uuid,uuid,text)',
-                                'public.jornadas_cerradas_de_colportor(uuid,uuid)']) f
+                                'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer)']) f
              cross join unnest(array['anon','authenticated','service_role']) r) q),
           array[
-            'public.acompaniamientos_por_colportor(uuid):f:anon',
-            'public.acompaniamientos_por_colportor(uuid):f:service_role',
-            'public.acompaniamientos_por_colportor(uuid):t:authenticated',
+            'public.acompaniamientos_por_colportor(uuid,integer,integer):f:anon',
+            'public.acompaniamientos_por_colportor(uuid,integer,integer):f:service_role',
+            'public.acompaniamientos_por_colportor(uuid,integer,integer):t:authenticated',
             'public.agregar_acompaniamiento(uuid,uuid,uuid,text):f:anon',
             'public.agregar_acompaniamiento(uuid,uuid,uuid,text):f:service_role',
             'public.agregar_acompaniamiento(uuid,uuid,uuid,text):t:authenticated',
-            'public.historial_de_acompaniamientos(uuid,uuid):f:anon',
-            'public.historial_de_acompaniamientos(uuid,uuid):f:service_role',
-            'public.historial_de_acompaniamientos(uuid,uuid):t:authenticated',
-            'public.jornadas_cerradas_de_colportor(uuid,uuid):f:anon',
-            'public.jornadas_cerradas_de_colportor(uuid,uuid):f:service_role',
-            'public.jornadas_cerradas_de_colportor(uuid,uuid):t:authenticated'],
+            'public.historial_de_acompaniamientos(uuid,uuid,integer,integer):f:anon',
+            'public.historial_de_acompaniamientos(uuid,uuid,integer,integer):f:service_role',
+            'public.historial_de_acompaniamientos(uuid,uuid,integer,integer):t:authenticated',
+            'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer):f:anon',
+            'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer):f:service_role',
+            'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer):t:authenticated'],
           'las cuatro son solo para authenticated');
 select is((select array_agg(format('%s:%s', r, has_function_privilege(r, 'public.jornadas_acompaniadas_de_campania(uuid)', 'execute')) order by r)
              from unnest(array['anon','authenticated','service_role']) r),

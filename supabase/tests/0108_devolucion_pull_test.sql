@@ -65,8 +65,12 @@ returns text language sql as $$
 $$;
 -- «Hace 2 horas»: la fecha de las devoluciones (0172: anular exige las 24 h del teléfono con el reloj de verdad, y la
 -- fecha de una devolución no se cambia con sesión, DV004).
+-- La hora se fija una sola vez: este archivo no corre en una transacción, así que un now() por sentencia cambiaba de
+-- segundo entre el push y la comparación (flake).
+create temp table t82_hora as select date_trunc('second', now() - interval '2 hours') as f;
+grant select on t82_hora to public;
 create or replace function pg_temp.f() returns timestamptz language sql stable as $$
-  select date_trunc('second', now() - interval '2 hours');
+  select f from pg_temp.t82_hora;
 $$;
 create or replace function pg_temp.dev(p_id uuid, p_venta uuid, p_items jsonb)
 returns jsonb language sql as $$
