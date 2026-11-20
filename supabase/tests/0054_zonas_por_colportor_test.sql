@@ -318,14 +318,14 @@ select is((select array(select k from jsonb_object_keys(
           'cada zona anterior trae la zona, su ciudad, las fechas y dos marcas: ni quién la asignó ni la forma');
 select pg_temp.actuar_como_servidor();
 
-select is((select array_agg(format('%s:%s', r, has_function_privilege(r, 'public.zonas_por_colportor(uuid)', 'execute')) order by r)
+select is((select array_agg(format('%s:%s', r, has_function_privilege(r, 'public.zonas_por_colportor(uuid, integer, integer)', 'execute')) order by r)
              from unnest(array['anon','authenticated','service_role']) r),
           array['anon:f','authenticated:t','service_role:f'],
           'solo authenticated la ejecuta');
 select is((select prosecdef and proconfig = array['search_path=""'] from pg_proc
-            where oid = 'public.zonas_por_colportor(uuid)'::regprocedure),
+            where oid = 'public.zonas_por_colportor(uuid, integer, integer)'::regprocedure),
           true, 'es SECURITY DEFINER con search_path vacío');
-select ok(obj_description('public.zonas_por_colportor(uuid)'::regprocedure, 'pg_proc') is not null,
+select ok(obj_description('public.zonas_por_colportor(uuid, integer, integer)'::regprocedure, 'pg_proc') is not null,
           'tiene su comment on');
 
 -- ---------------------------------------------------------------------------

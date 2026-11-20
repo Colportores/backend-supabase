@@ -245,7 +245,7 @@ select is((select obj_description('public.tg_ciudad_departamento_obligatorio()':
 -- ---------------------------------------------------------------------------
 -- 2. La forma de las dos lecturas y sus privilegios (los de la 0033)
 -- ---------------------------------------------------------------------------
-select is((select pg_get_function_result('public.ciudades_de_campania(uuid)'::regprocedure)),
+select is((select pg_get_function_result('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure)),
           'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, departamento text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
           'ciudades_de_campania(): la forma de la respuesta, con el departamento después del nombre');
 select is((select pg_get_function_result('public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
@@ -255,26 +255,26 @@ select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.
           'quedó una sola versión de cada función (la vieja se eliminó)');
 
 select is((select string_agg(f || ':' || r, ',' order by f, r)
-             from unnest(array['public.ciudades_de_campania(uuid)', 'public.ciudades_del_catalogo(uuid,text)']) f,
+             from unnest(array['public.ciudades_de_campania(uuid,integer,integer)', 'public.ciudades_del_catalogo(uuid,text)']) f,
                   unnest(array['anon', 'authenticated', 'service_role']) r
             where has_function_privilege(r, f::regprocedure, 'execute')),
-          'public.ciudades_de_campania(uuid):authenticated,public.ciudades_del_catalogo(uuid,text):authenticated',
+          'public.ciudades_de_campania(uuid,integer,integer):authenticated,public.ciudades_del_catalogo(uuid,text):authenticated',
           'solo authenticated ejecuta las dos, como en la 0033: ni anon ni service_role');
 select is((select count(*)::int
              from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)
               and a.grantee = 0), 0, 'y public no las ejecuta');
 select is((select bool_and(p.prosecdef) from pg_proc p
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
           true, 'siguen siendo SECURITY DEFINER');
 select is((select bool_and(p.provolatile = 'v') from pg_proc p
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
           true, 'y VOLATILE (supabase-js las manda por POST, como antes)');
 select is((select bool_and(p.proconfig = array['search_path=""']) from pg_proc p
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
           true, 'con search_path vacío');
 select is((select count(*)::int from pg_proc p
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure, 'public.ciudades_del_catalogo(uuid,text)'::regprocedure)
               and obj_description(p.oid, 'pg_proc') like '%0066%'), 2, 'las dos tienen su comentario al día');
 
 -- ---------------------------------------------------------------------------

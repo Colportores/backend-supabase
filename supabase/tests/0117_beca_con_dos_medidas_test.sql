@@ -247,11 +247,11 @@ select pg_temp.actuar_como_servidor();
 -- Las funciones: privilegios.
 select ok(has_function_privilege('authenticated', 'public.elegir_carrera(uuid, uuid, uuid)', 'execute')
           and has_function_privilege('authenticated', 'public.asignar_beca(uuid, uuid[], text)', 'execute')
-          and has_function_privilege('authenticated', 'public.becas_de_campania(uuid)', 'execute'),
+          and has_function_privilege('authenticated', 'public.becas_de_campania(uuid, integer, integer)', 'execute'),
           'authenticated ejecuta las tres RPC');
 select ok(not has_function_privilege('anon', 'public.elegir_carrera(uuid, uuid, uuid)', 'execute')
           and not has_function_privilege('anon', 'public.asignar_beca(uuid, uuid[], text)', 'execute')
-          and not has_function_privilege('anon', 'public.becas_de_campania(uuid)', 'execute')
+          and not has_function_privilege('anon', 'public.becas_de_campania(uuid, integer, integer)', 'execute')
           and not has_function_privilege('service_role', 'public.asignar_beca(uuid, uuid[], text)', 'execute'),
           'anon y service_role NO las ejecutan');
 select is((select count(*)::int
@@ -259,7 +259,7 @@ select is((select count(*)::int
             where a.grantee = 0 and a.privilege_type = 'EXECUTE'
               and p.oid in ('public.elegir_carrera(uuid, uuid, uuid)'::regprocedure,
                             'public.asignar_beca(uuid, uuid[], text)'::regprocedure,
-                            'public.becas_de_campania(uuid)'::regprocedure,
+                            'public.becas_de_campania(uuid, integer, integer)'::regprocedure,
                             'public.exigir_coordinador_de_campania_para_beca(uuid)'::regprocedure,
                             'public.tg_usuario_carrera_servidor()'::regprocedure,
                             'public.tg_usuario_carrera_auditar()'::regprocedure,

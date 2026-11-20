@@ -155,19 +155,19 @@ select is((select count(*) from pg_proc where pronamespace = 'public'::regnamesp
               and proname in ('historial_de_acompaniamientos', 'jornadas_cerradas_de_colportor', 'agregar_acompaniamiento')),
           3::bigint, 'hay una sola historial_de_acompaniamientos, una jornadas_cerradas_de_colportor y una agregar_acompaniamiento');
 select is((select array_agg(format('%s:%s:%s', f, r, has_function_privilege(r, f, 'execute')::text) order by f, r)
-             from unnest(array['public.historial_de_acompaniamientos(uuid,uuid)',
-                               'public.jornadas_cerradas_de_colportor(uuid,uuid)',
+             from unnest(array['public.historial_de_acompaniamientos(uuid,uuid,integer,integer)',
+                               'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer)',
                                'public.agregar_acompaniamiento(uuid,uuid,uuid,text)']) f,
                   unnest(array['anon','authenticated','service_role']) r),
           array['public.agregar_acompaniamiento(uuid,uuid,uuid,text):anon:false',
                 'public.agregar_acompaniamiento(uuid,uuid,uuid,text):authenticated:true',
                 'public.agregar_acompaniamiento(uuid,uuid,uuid,text):service_role:false',
-                'public.historial_de_acompaniamientos(uuid,uuid):anon:false',
-                'public.historial_de_acompaniamientos(uuid,uuid):authenticated:true',
-                'public.historial_de_acompaniamientos(uuid,uuid):service_role:false',
-                'public.jornadas_cerradas_de_colportor(uuid,uuid):anon:false',
-                'public.jornadas_cerradas_de_colportor(uuid,uuid):authenticated:true',
-                'public.jornadas_cerradas_de_colportor(uuid,uuid):service_role:false'],
+                'public.historial_de_acompaniamientos(uuid,uuid,integer,integer):anon:false',
+                'public.historial_de_acompaniamientos(uuid,uuid,integer,integer):authenticated:true',
+                'public.historial_de_acompaniamientos(uuid,uuid,integer,integer):service_role:false',
+                'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer):anon:false',
+                'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer):authenticated:true',
+                'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer):service_role:false'],
           'solo authenticated ejecuta las tres, como antes');
 select is((select bool_and(prosecdef and proconfig = array['search_path=""']) from pg_proc
             where pronamespace = 'public'::regnamespace
@@ -178,10 +178,10 @@ select is((select proargnames::text[] from pg_proc where oid = 'public.agregar_a
                 'acompaniante_id','acompaniante_nombre','acompaniante_apellido','ya_estaba',
                 'acompaniamiento_origen','acompaniamiento_nota'],
           'agregar_acompaniamiento() conserva su firma y sus columnas (quien la llama no se rompe)');
-select is((select pg_get_function_result(oid) from pg_proc where oid = 'public.historial_de_acompaniamientos(uuid,uuid)'::regprocedure),
+select is((select pg_get_function_result(oid) from pg_proc where oid = 'public.historial_de_acompaniamientos(uuid,uuid,integer,integer)'::regprocedure),
           'TABLE(jornada_id uuid, colportor_id uuid, nombre text, apellido text, dia date, horas numeric, en_curso boolean, acompaniante_id uuid, acompaniante_nombre text, acompaniante_apellido text, acompaniamiento_origen text, acompaniamiento_nota text, acompaniamiento_cargado_por uuid, acompaniamiento_cargado_por_nombre text, acompaniamiento_cargado_por_apellido text)',
           'el historial suma las tres columnas al final');
-select is((select pg_get_function_result(oid) from pg_proc where oid = 'public.jornadas_cerradas_de_colportor(uuid,uuid)'::regprocedure),
+select is((select pg_get_function_result(oid) from pg_proc where oid = 'public.jornadas_cerradas_de_colportor(uuid,uuid,integer,integer)'::regprocedure),
           'TABLE(jornada_id uuid, dia date, horas numeric, acompaniante_id uuid, acompaniante_nombre text, acompaniante_apellido text, acompaniamiento_origen text, acompaniamiento_nota text, acompaniamiento_cargado_por uuid, acompaniamiento_cargado_por_nombre text, acompaniamiento_cargado_por_apellido text)',
           'y las jornadas cerradas, también');
 
