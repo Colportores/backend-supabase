@@ -168,11 +168,12 @@ Al registrarse, la persona acepta los Términos y la Política de Privacidad (HU
 
 La cédula que la persona pone al registrarse (HU-AUTH-001) la necesita Administración para identificarla (becas, pagos, casa editora). Decisión de Cristian del 11/11 («Cédula adm.», docs-organizacion#184): **ficha propia en el servidor**.
 
-- **Cómo llega:** el móvil la manda en los metadatos del registro, `signUp(data: {'cedula': …})`, como siempre. El trigger del registro (`tg_auth_usuario_nuevo`) la copia a `public.ficha_administrativa` (una fila por cuenta), sin los espacios de los extremos. Sin la clave, null o en blanco no se crea la ficha y el registro sigue igual.
+- **Cómo llega:** el móvil la manda en los metadatos del registro, `signUp(data: {'cedula': …})`, como siempre. El trigger del registro (`tg_auth_usuario_nuevo`) la copia a `public.ficha_administrativa` (una fila por cuenta). Sin la clave, null o en blanco no se crea la ficha y el registro sigue igual.
+- **Forma (`0190`, decisión del orquestador del 11/11, seguridad barata):** se guarda en **solo dígitos** (`cedula_normalizada()` saca puntos, guion y espacios) y tienen que quedar **7 u 8**, la misma regla de la app. Si no, el registro se rechaza con **`CD005`** («La cédula no es válida: tienen que ser 7 u 8 dígitos, con o sin puntos y guion. Revisala y volvé a registrarte.»; el aviso no repite lo que llegó) y no se crea ni la cuenta ni el perfil. El CHECK de la tabla exige `^[0-9]{7,8}$`.
 - **Solo de la nube:** `ficha_administrativa` no está en `sync.entidad` (no baja al teléfono) y no es una columna de `usuario`. Es dato personal: no entra al `audit_log` (su CHECK ya rechaza la clave `cedula`, 0073) y la ficha no registra eventos.
 - **Quién la lee:** solo Administración (rol ADMIN), por `cedula_de_la_cuenta(p_usuario_id)` → la cédula o null (sin ficha, cuenta inexistente o ficha dada de baja). Cualquier otra sesión, `42501`. Nadie con su JWT tiene privilegios sobre la tabla (ni el ADMIN directo); la escriben el trigger del registro o el servidor (`service_role`).
 - **Rocío no la cambia sola:** cambiar después los metadatos de Auth (`auth.updateUser`) no toca la ficha; el trigger corre solo al crear la cuenta.
-- Pendientes de decisión (ver el PR): si el servidor valida o normaliza la forma, completar las cuentas que ya existían y la corrección por Administración.
+- Las cuentas de antes de la `0188` siguen sin ficha (datos de demo hasta diciembre); hasta la pantalla de Administración, una corrección se hace a mano con `service_role`, en solo dígitos.
 
 ## Inscripción en campaña
 
