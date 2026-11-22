@@ -109,10 +109,10 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
 
 -- Catálogo: un libro (11), una revista (12), un producto suelto (13). El combo «Pack Familiar» (d0) lleva 1 libro
 -- y 2 revistas; el combo d1 no tiene precio en ningún lado.
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro p1 combos61', 'LIBRO'),
-  (pg_temp.u('12'), 'Revista p2 combos61', 'REVISTA'),
-  (pg_temp.u('13'), 'Libro p3 combos61', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro p1 combos61', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Revista p2 combos61', 'REVISTAS'),
+  (pg_temp.u('13'), 'Libro p3 combos61', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values
   (pg_temp.u('d0'), 'Pack Familiar combos61'),
   (pg_temp.u('d1'), 'Combo sin precio combos61');

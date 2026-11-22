@@ -92,9 +92,9 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
 insert into public.campania_colportor (campania_id, usuario_id) values
   (pg_temp.u('e1'), pg_temp.u('b1')),
   (pg_temp.u('e2'), pg_temp.u('b2'));
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('a1'), 'Conflicto de los Siglos general144', 'LIBRO'),
-  (pg_temp.u('a2'), 'Otro libro general144', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('a1'), 'Conflicto de los Siglos general144', 'ESPIRITUALES'),
+  (pg_temp.u('a2'), 'Otro libro general144', 'ESPIRITUALES');
 insert into public.precio_general (id, producto_id, precio_venta, valido_desde, valido_hasta) values
   (pg_temp.u('01'), pg_temp.u('a1'), 45000, '2026-01-01', null),
   (pg_temp.u('02'), pg_temp.u('a2'), 30000, '2026-01-01', null),

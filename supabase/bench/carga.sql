@@ -133,8 +133,8 @@ from (
 where ep.rn <= 1000;
 
 \echo '-- ventas (400 por colportor) con su detalle'
-insert into public.producto (id, nombre, tipo)
-select '01920000-0000-7000-8000-0000000be0e1', 'BENCH libro', 'LIBRO'
+insert into public.producto (id, nombre, categoria)
+select '01920000-0000-7000-8000-0000000be0e1', 'BENCH libro', 'ESPIRITUALES'
 where not exists (select 1 from public.producto where id = '01920000-0000-7000-8000-0000000be0e1');
 
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)

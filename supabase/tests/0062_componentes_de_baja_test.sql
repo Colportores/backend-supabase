@@ -69,11 +69,11 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
 
 -- Productos p1..p4; los combos t0 (sano), t1 (un componente de baja), t2 (dos), t3 (el vínculo de baja se
 -- quitó del combo), t4 (sin componentes) y t5 (dado de baja entero).
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro p1 baja62', 'LIBRO'),
-  (pg_temp.u('12'), 'Revista p2 baja62', 'REVISTA'),
-  (pg_temp.u('13'), 'Revista p3 baja62', 'REVISTA'),
-  (pg_temp.u('14'), 'Libro p4 baja62', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro p1 baja62', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Revista p2 baja62', 'REVISTAS'),
+  (pg_temp.u('13'), 'Revista p3 baja62', 'REVISTAS'),
+  (pg_temp.u('14'), 'Libro p4 baja62', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values
   (pg_temp.u('d0'), 'Combo t0 sano baja62'),
   (pg_temp.u('d1'), 'Combo t1 un componente de baja baja62'),

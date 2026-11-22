@@ -85,8 +85,8 @@ insert into public.campania_colportor (campania_id, usuario_id, created_at) valu
   (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '40 days'),
   (pg_temp.u('e1'), pg_temp.u('b2'), now() - interval '40 days'),
   (pg_temp.u('e1'), pg_temp.u('b3'), now() - interval '40 days');
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro 1 pull149', 'LIBRO'), (pg_temp.u('12'), 'Libro 2 pull149', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro 1 pull149', 'ESPIRITUALES'), (pg_temp.u('12'), 'Libro 2 pull149', 'ESPIRITUALES');
 
 -- T1: la arma la coordinadora (sin solicitante), b1 da y b2 recibe. T2: la pidió b3, b1 da y b3 recibe.
 -- T3: b2 da y b3 recibe (no es de b1).

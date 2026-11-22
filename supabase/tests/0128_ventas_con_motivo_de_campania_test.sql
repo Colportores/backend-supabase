@@ -169,9 +169,9 @@ insert into public.espacio (id, ubicacion_id) values (pg_temp.u('f2'), pg_temp.u
 insert into public.espacio_persona (id, espacio_id, persona_id)
 values (pg_temp.u('f3'), pg_temp.u('f2'), pg_temp.u('f4'));
 
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro p1 motivo', 'LIBRO'),
-  (pg_temp.u('12'), 'Revista p2 motivo', 'REVISTA');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro p1 motivo', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Revista p2 motivo', 'REVISTAS');
 
 -- Ventas (monto en centavos; horas locales de Montevideo, UTC-3). El id (2 caracteres) dice cuál es.
 --   b1: 10 lun 07/09 09:00, total 85000 con motivo «descuento por pago en efectivo» y ítems de 50000 + 39000

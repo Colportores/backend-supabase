@@ -42,10 +42,10 @@ $$;
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at) values
   ('01920000-0000-7000-8000-0000000070b1', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'pull70-b1@example.com', 'x', now(), now(), now());
-insert into public.producto (id, nombre, tipo, codigo_editor) values
-  ('01920000-0000-7000-8000-0000000070d1', 'Prueba pull 70 A', 'LIBRO', 'EDI-001'),
-  ('01920000-0000-7000-8000-0000000070d2', 'Prueba pull 70 B', 'LIBRO', null),
-  ('01920000-0000-7000-8000-0000000070d3', 'Prueba pull 70 C', 'REVISTA', '00042');
+insert into public.producto (id, nombre, categoria, codigo_editor) values
+  ('01920000-0000-7000-8000-0000000070d1', 'Prueba pull 70 A', 'ESPIRITUALES', 'EDI-001'),
+  ('01920000-0000-7000-8000-0000000070d2', 'Prueba pull 70 B', 'ESPIRITUALES', null),
+  ('01920000-0000-7000-8000-0000000070d3', 'Prueba pull 70 C', 'REVISTAS', '00042');
 
 -- ---------------------------------------------------------------------------
 -- 1. El primer pull trae el código y el parámetro

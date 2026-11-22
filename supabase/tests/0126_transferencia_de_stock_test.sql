@@ -205,10 +205,10 @@ update public.zona set deleted_at = now() where id = pg_temp.u('d2');
 update public.campania_colportor set deleted_at = '2026-10-21 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b3');
 
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('91'), 'Libro Uno',   'LIBRO',    1500),
-  (pg_temp.u('92'), 'Libro Dos',   'LIBRO',    2500),
-  (pg_temp.u('93'), 'Revista Uno', 'REVISTA',  200),
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('91'), 'Libro Uno',   'ESPIRITUALES',    1500),
+  (pg_temp.u('92'), 'Libro Dos',   'ESPIRITUALES',    2500),
+  (pg_temp.u('93'), 'Revista Uno', 'REVISTAS',  200),
   (pg_temp.u('94'), 'Sin Costo',   'MATERIAL', null),
   (pg_temp.u('95'), 'Gratis',      'MATERIAL', 0);
 
@@ -481,10 +481,10 @@ select is((select t.ciudad_nombre from jsonb_to_recordset(pg_temp.lista(pg_temp.
 
 select is(pg_temp.lineas(pg_temp.u('a1'), '11'),
           jsonb_build_array(
-            jsonb_build_object('producto_id', pg_temp.u('92'), 'producto_nombre', 'Libro Dos', 'producto_tipo', 'LIBRO',
+            jsonb_build_object('producto_id', pg_temp.u('92'), 'producto_nombre', 'Libro Dos',
                                'cantidad', 1, 'precio_unitario', 2500, 'subtotal', 2500,
                                'tiene_quien_da', 3, 'debe_entregar_quien_recibe', 0, 'tiene_quien_recibe', 0),
-            jsonb_build_object('producto_id', pg_temp.u('91'), 'producto_nombre', 'Libro Uno', 'producto_tipo', 'LIBRO',
+            jsonb_build_object('producto_id', pg_temp.u('91'), 'producto_nombre', 'Libro Uno',
                                'cantidad', 2, 'precio_unitario', 1500, 'subtotal', 3000,
                                'tiene_quien_da', 5, 'debe_entregar_quien_recibe', 3, 'tiene_quien_recibe', 1)),
           'las líneas por nombre, con el costo, el stock de los dos y lo que debe entregar quien recibe (la línea dada de baja, la entrega hecha y la venta de otro no cuentan)');

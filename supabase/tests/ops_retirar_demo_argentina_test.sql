@@ -69,7 +69,7 @@ values (pg_temp.u('bf'), pg_temp.u('b8'), pg_temp.u('b7'), now(), 'RECHAZO', pg_
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id)
 values (pg_temp.u('b9'), pg_temp.u('b8'), 'T-UY', 6500, now(), pg_temp.u('a2'));
 insert into public.cobranza (id, venta_id, monto, medio, fecha) values (pg_temp.u('ba'), pg_temp.u('b9'), 1000, 'EFECTIVO', now());
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('bb'), 'Libro UY t216', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('bb'), 'Libro UY t216', 'ESPIRITUALES');
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal)
 values (pg_temp.u('be'), pg_temp.u('b9'), pg_temp.u('bb'), 1, 4500, 4500);
 insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, origen)
@@ -97,8 +97,8 @@ insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, cre
   (pg_temp.u('c6'), pg_temp.u('c2'), pg_temp.u('a3'), pg_temp.u('c4'), now() - interval '9 days');
 
 -- El catálogo de la demo, con sus ids de siembra.
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.dede('8005', 1), 'Libro AR 1 t216', 'LIBRO'), (pg_temp.dede('8005', 2), 'Libro AR 2 t216', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.dede('8005', 1), 'Libro AR 1 t216', 'ESPIRITUALES'), (pg_temp.dede('8005', 2), 'Libro AR 2 t216', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values (pg_temp.dede('8006', 1), 'Colección AR t216');
 insert into public.producto_coleccion (id, producto_id, coleccion_id)
 values (pg_temp.u('d8'), pg_temp.dede('8005', 1), pg_temp.dede('8006', 1));

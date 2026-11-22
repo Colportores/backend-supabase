@@ -192,10 +192,10 @@ update public.campania_colportor set tramos_afuera = array['[2026-09-01 00:00:00
 update public.campania_colportor set deleted_at = '2026-10-21 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b3');
 
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('91'), 'Libro Uno',   'LIBRO',   1500),
-  (pg_temp.u('92'), 'Libro Dos',   'LIBRO',   2500),
-  (pg_temp.u('93'), 'Revista Uno', 'REVISTA', 200);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('91'), 'Libro Uno',   'ESPIRITUALES',   1500),
+  (pg_temp.u('92'), 'Libro Dos',   'ESPIRITUALES',   2500),
+  (pg_temp.u('93'), 'Revista Uno', 'REVISTAS', 200);
 
 -- Lo que tiene b1 de cada producto (el de la Revista está dado de baja: cuenta como cero).
 insert into public.stock (usuario_id, producto_id, cantidad_disponible, deleted_at) values
@@ -366,7 +366,7 @@ select is((select proargnames from pg_proc where oid = 'public.pedidos_de_campan
                 'unidades_autorizadas','monto_total','monto_autorizado','excede_limite','decidido_en',
                 'motivo_rechazo','deshacer_hasta'], 'pedidos_de_campania: parámetros y columnas');
 select is((select proargnames from pg_proc where oid = 'public.pedido_lineas(uuid)'::regprocedure),
-          array['p_pedido_id','producto_id','producto_nombre','producto_tipo','cantidad','cantidad_autorizada',
+          array['p_pedido_id','producto_id','producto_nombre','cantidad','cantidad_autorizada',
                 'precio_unitario','subtotal','subtotal_autorizado','stock'], 'pedido_lineas: parámetros y columnas');
 select is((select proargnames from pg_proc where oid = 'public.pedido_contexto(uuid)'::regprocedure),
           array['p_pedido_id','numero','colportor_id','nombre','apellido','estado','monto_total','monto_autorizado',
@@ -512,9 +512,9 @@ select is(pg_temp.fila('cd') ->> 'unidades', '6', 'ni sus unidades: 6');
 -- 4. Las líneas
 -- ============================================================================
 select is((select jsonb_agg(l - 'producto_id' order by o) from jsonb_array_elements(pg_temp.lineas(pg_temp.u('a1'), 'c1')) with ordinality t(l, o)),
-          '[{"stock":-2,"cantidad":2,"subtotal":5000,"producto_tipo":"LIBRO","precio_unitario":2500,"producto_nombre":"Libro Dos","subtotal_autorizado":5000,"cantidad_autorizada":null},
-            {"stock":5,"cantidad":4,"subtotal":6000,"producto_tipo":"LIBRO","precio_unitario":1500,"producto_nombre":"Libro Uno","subtotal_autorizado":6000,"cantidad_autorizada":null},
-            {"stock":0,"cantidad":10,"subtotal":2000,"producto_tipo":"REVISTA","precio_unitario":200,"producto_nombre":"Revista Uno","subtotal_autorizado":2000,"cantidad_autorizada":null}]'::jsonb,
+          '[{"stock":-2,"cantidad":2,"subtotal":5000,"precio_unitario":2500,"producto_nombre":"Libro Dos","subtotal_autorizado":5000,"cantidad_autorizada":null},
+            {"stock":5,"cantidad":4,"subtotal":6000,"precio_unitario":1500,"producto_nombre":"Libro Uno","subtotal_autorizado":6000,"cantidad_autorizada":null},
+            {"stock":0,"cantidad":10,"subtotal":2000,"precio_unitario":200,"producto_nombre":"Revista Uno","subtotal_autorizado":2000,"cantidad_autorizada":null}]'::jsonb,
           'las líneas por nombre, con el costo, los subtotales y el stock del colportor (negativo tal cual; el renglón dado de baja, cero)');
 select is(jsonb_array_length(pg_temp.lineas(pg_temp.u('a1'), 'cd')), 2, 'las líneas dadas de baja no salen');
 select is((pg_temp.lineas(pg_temp.u('a1'), 'c2') -> 0 ->> 'cantidad_autorizada'), '1', 'lo autorizado de una línea sale tal cual');

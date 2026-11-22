@@ -68,7 +68,7 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
 insert into public.campania_colportor (campania_id, usuario_id) values
   (pg_temp.u('e1'), pg_temp.u('b1')),
   (pg_temp.u('e2'), pg_temp.u('b2'));
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('a1'), 'Libro precio34', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('a1'), 'Libro precio34', 'ESPIRITUALES');
 insert into public.precio_por_ciudad (id, producto_id, campania_ciudad_id, precio_venta, valido_desde) values
   (pg_temp.u('01'), pg_temp.u('a1'), pg_temp.u('f1'), 25000, '2026-01-01'),
   (pg_temp.u('02'), pg_temp.u('a1'), pg_temp.u('f2'), 27000, '2026-01-01'),

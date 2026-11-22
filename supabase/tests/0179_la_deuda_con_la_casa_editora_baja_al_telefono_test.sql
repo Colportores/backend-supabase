@@ -176,10 +176,10 @@ select pg_temp.u(x.s), r.id
   from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR'), ('b7','COLPORTOR'),
                ('c1','COORDINADOR'), ('ad','ADMIN')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('91'), 'Libro Uno 179',   'LIBRO',   1500),
-  (pg_temp.u('92'), 'Libro Dos 179',   'LIBRO',   2500),
-  (pg_temp.u('93'), 'Revista Uno 179', 'REVISTA', 200);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('91'), 'Libro Uno 179',   'ESPIRITUALES',   1500),
+  (pg_temp.u('92'), 'Libro Dos 179',   'ESPIRITUALES',   2500),
+  (pg_temp.u('93'), 'Revista Uno 179', 'REVISTAS', 200);
 
 -- b1: a1 AUTORIZADO 02/10 (pedido 26000, autorizado 14000); a2 DESPACHADO 15/10 10000; a3 AUTORIZADO 15/10 (mismo día,
 -- número más alto) sin monto autorizado: vale 5000; a4 RECIBIDO 20/10 3000. No cuentan: por autorizar, rechazado,

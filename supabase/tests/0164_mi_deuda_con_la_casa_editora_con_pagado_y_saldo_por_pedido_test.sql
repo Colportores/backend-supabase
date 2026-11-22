@@ -101,10 +101,10 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
   (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '40 days');
 
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('91'), 'Libro Uno',   'LIBRO',   1500),
-  (pg_temp.u('92'), 'Libro Dos',   'LIBRO',   2500),
-  (pg_temp.u('93'), 'Revista Uno', 'REVISTA', 200);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('91'), 'Libro Uno',   'ESPIRITUALES',   1500),
+  (pg_temp.u('92'), 'Libro Dos',   'ESPIRITUALES',   2500),
+  (pg_temp.u('93'), 'Revista Uno', 'REVISTAS', 200);
 
 -- Los pedidos de b1, uno por sentencia para que el número siga el orden en que se escriben.
 --   pa AUTORIZADO 02/10, pedido 26000 y autorizado 14000 (el coordinador lo bajó)

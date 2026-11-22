@@ -120,13 +120,13 @@ update public.usuario set suspendido_en = now() - interval '1 day' where id = pg
 insert into public.campania_colportor (campania_id, usuario_id, created_at, deleted_at) values
   (pg_temp.u('e1'), pg_temp.u('b4'), now() - interval '10 days', now() - interval '1 day');
 
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('d1'), 'Libro uno pedido23', 'LIBRO', 1500),
-  (pg_temp.u('d2'), 'Revista dos pedido23', 'REVISTA', 2000),
-  (pg_temp.u('d3'), 'Libro sin precio pedido23', 'LIBRO', null),
-  (pg_temp.u('d5'), 'Libro cinco pedido23', 'LIBRO', 100);
-insert into public.producto (id, nombre, tipo, precio_base_compra, deleted_at) values
-  (pg_temp.u('d4'), 'Libro de baja pedido23', 'LIBRO', 900, now());
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('d1'), 'Libro uno pedido23', 'ESPIRITUALES', 1500),
+  (pg_temp.u('d2'), 'Revista dos pedido23', 'REVISTAS', 2000),
+  (pg_temp.u('d3'), 'Libro sin precio pedido23', 'ESPIRITUALES', null),
+  (pg_temp.u('d5'), 'Libro cinco pedido23', 'ESPIRITUALES', 100);
+insert into public.producto (id, nombre, categoria, precio_base_compra, deleted_at) values
+  (pg_temp.u('d4'), 'Libro de baja pedido23', 'ESPIRITUALES', 900, now());
 
 insert into public.cuenta_colportor (usuario_id, deuda_total, dinero_por_cobrar) values
   (pg_temp.u('b1'), 12000, 3000), (pg_temp.u('b2'), 500, 0);

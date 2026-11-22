@@ -57,9 +57,9 @@ select pg_temp.u('a1'), r.id from public.rol r where r.codigo = 'ADMIN';
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u('c1'), r.id from public.rol r where r.codigo = 'COORDINADOR';
 
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('d1'), 'Libro sin código', 'LIBRO'),
-  (pg_temp.u('d2'), 'Libro con código', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('d1'), 'Libro sin código', 'ESPIRITUALES'),
+  (pg_temp.u('d2'), 'Libro con código', 'ESPIRITUALES');
 
 -- ===============================================================================
 -- 1. producto.codigo_editor
@@ -93,11 +93,11 @@ select lives_ok($$ select pg_temp.poner_codigo(pg_temp.u('d1'), 'EDI-77') $$, 'p
 select lives_ok($$ select pg_temp.poner_codigo(pg_temp.u('d2'), 'EDI-77') $$, 'p2 toma el mismo: no es único');
 
 -- Alta con el código ya puesto.
-select lives_ok($$ insert into public.producto (id, nombre, tipo, codigo_editor)
-                   values (pg_temp.u('d3'), 'Libro nuevo con código', 'LIBRO', 'EDI-78') $$,
+select lives_ok($$ insert into public.producto (id, nombre, categoria, codigo_editor)
+                   values (pg_temp.u('d3'), 'Libro nuevo con código', 'ESPIRITUALES', 'EDI-78') $$,
                 'un producto nuevo puede nacer con su código');
-select throws_ok($$ insert into public.producto (id, nombre, tipo, codigo_editor)
-                    values (pg_temp.u('d4'), 'Libro con código roto', 'LIBRO', ' mal') $$,
+select throws_ok($$ insert into public.producto (id, nombre, categoria, codigo_editor)
+                    values (pg_temp.u('d4'), 'Libro con código roto', 'ESPIRITUALES', ' mal') $$,
                  '23514', null, 'y el CHECK vale también en el alta');
 
 -- Quién lo escribe: el ADMIN, como el resto del producto (política 0001 §10.1).

@@ -127,20 +127,20 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
 
 -- Catálogo. El sufijo « t47» identifica a los de este test (la base puede tener otros). Prod 04, 05
 -- y 02 son bonificables. Prod 08 está dado de baja; la colección 4 también.
-insert into public.producto (id, nombre, tipo, es_bonificable, deleted_at) values
-  (pg_temp.u('11'), 'Prod 01 t47', 'LIBRO', false, null),
-  (pg_temp.u('12'), 'Prod 02 t47', 'LIBRO', true,  null),
-  (pg_temp.u('13'), 'Prod 03 t47', 'LIBRO', false, null),
-  (pg_temp.u('14'), 'Prod 04 t47', 'LIBRO', true,  null),
-  (pg_temp.u('15'), 'Prod 05 t47', 'LIBRO', true,  null),
-  (pg_temp.u('16'), 'Prod 06 t47', 'LIBRO', false, null),
-  (pg_temp.u('17'), 'Prod 07 t47', 'LIBRO', false, null),
-  (pg_temp.u('18'), 'Prod 08 t47', 'LIBRO', false, now()),
-  (pg_temp.u('19'), 'Prod 09 t47', 'LIBRO', false, null),
-  (pg_temp.u('1a'), 'Prod 10 t47', 'LIBRO', false, null),
-  (pg_temp.u('1b'), 'Prod 11 t47', 'LIBRO', false, null),
-  (pg_temp.u('1c'), 'Gemelo t47',  'LIBRO', false, null),
-  (pg_temp.u('1d'), 'Gemelo t47',  'LIBRO', false, null);
+insert into public.producto (id, nombre, categoria, es_bonificable, deleted_at) values
+  (pg_temp.u('11'), 'Prod 01 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('12'), 'Prod 02 t47', 'BONIFICABLES', true,  null),
+  (pg_temp.u('13'), 'Prod 03 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('14'), 'Prod 04 t47', 'BONIFICABLES', true,  null),
+  (pg_temp.u('15'), 'Prod 05 t47', 'BONIFICABLES', true,  null),
+  (pg_temp.u('16'), 'Prod 06 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('17'), 'Prod 07 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('18'), 'Prod 08 t47', 'ESPIRITUALES', false, now()),
+  (pg_temp.u('19'), 'Prod 09 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('1a'), 'Prod 10 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('1b'), 'Prod 11 t47', 'ESPIRITUALES', false, null),
+  (pg_temp.u('1c'), 'Gemelo t47',  'ESPIRITUALES', false, null),
+  (pg_temp.u('1d'), 'Gemelo t47',  'ESPIRITUALES', false, null);
 insert into public.coleccion (id, nombre, deleted_at) values
   (pg_temp.u('d1'), 'Aaa Col 1 t47', null),
   (pg_temp.u('d2'), 'Aaa Col 2 t47', null),

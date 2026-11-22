@@ -76,9 +76,9 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
   (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '10 days'),
   (pg_temp.u('e1'), pg_temp.u('b2'), now() - interval '10 days');
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('11'), 'Libro 1 t83', 'LIBRO', 700),
-  (pg_temp.u('12'), 'Libro 2 t83', 'LIBRO', 300);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('11'), 'Libro 1 t83', 'ESPIRITUALES', 700),
+  (pg_temp.u('12'), 'Libro 2 t83', 'ESPIRITUALES', 300);
 
 -- ---------------------------------------------------------------------------
 -- 1. Los teléfonos suben: b1 dos pedidos (uno con dos líneas, uno con una), b2 uno

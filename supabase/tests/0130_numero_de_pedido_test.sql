@@ -62,8 +62,8 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
   (pg_temp.u('e1'), pg_temp.u('b1'), now() - interval '10 days'),
   (pg_temp.u('e1'), pg_temp.u('b2'), now() - interval '10 days');
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('d1'), 'Libro uno pedido30', 'LIBRO', 1500);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('d1'), 'Libro uno pedido30', 'ESPIRITUALES', 1500);
 
 -- Tres pedidos cargados por el servidor, con fechas distintas: el a1 el más viejo, el a3 el más nuevo.
 insert into public.pedido_casa_editora (id, colportor_id, estado, monto_total, origen, fecha_pedido) values
