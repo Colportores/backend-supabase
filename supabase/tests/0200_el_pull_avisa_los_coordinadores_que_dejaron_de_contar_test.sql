@@ -67,7 +67,7 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (como postgres). e1: coordinan c1 (el espejo de la columna), c2 a c7 y el ADMIN ad (que no coordina por
--- rol); e2: coordinan c8 y c9. Ana (b1) está inscripta en e1. c4 tiene el rol de coordinador hasta dentro de 3 segundos.
+-- rol); e2: coordinan c8 y c9. Ana (b1) está inscripta en e1. c4 tiene el rol de coordinador por un día y se le vence después del pull inicial.
 -- ---------------------------------------------------------------------------
 select pg_temp.limpiar();
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at,
@@ -83,7 +83,7 @@ select pg_temp.u(x.s), r.id
                ('c9','COORDINADOR'), ('ad','ADMIN')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 insert into public.usuario_rol (usuario_id, rol_id, valido_desde, valido_hasta)
-select pg_temp.u('c4'), r.id, now() - interval '10 days', clock_timestamp() + interval '3 seconds'
+select pg_temp.u('c4'), r.id, now() - interval '10 days', now() + interval '1 day'
   from public.rol r where r.codigo = 'COORDINADOR';
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 aviso200', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30, pg_temp.u('c1')),
@@ -143,9 +143,8 @@ update public.usuario set deleted_at = now() where id = pg_temp.u('c3');
 update public.usuario_rol set deleted_at = now()
  where usuario_id = pg_temp.u('c5') and rol_id = (select id from public.rol where codigo = 'COORDINADOR');
 update public.campania_coordinador set deleted_at = now() where id in (pg_temp.u('f6'), pg_temp.u('f7'));
--- El vencimiento no cambia ninguna fila: se espera a que pase la hora.
-select pg_sleep(greatest(0, extract(epoch from (ur.valido_hasta - clock_timestamp()))) + 0.2)
-  from public.usuario_rol ur where ur.usuario_id = pg_temp.u('c4');
+-- El vencimiento no cambia ninguna fila de campania_coordinador: se adelanta `valido_hasta` después del pull inicial.
+update public.usuario_rol set valido_hasta = clock_timestamp() - interval '1 second' where usuario_id = pg_temp.u('c4');
 select is(public.cuenta_tiene_rol(pg_temp.u('c4'), 'COORDINADOR'), false, 'a c4 ya se le venció el rol');
 
 -- ---------------------------------------------------------------------------
