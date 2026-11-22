@@ -115,11 +115,14 @@ select is(pg_temp.resultados(sync.push(jsonb_build_array(
             pg_temp.job('espacio', 'update', jsonb_build_object('id', pg_temp.u('11'), 'piso', '3'), 1)))),
           array['invalid 42501'], 'ni corrige su espacio');
 
--- Con la inscripción dada de baja no hay gracia (como hoy).
+-- Con la inscripción dada de baja hace más de 15 días no hay gracia (0193: la baja de 15 días o menos
+-- sí la tiene, ver 0193_gracia_de_15_dias_desde_la_baja_test.sql).
 select pg_temp.actuar_como_servidor();
 select pg_temp.terminada_hace(1);
+update public.campania_colportor set deleted_at = now() - interval '16 days'
+ where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b2');
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is(pg_temp.depto('14'), array['invalid 42501'], 'b2, con la inscripción dada de baja, no escribe');
+select is(pg_temp.depto('14'), array['invalid 42501'], 'b2, con la inscripción dada de baja hace 16 días, no escribe');
 
 -- Lo que la gracia no cambia.
 select pg_temp.actuar_como(pg_temp.u('b1'));
@@ -187,7 +190,8 @@ select is(pg_temp.resultados(sync.push(jsonb_build_array(
                         (select sync_version from public.espacio where id = pg_temp.u('16')))))),
           array['accepted'], 'con otra campaña en curso en la ciudad, corregir lo ajeno entra (CG001 es solo de la gracia)');
 select pg_temp.actuar_como_servidor();
-update public.campania_colportor set deleted_at = now() where campania_id = pg_temp.u('e3');
+-- Baja anterior al comienzo de Otoño (empezó hace 10 días): sin la gracia de la baja (0193).
+update public.campania_colportor set deleted_at = now() - interval '16 days' where campania_id = pg_temp.u('e3');
 select pg_temp.actuar_como(pg_temp.u('b1'));
 
 -- Una campaña que todavía no empezó tampoco admite escrituras (como hoy).

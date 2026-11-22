@@ -185,11 +185,11 @@ select pg_temp.u(x.s), x.i::timestamptz, x.f::timestamptz,
 -- dos desde el 03/08 y sin fin, del coordinador a1.
 --   bb: inscripto en Origen desde el 01/08, dado de baja el 15/09 a las 09:00 (Montevideo) y
 --       reasignado a Destino a las 09:30 de ese día. Jornadas: 10/09 4 h (de Origen); 15/09 09:00
---       1 h (empieza justo en el instante de la baja: ya no es de Origen) y 10:00 2 h (después de la
---       baja, el día de la inscripción en Destino: de Destino); 16/09 3 h (de Destino).
+--       1 h (empieza justo en el instante de la baja y antes del alta en Destino: de ninguna, 0197) y
+--       10:00 2 h (después del alta en Destino: de Destino); 16/09 3 h (de Destino).
 --   bc: inscripto en Destino el 09/09 a las 10:00. Jornadas: 07/09 y 08/09 1 h cada una (días
---       anteriores: no cuentan), 09/09 2 h (desde las 08:00, el mismo día: cuenta, el corte es por
---       día), 10/09 3 h.
+--       anteriores: no cuentan), 09/09 2 h (desde las 08:00, el mismo día pero antes de la hora del
+--       alta: no cuenta, el corte es por instante desde la 0197), 10/09 3 h.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'horas-' || s || '@example.com', 'x', now(), now(), now()
@@ -399,7 +399,7 @@ select is(pg_temp.fila('e1', '2026-09-07', '2026-09-16', 'dia', '2026-09-10', 'b
 select is(pg_temp.fila('e1', '2026-09-18', '2026-09-22', 'dia', '2026-09-20', 'b6'),
           'sin fila', 'b6 el 20: después de la baja de la inscripción, no cuenta');
 
--- Cada colportor cuenta desde el día de su inscripción en la campaña (HU-CAM-005: reasignar).
+-- Cada colportor cuenta desde el INSTANTE de su inscripción en la campaña (HU-CAM-005: reasignar; 0197, #162).
 select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bb'),
           '4.00|1|1|0|false|0.00|0', 'bb en Origen: sus 4 h del 10/09, antes de la baja');
 select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bb'),
@@ -407,27 +407,27 @@ select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'semana', '2026-09-14',
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bb'),
           'sin fila', 'bb en Destino: las 4 h del 10/09 son de Origen, no se cuentan dos veces');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bb'),
-          '6.00|3|2|0|false|0.00|0', 'bb en Destino: desde el día de su inscripción (15/09, aunque la jornada empezó antes de la hora) y el 16/09');
+          '5.00|2|2|0|false|0.00|0', 'bb en Destino: desde el instante de su inscripción (15/09 09:30: la de las 09:00 no) y el 16/09');
 select is((select sum(horas) from (
              select horas from public.horas_por_ciudad_y_colportor(pg_temp.u('e7'), '2026-09-07', '2026-09-20', 'semana', null, array[pg_temp.u('bb')])
              union all
              select horas from public.horas_por_ciudad_y_colportor(pg_temp.u('e8'), '2026-09-07', '2026-09-20', 'semana', null, array[pg_temp.u('bb')])
            ) t),
-          10.00, 'la reasignación no duplica: Origen + Destino suman las 10 h que trabajó bb, ni una más (la jornada justo en el instante de la baja es de Destino)');
+          9.00, 'la reasignación no duplica: Origen + Destino suman 9 h de las 10 que trabajó bb; la hora de las 09:00 (desde la baja de Origen, antes del alta en Destino a las 09:30) no es de ninguna');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-15', 'bb'),
-          '3.00|2|1|0|false|0.00|0', 'por día: el 15/09 (día de la inscripción) cuenta en Destino, también la jornada que empezó justo en la baja');
+          '2.00|1|1|0|false|0.00|0', 'por día: el 15/09 cuenta en Destino desde la hora de la inscripción (09:30); la que empezó justo en la baja de Origen no');
 select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'dia', '2026-09-15', 'bb'),
           'sin fila', 'por día: el 15/09, jornada posterior a la baja, no cuenta en Origen');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
-          '5.00|2|2|0|false|0.00|0', 'bc, inscripto el 09/09 a las 10:00: no cuenta el 07/09; el 09/09 desde las 08:00 sí (el corte es por día) y el 10/09');
+          '3.00|1|1|0|false|0.00|0', 'bc, inscripto el 09/09 a las 10:00: no cuenta el 07/09 ni el 09/09 desde las 08:00 (antes de la hora del alta); sí el 10/09');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bc'),
-          '0.00|0|0|0|false|5.00|2', 'bc: la semana siguiente compara contra lo que sí cuenta');
+          '0.00|0|0|0|false|3.00|1', 'bc: la semana siguiente compara contra lo que sí cuenta');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-07', 'bc'),
           'sin fila', 'bc el 07/09: antes de su inscripción, sin fila');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-08', 'bc'),
           'sin fila', 'bc el 08/09, el día anterior a su inscripción: sin fila');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'mes', '2026-09-01', 'bc'),
-          '5.00|2|2|0|false|0.00|0', 'por mes: también desde el día de la inscripción');
+          '3.00|1|1|0|false|0.00|0', 'por mes: también desde el instante de la inscripción');
 
 -- La zona horaria de la sesión no mueve el día.
 select set_config('TimeZone', 'Pacific/Kiritimati', true);
