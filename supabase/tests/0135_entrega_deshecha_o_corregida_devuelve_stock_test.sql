@@ -69,8 +69,8 @@ insert into public.espacio_persona (id, espacio_id, persona_id, created_by) valu
 insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, created_by)
 select pg_temp.u(x.v), pg_temp.u(x.ep), 'T-' || x.v, 100000, now(), pg_temp.u(x.quien), pg_temp.u(x.quien)
   from (values ('51', '21', 'b1'), ('53', '22', 'b2')) x(v, ep, quien);
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('d1'), 'Libro A', 'LIBRO'), (pg_temp.u('d2'), 'Libro B', 'LIBRO'), (pg_temp.u('d3'), 'Libro C', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('d1'), 'Libro A', 'ESPIRITUALES'), (pg_temp.u('d2'), 'Libro B', 'ESPIRITUALES'), (pg_temp.u('d3'), 'Libro C', 'ESPIRITUALES');
 insert into public.stock (usuario_id, producto_id, cantidad_disponible) values
   (pg_temp.u('b1'), pg_temp.u('d1'), 10), (pg_temp.u('b1'), pg_temp.u('d2'), 2), (pg_temp.u('b2'), pg_temp.u('d1'), 7);
 

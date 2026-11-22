@@ -121,9 +121,9 @@ select pg_temp.u(x.s), r.id
   from (values ('b1','COLPORTOR'), ('b2','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro 1 t91', 'LIBRO'),
-  (pg_temp.u('12'), 'Libro 2 t91', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro 1 t91', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Libro 2 t91', 'ESPIRITUALES');
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais dev91', 'ZQ');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
@@ -345,8 +345,8 @@ select is(pg_temp.eventos('devolucion_registrada', pg_temp.u('d4')), 1, 'ni toca
 
 -- Una devolución enorme: el detalle tiene tamaño fijo y ni el push ni la anulación fallan (el CHECK de
 -- audit_log.metadata admite 4000 caracteres; copiar 60 renglones lo pasaba, ~75 caracteres cada uno).
-insert into public.producto (id, nombre, tipo)
-select ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid, 'Libro masivo ' || i || ' t91', 'LIBRO'
+insert into public.producto (id, nombre, categoria)
+select ('01920000-0000-7000-8000-00000091' || lpad(to_hex(i), 4, '0'))::uuid, 'Libro masivo ' || i || ' t91', 'ESPIRITUALES'
   from generate_series(1, 120) i;
 -- Un renglón de la venta 71 por cada libro masivo (0136: la devolución dice de qué renglón sale cada libro).
 insert into public.venta_item (id, venta_id, producto_id, cantidad, precio_unitario, subtotal)

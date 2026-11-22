@@ -26,7 +26,7 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000a1', '01920000-0000-7000-8000-0000000000d1'),
   ('01920000-0000-7000-8000-0000000000b0', '01920000-0000-7000-8000-0000000000a2', '01920000-0000-7000-8000-0000000000d2');
 
-insert into public.producto (id, nombre, tipo) values ('01920000-0000-7000-8000-0000000000e1', 'Libro', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values ('01920000-0000-7000-8000-0000000000e1', 'Libro', 'ESPIRITUALES');
 
 -- --- helper: actuar como un usuario autenticado --------------------------------
 -- Se setean las dos formas del claim: `request.jwt.claims` (PostgREST ≥ 9, auth.uid() de los
@@ -74,7 +74,7 @@ select throws_ok(
 
 select is((select count(*) from public.producto), 1::bigint, 'Ana lee el catálogo');
 select throws_ok(
-  $$ insert into public.producto (nombre, tipo) values ('Pirata', 'LIBRO') $$,
+  $$ insert into public.producto (nombre, categoria) values ('Pirata', 'ESPIRITUALES') $$,
   '42501', null,
   'Ana (sin rol ADMIN) NO puede escribir el catálogo'
 );

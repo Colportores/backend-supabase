@@ -83,9 +83,9 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id from (values ('b1','COLPORTOR'), ('b2','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro 1 t157', 'LIBRO'), (pg_temp.u('12'), 'Libro 2 t157', 'LIBRO'),
-  (pg_temp.u('13'), 'Revista 3 t157', 'REVISTA'), (pg_temp.u('14'), 'Libro 4 t157', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro 1 t157', 'ESPIRITUALES'), (pg_temp.u('12'), 'Libro 2 t157', 'ESPIRITUALES'),
+  (pg_temp.u('13'), 'Revista 3 t157', 'REVISTAS'), (pg_temp.u('14'), 'Libro 4 t157', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values (pg_temp.u('d0'), 'Pack t157');
 insert into public.producto_coleccion (id, producto_id, coleccion_id, cantidad) values
   (pg_temp.u('a1'), pg_temp.u('11'), pg_temp.u('d0'), 1), (pg_temp.u('a2'), pg_temp.u('13'), pg_temp.u('d0'), 2);

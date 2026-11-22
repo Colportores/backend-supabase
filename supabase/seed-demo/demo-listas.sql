@@ -122,31 +122,31 @@ begin
   -- --------------------------------------------------------------------------------------------------
   -- 1. Catálogo: 16 productos más (códigos 12 a 27), cada uno con su precio general
   -- --------------------------------------------------------------------------------------------------
-  create temp table tl_prod (code int primary key, id uuid, nombre text, descripcion text, categoria text, tipo text,
+  create temp table tl_prod (code int primary key, id uuid, nombre text, descripcion text, categoria text,
                              bonif boolean, venta int, compra int, casa text) on commit drop;
-  insert into tl_prod (code, id, nombre, descripcion, categoria, tipo, bonif, venta, compra, casa)
-  select v.code, pg_temp.bdid(5, v.code), v.nombre, v.descripcion, v.categoria, v.tipo, v.bonif, v.venta, v.compra, v.casa
+  insert into tl_prod (code, id, nombre, descripcion, categoria, bonif, venta, compra, casa)
+  select v.code, pg_temp.bdid(5, v.code), v.nombre, v.descripcion, v.categoria, v.bonif, v.venta, v.compra, v.casa
     from (values
-      (12, 'Un Hogar Lleno de Paz',                    'Libro de convivencia familiar',          'BONIFICABLES', 'LIBRO',    true,  118000, 59000, 'Casa Editora del Sur (demo)'),
-      (13, 'Los Secretos de la Longevidad',            'Hábitos de vida saludable',              'BONIFICABLES', 'LIBRO',    true,  132000, 66000, 'Ediciones Horizonte (demo)'),
-      (14, 'Mi Primer Libro de Animales',              'Cuentos con ilustraciones a color',      'BONIFICABLES', 'LIBRO',    true,   76000, 38000, 'Ediciones Horizonte (demo)'),
-      (15, 'Cocina sin Carne para Todos los Días',     'Recetario vegetariano',                  'BONIFICABLES', 'LIBRO',    true,   92000, 46000, 'Casa Editora del Sur (demo)'),
-      (16, 'Vencer la Ansiedad',                       'Guía práctica de bienestar emocional',   'BONIFICABLES', 'LIBRO',    true,   84000, 42000, 'Casa Editora del Sur (demo)'),
-      (17, 'La Familia Feliz',                         'Edición de lujo, tapa dura',             'BONIFICABLES', 'LIBRO',    true,  156000, 78000, 'Casa Editora del Sur (demo)'),
-      (18, 'Atlas de la Biblia',                       'Mapas e historia de los pueblos',        'BONIFICABLES', 'LIBRO',    true,  128000, 64000, 'Ediciones Horizonte (demo)'),
-      (19, 'Camino a Cristo',                          'Clásico de bolsillo',                    'BONIFICABLES', 'LIBRO',    true,   34000, 17000, 'Casa Editora del Sur (demo)'),
-      (20, 'Revista Niños en Casa',                    'Revista mensual',                        'REVISTAS',     'REVISTA',  false,  15000,  7000, 'Ediciones Horizonte (demo)'),
-      (21, 'Revista Mujer Sana',                       'Revista mensual',                        'REVISTAS',     'REVISTA',  false,  17000,  8000, 'Ediciones Horizonte (demo)'),
-      (22, 'Revista Jóvenes en Acción',                'Revista mensual',                        'REVISTAS',     'REVISTA',  false,  15500,  7200, 'Ediciones Horizonte (demo)'),
-      (23, 'Revista Salud al Día (edición especial)',  'Número especial',                        'REVISTAS',     'REVISTA',  false,  21000, 10000, 'Casa Editora del Sur (demo)'),
-      (24, 'Devocional Noches de Paz',                 'Devocional para la noche',               'ESPIRITUALES', 'LIBRO',    false,  48000, 24000, 'Casa Editora del Sur (demo)'),
-      (25, 'Folleto Vivir Mejor',                      'Material de salud',                      'MATERIAL',     'MATERIAL', false,   8500,  3800, 'Ediciones Horizonte (demo)'),
-      (26, 'Folleto Los Sueños de Daniel',             'Material de estudio bíblico',            'MATERIAL',     'MATERIAL', false,   9500,  4200, 'Casa Editora del Sur (demo)'),
-      (27, 'Folleto Cómo Dormir Bien',                 'Material de salud',                      'MATERIAL',     'MATERIAL', false,   8000,  3600, 'Ediciones Horizonte (demo)')
-    ) v(code, nombre, descripcion, categoria, tipo, bonif, venta, compra, casa);
+      (12, 'Un Hogar Lleno de Paz',                    'Libro de convivencia familiar',          'BONIFICABLES', true,  118000, 59000, 'Casa Editora del Sur (demo)'),
+      (13, 'Los Secretos de la Longevidad',            'Hábitos de vida saludable',              'BONIFICABLES', true,  132000, 66000, 'Ediciones Horizonte (demo)'),
+      (14, 'Mi Primer Libro de Animales',              'Cuentos con ilustraciones a color',      'BONIFICABLES', true,   76000, 38000, 'Ediciones Horizonte (demo)'),
+      (15, 'Cocina sin Carne para Todos los Días',     'Recetario vegetariano',                  'BONIFICABLES', true,   92000, 46000, 'Casa Editora del Sur (demo)'),
+      (16, 'Vencer la Ansiedad',                       'Guía práctica de bienestar emocional',   'BONIFICABLES', true,   84000, 42000, 'Casa Editora del Sur (demo)'),
+      (17, 'La Familia Feliz',                         'Edición de lujo, tapa dura',             'BONIFICABLES', true,  156000, 78000, 'Casa Editora del Sur (demo)'),
+      (18, 'Atlas de la Biblia',                       'Mapas e historia de los pueblos',        'BONIFICABLES', true,  128000, 64000, 'Ediciones Horizonte (demo)'),
+      (19, 'Camino a Cristo',                          'Clásico de bolsillo',                    'BONIFICABLES', true,   34000, 17000, 'Casa Editora del Sur (demo)'),
+      (20, 'Revista Niños en Casa',                    'Revista mensual',                        'REVISTAS',     false,  15000,  7000, 'Ediciones Horizonte (demo)'),
+      (21, 'Revista Mujer Sana',                       'Revista mensual',                        'REVISTAS',     false,  17000,  8000, 'Ediciones Horizonte (demo)'),
+      (22, 'Revista Jóvenes en Acción',                'Revista mensual',                        'REVISTAS',     false,  15500,  7200, 'Ediciones Horizonte (demo)'),
+      (23, 'Revista Salud al Día (edición especial)',  'Número especial',                        'REVISTAS',     false,  21000, 10000, 'Casa Editora del Sur (demo)'),
+      (24, 'Devocional Noches de Paz',                 'Devocional para la noche',               'ESPIRITUALES', false,  48000, 24000, 'Casa Editora del Sur (demo)'),
+      (25, 'Folleto Vivir Mejor',                      'Material de salud',                      'MATERIAL',     false,   8500,  3800, 'Ediciones Horizonte (demo)'),
+      (26, 'Folleto Los Sueños de Daniel',             'Material de estudio bíblico',            'MATERIAL',     false,   9500,  4200, 'Casa Editora del Sur (demo)'),
+      (27, 'Folleto Cómo Dormir Bien',                 'Material de salud',                      'MATERIAL',     false,   8000,  3600, 'Ediciones Horizonte (demo)')
+    ) v(code, nombre, descripcion, categoria, bonif, venta, compra, casa);
 
-  insert into public.producto (id, nombre, descripcion, tipo, es_bonificable, es_misionero, precio_base_compra, casa_editora, codigo_editor, categoria)
-  select t.id, t.nombre, t.descripcion, t.tipo, t.bonif, false, t.compra, t.casa, 'DEMO26-' || lpad(t.code::text, 3, '0'), t.categoria
+  insert into public.producto (id, nombre, descripcion, es_bonificable, es_misionero, precio_base_compra, casa_editora, codigo_editor, categoria)
+  select t.id, t.nombre, t.descripcion, t.bonif, false, t.compra, t.casa, 'DEMO26-' || lpad(t.code::text, 3, '0'), t.categoria
     from tl_prod t
   on conflict do nothing;
   insert into public.precio_general (id, producto_id, coleccion_id, precio_venta, valido_desde)

@@ -157,29 +157,29 @@ begin
   -- --------------------------------------------------------------------------------------------------
   -- 4. Catálogo (dos casas editoras ficticias), colecciones y precios
   -- --------------------------------------------------------------------------------------------------
-  create temp table t_prod (code int primary key, id uuid, nombre text, descripcion text, categoria text, tipo text,
+  create temp table t_prod (code int primary key, id uuid, nombre text, descripcion text, categoria text,
                             bonif boolean, venta int, compra int, casa text, peso int) on commit drop;
-  insert into t_prod (code, id, nombre, descripcion, categoria, tipo, bonif, venta, compra, casa, peso)
-  select v.code, pg_temp.did(5, v.code), v.nombre, v.descripcion, v.categoria, v.tipo, v.bonif, v.venta, v.compra, v.casa, v.peso
+  insert into t_prod (code, id, nombre, descripcion, categoria, bonif, venta, compra, casa, peso)
+  select v.code, pg_temp.did(5, v.code), v.nombre, v.descripcion, v.categoria, v.bonif, v.venta, v.compra, v.casa, v.peso
     from (values
-      (1,  'Esperanza para Hoy',                   'Libro ilustrado de tapa dura',            'BONIFICABLES', 'LIBRO',    true,  145000, 72000, 'Casa Editora del Sur (demo)',   14),
-      (2,  'El Gran Conflicto Ilustrado',          'Edición ilustrada, dos tomos',            'BONIFICABLES', 'LIBRO',    true,  168000, 84000, 'Casa Editora del Sur (demo)',   12),
-      (3,  'Salud Integral para la Familia',       'Guía de salud del hogar',                 'BONIFICABLES', 'LIBRO',    true,   98000, 49000, 'Casa Editora del Sur (demo)',   16),
-      (4,  'Cocina Saludable Paso a Paso',         'Recetario con fotografías',               'BONIFICABLES', 'LIBRO',    true,   89000, 44500, 'Ediciones Horizonte (demo)',    12),
-      (5,  'Niños Felices: Historias Bíblicas',    'Libro infantil ilustrado',                'BONIFICABLES', 'LIBRO',    true,  112000, 56000, 'Ediciones Horizonte (demo)',    10),
-      (6,  'El Camino a la Paz Interior',          'Libro de bolsillo',                       'BONIFICABLES', 'LIBRO',    true,   39000, 19500, 'Casa Editora del Sur (demo)',    8),
-      (7,  'Revista Vida y Salud',                 'Revista mensual',                         'REVISTAS',     'REVISTA',  false,  18000,  8500, 'Ediciones Horizonte (demo)',     8),
-      (8,  'Revista Hogar Feliz',                  'Revista mensual',                         'REVISTAS',     'REVISTA',  false,  16000,  7500, 'Ediciones Horizonte (demo)',     6),
-      (9,  'Devocional Mañanas con Esperanza',     'Devocional diario',                       'ESPIRITUALES', 'LIBRO',    false,  52000, 26000, 'Casa Editora del Sur (demo)',     6),
-      (10, 'Folleto Descubre la Biblia',           'Material de estudio bíblico',             'MATERIAL',     'MATERIAL', false,   9000,  4000, 'Casa Editora del Sur (demo)',     4)
-    ) v(code, nombre, descripcion, categoria, tipo, bonif, venta, compra, casa, peso);
+      (1,  'Esperanza para Hoy',                   'Libro ilustrado de tapa dura',            'BONIFICABLES', true,  145000, 72000, 'Casa Editora del Sur (demo)',   14),
+      (2,  'El Gran Conflicto Ilustrado',          'Edición ilustrada, dos tomos',            'BONIFICABLES', true,  168000, 84000, 'Casa Editora del Sur (demo)',   12),
+      (3,  'Salud Integral para la Familia',       'Guía de salud del hogar',                 'BONIFICABLES', true,   98000, 49000, 'Casa Editora del Sur (demo)',   16),
+      (4,  'Cocina Saludable Paso a Paso',         'Recetario con fotografías',               'BONIFICABLES', true,   89000, 44500, 'Ediciones Horizonte (demo)',    12),
+      (5,  'Niños Felices: Historias Bíblicas',    'Libro infantil ilustrado',                'BONIFICABLES', true,  112000, 56000, 'Ediciones Horizonte (demo)',    10),
+      (6,  'El Camino a la Paz Interior',          'Libro de bolsillo',                       'BONIFICABLES', true,   39000, 19500, 'Casa Editora del Sur (demo)',    8),
+      (7,  'Revista Vida y Salud',                 'Revista mensual',                         'REVISTAS',     false,  18000,  8500, 'Ediciones Horizonte (demo)',     8),
+      (8,  'Revista Hogar Feliz',                  'Revista mensual',                         'REVISTAS',     false,  16000,  7500, 'Ediciones Horizonte (demo)',     6),
+      (9,  'Devocional Mañanas con Esperanza',     'Devocional diario',                       'ESPIRITUALES', false,  52000, 26000, 'Casa Editora del Sur (demo)',     6),
+      (10, 'Folleto Descubre la Biblia',           'Material de estudio bíblico',             'MATERIAL',     false,   9000,  4000, 'Casa Editora del Sur (demo)',     4)
+    ) v(code, nombre, descripcion, categoria, bonif, venta, compra, casa, peso);
 
-  insert into public.producto (id, nombre, descripcion, tipo, es_bonificable, es_misionero, precio_base_compra, casa_editora, codigo_editor, categoria)
-  select t.id, t.nombre, t.descripcion, t.tipo, t.bonif, false, t.compra, t.casa, 'DEMO26-' || lpad(t.code::text, 3, '0'), t.categoria
+  insert into public.producto (id, nombre, descripcion, es_bonificable, es_misionero, precio_base_compra, casa_editora, codigo_editor, categoria)
+  select t.id, t.nombre, t.descripcion, t.bonif, false, t.compra, t.casa, 'DEMO26-' || lpad(t.code::text, 3, '0'), t.categoria
     from t_prod t
   on conflict do nothing;
-  insert into public.producto (id, nombre, descripcion, tipo, es_bonificable, es_misionero, precio_base_compra, casa_editora, codigo_editor, categoria)
-  values (pg_temp.did(5, 11), 'Ejemplar misionero Un Mensaje de Esperanza', 'Se entrega sin costo al visitado', 'MISIONERO', false, true, null,
+  insert into public.producto (id, nombre, descripcion, es_bonificable, es_misionero, precio_base_compra, casa_editora, codigo_editor, categoria)
+  values (pg_temp.did(5, 11), 'Ejemplar misionero Un Mensaje de Esperanza', 'Se entrega sin costo al visitado', false, true, null,
           'Ediciones Horizonte (demo)', 'DEMO26-011', 'MISIONEROS')
   on conflict do nothing;
 

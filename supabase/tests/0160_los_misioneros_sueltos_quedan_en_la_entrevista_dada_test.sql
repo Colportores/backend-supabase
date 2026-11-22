@@ -98,7 +98,7 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));
 insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   (pg_temp.u('e1'), pg_temp.u('b1'), null);
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('11'), 'Libro 1 t0160', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('11'), 'Libro 1 t0160', 'ESPIRITUALES');
 insert into public.ubicacion (id, tipo, lat, lon, ciudad_id)
 values (pg_temp.u('c8'), 'CASA', -34.88, -56.15, pg_temp.u('c1'));
 insert into public.espacio (id, ubicacion_id) values (pg_temp.u('c9'), pg_temp.u('c8'));
@@ -107,10 +107,10 @@ values (pg_temp.u('ca'), pg_temp.u('c9'), pg_temp.u('cb'));
 
 
 -- Productos misioneros (tipo MISIONERO -> categoria MISIONEROS) y un stock inicial de b1.
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('21'), 'Misionero 1 t0160', 'MISIONERO'),
-  (pg_temp.u('22'), 'Misionero 2 t0160', 'MISIONERO'),
-  (pg_temp.u('23'), 'Misionero 3 t0160', 'MISIONERO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('21'), 'Misionero 1 t0160', 'MISIONEROS'),
+  (pg_temp.u('22'), 'Misionero 2 t0160', 'MISIONEROS'),
+  (pg_temp.u('23'), 'Misionero 3 t0160', 'MISIONEROS');
 insert into public.stock (usuario_id, producto_id, cantidad_disponible) values
   (pg_temp.u('b1'), pg_temp.u('21'), 10);
 -- Dos visitas de b1 y una de b2 (ENTREVISTA, sin persona, en la casa c9).

@@ -1,6 +1,6 @@
 -- pgTAP · 0149 (backend-supabase#221, «Categorías», «Meta CES» y «Beca alcanz.» del 28/10):
---   1. producto.categoria: una de cinco, obligatoria; `tipo` queda heredado y un trigger mantiene las dos; las
---      funciones de la correspondencia; es_bonificable sigue aparte.
+--   1. producto.categoria: una de cinco, obligatoria; desde 0198 es la única (el `tipo` heredado y su trigger de
+--      transición ya no existen); es_bonificable sigue aparte.
 --   2. becas_de_campania(): libros_bonificables, compra_ces, estado_beca y beca_alcanzada_tipo. La beca se alcanza
 --      con lo comprado a la CES en bonificables (HU-BEC-002): el caso del issue (185.000 contra 180.000), lo que no
 --      es bonificable no cuenta, los libros vendidos no disparan «alcanzada», y lo alcanzado no se pierde al
@@ -49,7 +49,7 @@ begin
   return v_r;
 end $$;
 create or replace function pg_temp.categoria(p text) returns text language sql as $$
-  select categoria || '/' || coalesce(tipo, '-') from public.producto where id = pg_temp.u(p);
+  select categoria from public.producto where id = pg_temp.u(p);
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -57,65 +57,42 @@ $$;
 -- ---------------------------------------------------------------------------
 select has_column('public', 'producto', 'categoria', 'producto.categoria');
 select col_not_null('public', 'producto', 'categoria', 'es obligatoria');
-select col_is_null('public', 'producto', 'tipo', 'y el tipo heredado ya no');
+select hasnt_column('public', 'producto', 'tipo', 'el tipo heredado ya no existe (0198): la categoría es la única');
 select is((select count(*)::int from public.producto where categoria is null), 0, 'ningún producto quedó sin categoría');
 select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''categoria''%'), 1,
           'el pull del catálogo baja la categoría (la fila va entera)');
+select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''tipo'', public.tipo_de_categoria(t.categoria)%'), 1,
+          'y el tipo baja como clave derivada de la categoría (0198), no como columna');
 
--- La correspondencia.
-select results_eq($$ select public.categoria_de_producto(t, b, m) from (values
-                       ('MISIONERO', false, false), ('REVISTA', false, false), ('MATERIAL', false, false),
-                       ('LIBRO', true, false), ('LIBRO', true, true), ('LIBRO', false, true), ('LIBRO', false, false),
-                       ('LIBRO', null, null)) v(t, b, m) $$,
-                  $$ values ('MISIONEROS'), ('REVISTAS'), ('MATERIAL'), ('BONIFICABLES'), ('BONIFICABLES'),
-                            ('MISIONEROS'), ('ESPIRITUALES'), ('ESPIRITUALES') $$,
-                  'cada tipo viejo va a su categoría (un libro bonificable, a Bonificables)');
-select is(public.categoria_de_producto('OTRO', false, false), null, 'un tipo desconocido no tiene categoría');
-select results_eq($$ select public.tipo_de_categoria(c) from unnest(array['BONIFICABLES','ESPIRITUALES','MISIONEROS','REVISTAS','MATERIAL','X']) c $$,
-                  $$ values ('LIBRO'), ('LIBRO'), ('MISIONERO'), ('REVISTA'), ('MATERIAL'), (null) $$,
-                  'y cada categoría al tipo heredado que le corresponde');
-select is((select has_function_privilege('anon', 'public.categoria_de_producto(text,boolean,boolean)', 'execute')), false,
-          'anon no ejecuta la correspondencia');
-
--- Alta: con el tipo solo (scripts y pruebas de antes), con la categoría sola y con las dos.
-insert into public.producto (id, nombre, tipo, es_bonificable) values
-  (pg_temp.u('01'), 'Solo tipo LIBRO bonif t149', 'LIBRO', true),
-  (pg_temp.u('02'), 'Solo tipo LIBRO comun t149', 'LIBRO', false),
-  (pg_temp.u('03'), 'Solo tipo REVISTA t149', 'REVISTA', false),
-  (pg_temp.u('04'), 'Solo tipo MISIONERO t149', 'MISIONERO', false),
-  (pg_temp.u('05'), 'Solo tipo MATERIAL t149', 'MATERIAL', false);
-insert into public.producto (id, nombre, categoria) values
-  (pg_temp.u('06'), 'Solo categoria REVISTAS t149', 'REVISTAS'),
-  (pg_temp.u('07'), 'Solo categoria BONIFICABLES t149', 'BONIFICABLES'),
-  (pg_temp.u('08'), 'Solo categoria MATERIAL t149', 'MATERIAL');
-insert into public.producto (id, nombre, tipo, categoria) values
-  (pg_temp.u('09'), 'Las dos t149', 'LIBRO', 'MISIONEROS');
-select is(pg_temp.categoria('01'), 'BONIFICABLES/LIBRO', 'alta con el tipo: LIBRO bonificable queda en Bonificables y conserva su tipo');
-select is(pg_temp.categoria('02'), 'ESPIRITUALES/LIBRO', 'LIBRO común: Espirituales');
-select is(pg_temp.categoria('03'), 'REVISTAS/REVISTA', 'REVISTA: Revistas');
-select is(pg_temp.categoria('04'), 'MISIONEROS/MISIONERO', 'MISIONERO: Misioneros');
-select is(pg_temp.categoria('05'), 'MATERIAL/MATERIAL', 'MATERIAL: Material');
-select is(pg_temp.categoria('06'), 'REVISTAS/REVISTA', 'alta con la categoría sola: el tipo se deduce');
-select is(pg_temp.categoria('07'), 'BONIFICABLES/LIBRO', 'Bonificables: tipo LIBRO');
-select is(pg_temp.categoria('08'), 'MATERIAL/MATERIAL', 'Material: tipo MATERIAL');
-select is(pg_temp.categoria('09'), 'MISIONEROS/MISIONERO', 'con las dos que no coinciden gana la categoría');
+-- Alta: una de las cinco, elegida por quien carga el producto.
+insert into public.producto (id, nombre, categoria, es_bonificable) values
+  (pg_temp.u('01'), 'Bonificables t149', 'BONIFICABLES', true),
+  (pg_temp.u('02'), 'Espirituales t149', 'ESPIRITUALES', false),
+  (pg_temp.u('03'), 'Revistas t149', 'REVISTAS', false),
+  (pg_temp.u('04'), 'Misioneros t149', 'MISIONEROS', false),
+  (pg_temp.u('05'), 'Material t149', 'MATERIAL', false);
+select is(pg_temp.categoria('01'), 'BONIFICABLES', 'alta en Bonificables');
+select is(pg_temp.categoria('02'), 'ESPIRITUALES', 'alta en Espirituales');
+select is(pg_temp.categoria('03'), 'REVISTAS', 'alta en Revistas');
+select is(pg_temp.categoria('04'), 'MISIONEROS', 'alta en Misioneros');
+select is(pg_temp.categoria('05'), 'MATERIAL', 'alta en Material');
 select is(pg_temp.error_de($$ insert into public.producto (id, nombre) values ('01920000-0000-7000-8000-0000000149a0', 'Sin nada t149') $$),
-          '23502 ', 'sin tipo ni categoría no se puede: 23502');
+          '23502 ', 'sin categoría no se puede: 23502 (no hay valor por defecto)');
 select is(pg_temp.error_de($$ insert into public.producto (id, nombre, categoria) values ('01920000-0000-7000-8000-0000000149a1', 'Rara t149', 'JUGOS') $$),
           '23514 producto_categoria_check', 'una categoría fuera de las cinco: 23514');
+select is(pg_temp.error_de($$ insert into public.producto (id, nombre, categoria, tipo) values ('01920000-0000-7000-8000-0000000149a2', 'Con tipo t149', 'MATERIAL', 'LIBRO') $$),
+          '42703 ', 'el tipo ya no existe: escribirlo da 42703 (columna inexistente)');
 
 -- es_bonificable es aparte de la categoría.
 update public.producto set es_bonificable = true where id = pg_temp.u('03');
 select is(pg_temp.categoria('03') || '/' || (select es_bonificable::text from public.producto where id = pg_temp.u('03')),
-          'REVISTAS/REVISTA/true', 'una revista puede ser bonificable: la categoría no lo decide');
+          'REVISTAS/true', 'una revista puede ser bonificable: la categoría no lo decide');
 
--- Cambios: la categoría manda; si solo se toca el tipo, la categoría lo sigue.
+-- Cambios.
 update public.producto set categoria = 'MATERIAL' where id = pg_temp.u('02');
-select is(pg_temp.categoria('02'), 'MATERIAL/MATERIAL', 'cambiar la categoría cambia el tipo heredado');
-update public.producto set tipo = 'REVISTA' where id = pg_temp.u('04');
-select is(pg_temp.categoria('04'), 'REVISTAS/REVISTA', 'cambiar solo el tipo mueve la categoría');
+select is(pg_temp.categoria('02'), 'MATERIAL', 'cambiar la categoría la cambia');
 update public.producto set nombre = 'Renombrado t149' where id = pg_temp.u('04');
-select is(pg_temp.categoria('04'), 'REVISTAS/REVISTA', 'cambiar otra cosa no toca ni una ni otra');
+select is(pg_temp.categoria('04'), 'MISIONEROS', 'cambiar otra cosa no toca la categoría');
 select is(pg_temp.error_de(format($$ update public.producto set categoria = 'JUGOS' where id = %L $$, pg_temp.u('04'))),
           '23514 producto_categoria_check', 'cambiarla a una inválida: 23514');
 select is((select sync_version > 0 from public.producto where id = pg_temp.u('02')), true, 'y la fila sube su versión para bajar al teléfono');
@@ -152,9 +129,9 @@ update public.campania_colportor set tipo_beca = 'MEDIA', meta_libros = 60, meta
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b4');
 
 -- Productos: 11 bonificable, 12 bonificable, 13 que no lo es.
-insert into public.producto (id, nombre, tipo, es_bonificable, precio_base_compra) values
-  (pg_temp.u('11'), 'Bonif 1 t149', 'LIBRO', true, 1850), (pg_temp.u('12'), 'Bonif 2 t149', 'LIBRO', true, 1000),
-  (pg_temp.u('13'), 'Comun t149', 'LIBRO', false, 1850);
+insert into public.producto (id, nombre, categoria, es_bonificable, precio_base_compra) values
+  (pg_temp.u('11'), 'Bonif 1 t149', 'BONIFICABLES', true, 1850), (pg_temp.u('12'), 'Bonif 2 t149', 'BONIFICABLES', true, 1000),
+  (pg_temp.u('13'), 'Comun t149', 'ESPIRITUALES', false, 1850);
 
 -- Pedidos a la casa editora.
 --   b1: 100 × 1850 del 11 recibidos (185.000).
