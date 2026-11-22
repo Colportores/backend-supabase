@@ -127,8 +127,8 @@ select is((select has_function_privilege('authenticated', 'public.compra_a_la_ce
           'compra_a_la_ces es interna: authenticated no la ejecuta');
 select is((select has_function_privilege('authenticated', 'public.libros_bonificables_de_la_campania(uuid,uuid)', 'execute')), false,
           'libros_bonificables_de_la_campania también');
-select is((select has_function_privilege('authenticated', 'public.becas_de_campania(uuid)', 'execute')
-           and not has_function_privilege('anon', 'public.becas_de_campania(uuid)', 'execute')), true,
+select is((select has_function_privilege('authenticated', 'public.becas_de_campania(uuid, integer, integer)', 'execute')
+           and not has_function_privilege('anon', 'public.becas_de_campania(uuid, integer, integer)', 'execute')), true,
           'becas_de_campania, la del panel, la ejecuta authenticated y no anon');
 
 -- Staff: c1 coordina la campaña e1. Colportores: b1 Juan (alcanza la meta), b2 Ana (compra mucho no bonificable),

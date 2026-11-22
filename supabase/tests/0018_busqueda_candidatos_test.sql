@@ -120,9 +120,9 @@ select ok(not has_function_privilege('anon', 'public.buscar_candidatos(uuid, tex
           'anon NO ejecuta buscar_candidatos()');
 select ok(not has_function_privilege('authenticated', 'public.normalizar_busqueda(text)', 'execute'),
           'normalizar_busqueda() es interna');
-select ok(has_function_privilege('authenticated', 'public.colportores_de_campania(uuid)', 'execute'),
+select ok(has_function_privilege('authenticated', 'public.colportores_de_campania(uuid, integer, integer)', 'execute'),
           'authenticated sigue ejecutando colportores_de_campania() (recreada)');
-select ok(not has_function_privilege('anon', 'public.colportores_de_campania(uuid)', 'execute'),
+select ok(not has_function_privilege('anon', 'public.colportores_de_campania(uuid, integer, integer)', 'execute'),
           'anon NO ejecuta colportores_de_campania() (recreada)');
 select ok(not has_function_privilege('anon', 'public.estado_de_cuenta(timestamptz, boolean)', 'execute'),
           'anon NO ejecuta estado_de_cuenta()');

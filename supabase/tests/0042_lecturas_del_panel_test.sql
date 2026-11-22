@@ -151,7 +151,7 @@ select is((select pg_get_function_result('public.mi_perfil()'::regprocedure)),
 select is((select pg_get_function_result('public.campanias_del_coordinador()'::regprocedure)),
           'TABLE(id uuid, nombre text, tipo text, fecha_inicio date, fecha_fin date)',
           'campanias_del_coordinador(): la forma de la respuesta');
-select is((select pg_get_function_result('public.ciudades_de_campania(uuid)'::regprocedure)),
+select is((select pg_get_function_result('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure)),
           'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, departamento text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
           'ciudades_de_campania(): la forma de la respuesta');
 select is((select pg_get_function_result('public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
@@ -160,7 +160,7 @@ select is((select pg_get_function_result('public.zonas_de_ciudad(uuid,uuid)'::re
           'TABLE(zona_id uuid, nombre text, tipo_forma text, color text, centro_lat double precision, centro_lon double precision, radio_m integer, poligono_geojson jsonb, esquinas jsonb, colportores jsonb, ubicaciones_registradas integer)',
           'zonas_de_ciudad(): la forma de la respuesta (sin email, sin clientes, sin personas)');
 
-select is((select pg_get_function_result('public.colportores_de_campania(uuid)'::regprocedure)),
+select is((select pg_get_function_result('public.colportores_de_campania(uuid,integer,integer)'::regprocedure)),
           'TABLE(usuario_id uuid, nombre text, apellido text, zona_id uuid, zona_nombre text, suspendido boolean, email text, estado text)',
           'colportores_de_campania(): la forma de la respuesta no cambió al alinear el criterio');
 select is((select pg_get_function_result('public.zonas_asignables(uuid)'::regprocedure)),
@@ -174,35 +174,35 @@ select is((select p.prosecdef from pg_proc p where p.oid = 'public.campanias_del
 select is((select p.provolatile from pg_proc p where p.oid = 'public.campanias_del_coordinador()'::regprocedure), 's',
           'campanias_del_coordinador() es STABLE (solo lee)');
 select is((select array_agg(p.prosecdef order by p.proname) from pg_proc p
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure,
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure,
                             'public.ciudades_del_catalogo(uuid,text)'::regprocedure,
                             'public.zonas_de_ciudad(uuid,uuid)'::regprocedure)),
           array[true, true, true], 'las tres lecturas de campaña son SECURITY DEFINER');
 select is((select count(*)::int from pg_proc p
             where p.oid in ('public.mi_perfil()'::regprocedure,
                             'public.campanias_del_coordinador()'::regprocedure,
-                            'public.ciudades_de_campania(uuid)'::regprocedure,
+                            'public.ciudades_de_campania(uuid,integer,integer)'::regprocedure,
                             'public.ciudades_del_catalogo(uuid,text)'::regprocedure,
                             'public.zonas_de_ciudad(uuid,uuid)'::regprocedure,
                             'public.exigir_lectura_de_campania(uuid)'::regprocedure)
               and p.proconfig = array['search_path=""']), 6, 'las seis fijan search_path vacío');
 
 select ok(has_function_privilege('authenticated', f, 'execute'), 'authenticated ejecuta ' || f)
-  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid)',
+  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid,integer,integer)',
                     'public.ciudades_del_catalogo(uuid,text)', 'public.zonas_de_ciudad(uuid,uuid)']) f;
 select ok(not has_function_privilege('anon', f, 'execute'), 'anon NO ejecuta ' || f)
-  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid)',
+  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid,integer,integer)',
                     'public.ciudades_del_catalogo(uuid,text)', 'public.zonas_de_ciudad(uuid,uuid)',
                     'public.exigir_lectura_de_campania(uuid)']) f;
 select ok(not has_function_privilege('service_role', f, 'execute'), 'service_role NO ejecuta ' || f)
-  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid)',
+  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid,integer,integer)',
                     'public.ciudades_del_catalogo(uuid,text)', 'public.zonas_de_ciudad(uuid,uuid)']) f;
 select is((select count(*)::int
              from pg_proc p, aclexplode(p.proacl) a
             where a.grantee = 0 and a.privilege_type = 'EXECUTE'
               and p.oid in ('public.mi_perfil()'::regprocedure,
                             'public.campanias_del_coordinador()'::regprocedure,
-                            'public.ciudades_de_campania(uuid)'::regprocedure,
+                            'public.ciudades_de_campania(uuid,integer,integer)'::regprocedure,
                             'public.ciudades_del_catalogo(uuid,text)'::regprocedure,
                             'public.zonas_de_ciudad(uuid,uuid)'::regprocedure,
                             'public.exigir_lectura_de_campania(uuid)'::regprocedure)),
