@@ -126,10 +126,12 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.
 insert into public.zona (id, nombre, campania_ciudad_id, tipo_forma, color, poligono_geojson)
 values (pg_temp.u('d2'), 'Centro', pg_temp.u('f1'), 'ESQUINAS', '#112233',
         '{"type":"Polygon","coordinates":[[[-56.19,-34.99],[-56.17,-34.99],[-56.17,-34.98],[-56.19,-34.98],[-56.19,-34.99]]]}'::jsonb);
-insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
-  (pg_temp.u('e1'), pg_temp.u('b1'), null),
-  (pg_temp.u('e1'), pg_temp.u('b2'), null),
-  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2'));
+-- Inscriptos desde el comienzo de la campaña: las visitas de hoy a las 10:00 son posteriores al alta
+-- (las lecturas del panel cuentan desde el instante del alta, 0197).
+insert into public.campania_colportor (campania_id, usuario_id, zona_id, created_at) values
+  (pg_temp.u('e1'), pg_temp.u('b1'), null,            (public.hoy_montevideo() - 10)::timestamptz),
+  (pg_temp.u('e1'), pg_temp.u('b2'), null,            (public.hoy_montevideo() - 10)::timestamptz),
+  (pg_temp.u('e1'), pg_temp.u('b3'), pg_temp.u('d2'), (public.hoy_montevideo() - 10)::timestamptz);
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id, created_by) values
   (pg_temp.u('01'), 'CASA',     'Visita 01', '1', -34.91, -56.2,  pg_temp.u('c1'), pg_temp.u('b1')),
   (pg_temp.u('02'), 'CASA',     'Visita 02', '2', -34.92, -56.2,  pg_temp.u('c1'), pg_temp.u('b2')),
@@ -345,7 +347,7 @@ select is((select pg_temp.fila_del_pull(pg_temp.uv(200)) -> 'espacio_persona_id'
 -- ---------------------------------------------------------------------------
 -- 7. COBRANZA no es una presentación
 -- ---------------------------------------------------------------------------
--- b3 (inscripto hoy, en la zona d2) con hoy: una ENTREVISTA, una VENTA (presentaciones), dos COBRANZA (una
+-- b3 (inscripto desde el inicio de la campaña, en la zona d2) con hoy: una ENTREVISTA, una VENTA (presentaciones), dos COBRANZA (una
 -- sin persona), un NO_CONTESTO y un RECHAZO. Solo las dos primeras cuentan.
 select pg_temp.actuar_como_servidor();
 insert into public.visita (id, espacio_persona_id, espacio_id, fecha, tipo_resultado, colportor_id, created_by)

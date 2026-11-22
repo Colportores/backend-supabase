@@ -177,8 +177,8 @@ values (pg_temp.u('f3'), pg_temp.u('f2'), pg_temp.u('f4'));
 --   b6: jue 10/09: 2000 (antes de la baja); dom 20/09: 3000 (después: no cuenta).
 --   b7: lun 07/09: 99999 (no está inscripto en Cierre).
 --   bc (de Otra, inscripto el 09/09 15:00): mar 08/09: 5000 y una ENTREVISTA (antes de inscribirse: no
---       cuentan); mié 09/09 08:00: 1000 y una ENTREVISTA 09:00 (el mismo día, antes de la hora: cuentan,
---       la regla es por día); jue 10/09: 2000.
+--       cuentan); mié 09/09 08:00: 1000 y una ENTREVISTA 09:00 (el mismo día, antes de la hora: no cuentan,
+--       la regla es por instante desde la 0197, #162); jue 10/09: 2000.
 insert into public.venta (espacio_persona_id, numero_talonario, monto_total, fecha, colportor_id, deleted_at)
 select pg_temp.u('f3'), 'T-' || row_number() over (), x.m, x.f::timestamptz, pg_temp.u(x.s), x.baja
   from (values
@@ -591,26 +591,26 @@ select is((select count(*)::int
 select pg_temp.actuar_como_servidor();
 
 -- ---------------------------------------------------------------------------
--- 9b. Un colportor cuenta desde el día en que se inscribió en ESTA campaña
+-- 9b. Un colportor cuenta desde el instante en que se inscribió en ESTA campaña (0197, #162)
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000051a2');
 select is(pg_temp.fila('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
-          '2|3000|1|false|0|0|0',
-          'bc, inscripto el 09/09 a las 15:00: la venta y la presentación del 08/09 no cuentan; las del 09/09 (antes de la hora, el mismo día) y la del 10/09 sí');
+          '1|2000|0|false|0|0|0',
+          'bc, inscripto el 09/09 a las 15:00: no cuentan la venta y la presentación del 08/09 ni las del 09/09 (antes de la hora, el mismo día); sí la del 10/09');
 select is(pg_temp.fila('e2', '2026-09-08', '2026-09-08', 'dia', '2026-09-08', 'bc'),
           'sin fila', 'bc el 08/09, el día anterior a su inscripción: sin fila');
 select is(pg_temp.fila('e2', '2026-09-09', '2026-09-10', 'dia', '2026-09-09', 'bc'),
-          '1|1000|1|false|0|0|0', 'bc el 09/09, el día de su inscripción: cuenta entero, aunque antes de la hora');
+          'sin fila', 'bc el 09/09, el día de su inscripción: lo de antes de la hora del alta (08:00 y 09:00) no cuenta');
 select is(pg_temp.fila('e2', '2026-09-09', '2026-09-10', 'dia', '2026-09-10', 'bc'),
-          '1|2000|0|false|1|1000|1', 'bc el 10/09, contra el 09/09');
+          '1|2000|0|false|0|0|0', 'bc el 10/09: sin nada que comparar con el 09/09, que no cuenta');
 select is(pg_temp.ciudad_de('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
           '(sin ciudad)/null', 'bc, sin zona: sin ciudad');
 -- b1 ya trabajó en Cierre y se inscribió en Otra el 14/09: la otra campaña no le ve lo de antes.
 select is(pg_temp.fila('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'b1'),
           'sin fila', 'b1 en Otra, semana del 07/09 (antes de inscribirse en Otra): sin fila, sus ventas son de Cierre');
 select is(pg_temp.fila('e2', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'b1'),
-          '2|40000|2|false|0|0|0',
-          'b1 en Otra, semana del 14/09: el 14 (el día de su inscripción) y el 15 cuentan, y la semana anterior no se le atribuye');
+          '1|10000|1|false|0|0|0',
+          'b1 en Otra, semana del 14/09: el 15 cuenta; el 14 a las 10:00 es anterior a la hora de su inscripción (12:00) y no; la semana anterior no se le atribuye');
 select is((select count(*)::int from public.ventas_por_ciudad_y_colportor(pg_temp.u('e2'), '2026-09-07', '2026-09-13', 'dia')
             where colportor_id = pg_temp.u('b1')),
           0, 'b1 en Otra, del 07 al 13/09: ninguna fila (ni vacía)');
