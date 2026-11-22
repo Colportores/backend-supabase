@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0190 · La cédula se guarda en 7 u 8 dígitos y el registro rechaza otra (backend-supabase#266, P1)
+-- 0199 · La cédula se guarda en 7 u 8 dígitos y el registro rechaza otra (backend-supabase#266, P1)
 --
 -- El caso: la 0188 copia a `ficha_administrativa` la cédula que llega en los metadatos del registro tal cual
 -- (sin los espacios de los extremos). La app ya exige 7 u 8 dígitos, con puntos y guion permitidos
@@ -12,7 +12,8 @@
 --     así, para que Administración la vea siempre igual.
 --   · Si después de normalizarla no quedan 7 u 8 dígitos, el registro se rechaza con `CD005` (no se crea ni
 --     el perfil ni la cuenta). Un cliente de la app nunca choca con esto: valida lo mismo antes de mandar.
---   · Sin la clave, null o en blanco, sigue como en la 0188: no se crea la ficha y el registro sigue.
+--   · Sin la clave, null o en blanco (espacios, tabuladores o saltos de línea), sigue como en la 0188: no se
+--     crea la ficha y el registro sigue.
 --   · El CHECK de la tabla pasa a «7 u 8 dígitos».
 -- (P2 de la misma decisión: las cuentas de antes de la 0188 siguen sin ficha; una corrección se hace a mano
 -- con service_role hasta la pantalla de Administración.)
@@ -41,7 +42,7 @@ as $$
 $$;
 
 comment on function public.cedula_normalizada(text) is
-  'La cédula sin puntos, guiones ni espacios (0190). La ficha_administrativa la guarda así y exige 7 u 8 '
+  'La cédula sin puntos, guiones ni espacios (0199). La ficha_administrativa la guarda así y exige 7 u 8 '
   'dígitos. Interna: nadie con JWT la llama.';
 
 revoke all on function public.cedula_normalizada(text) from public, anon, authenticated, service_role;
@@ -63,7 +64,7 @@ begin
    where public.cedula_normalizada(f.cedula) !~ '^[0-9]{7,8}$';
 
   if v_n > 0 then
-    raise exception E'La migración 0190 (la cédula en 7 u 8 dígitos) no se aplicó: hay % ficha(s) con una cédula que no queda en 7 u 8 dígitos. No se cambió nada.\n%\nCorregila a mano con service_role (solo dígitos) y volvé a aplicar la migración.',
+    raise exception E'La migración 0199 (la cédula en 7 u 8 dígitos) no se aplicó: hay % ficha(s) con una cédula que no queda en 7 u 8 dígitos. No se cambió nada.\n%\nCorregila a mano con service_role (solo dígitos) y volvé a aplicar la migración.',
       v_n, v_malas;
   end if;
 end;
@@ -79,7 +80,7 @@ alter table public.ficha_administrativa
 
 comment on column public.ficha_administrativa.cedula is
   'La cédula que la persona puso al registrarse, en solo dígitos (7 u 8; sin puntos, guion ni espacios, '
-  '0190), copiada por el servidor al crear la cuenta. Dato personal: no entra al audit_log ni baja al teléfono.';
+  '0199), copiada por el servidor al crear la cuenta. Dato personal: no entra al audit_log ni baja al teléfono.';
 
 -- ----------------------------------------------------------------------------
 -- 3. El registro normaliza y rechaza
@@ -95,7 +96,9 @@ set search_path = ''
 as $$
 declare
   v_version text := new.raw_user_meta_data ->> 'terminos_version';
-  v_cedula  text := nullif(btrim(new.raw_user_meta_data ->> 'cedula'), '');
+  -- «En blanco» es cualquier mezcla de espacios, tabuladores y saltos de línea: sigue sin ficha, como en la
+  -- 0188. Solo los extremos: «..-» no es blanco y da CD005.
+  v_cedula  text := nullif(btrim(new.raw_user_meta_data ->> 'cedula', E' \t\n\r\f\x0B'), '');
 begin
   -- Antes de crear nada: una versión con forma inválida, o con la forma correcta pero que nunca se publicó,
   -- frena el registro entero.
@@ -146,7 +149,7 @@ comment on function public.tg_auth_usuario_nuevo() is
   'AFTER INSERT en auth.users: crea el perfil (public.usuario) con el mismo id; si el registro trae '
   'raw_user_meta_data.terminos_version (v1, v2…), la fila de consentimiento_terminos con la hora del servidor '
   '(una versión que no es una de terminos_versiones_publicadas() frena el registro con TC001, 0065); y si trae '
-  'raw_user_meta_data.cedula, la ficha_administrativa con la cédula en solo dígitos (0188, 0190): si no quedan '
+  'raw_user_meta_data.cedula, la ficha_administrativa con la cédula en solo dígitos (0188, 0199): si no quedan '
   '7 u 8 dígitos, el registro se frena con CD005. Corre solo al crear la cuenta: cambiar después los metadatos '
   'no toca la ficha.';
 

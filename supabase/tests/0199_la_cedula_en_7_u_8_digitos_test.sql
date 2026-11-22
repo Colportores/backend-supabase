@@ -1,4 +1,4 @@
--- pgTAP · la cédula se guarda en 7 u 8 dígitos y el registro rechaza otra (migración 0190,
+-- pgTAP · la cédula se guarda en 7 u 8 dígitos y el registro rechaza otra (migración 0199,
 -- backend-supabase#266, P1: decisión del orquestador del 11/11, seguridad barata)
 --   1. La forma: cedula_normalizada() (interna) y el CHECK de 7 u 8 dígitos.
 --   2. El registro normaliza lo que la app deja pasar (puntos, guion, espacios) y guarda solo dígitos.
@@ -9,7 +9,7 @@ begin;
 select * from no_plan();
 
 create or replace function pg_temp.u(p_sufijo text) returns uuid language sql immutable as $$
-  select ('01920000-0000-7000-8000-0000000190' || p_sufijo)::uuid
+  select ('01920000-0000-7000-8000-0000000199' || p_sufijo)::uuid
 $$;
 
 create or replace function pg_temp.error_de(p_sql text) returns text language plpgsql as $$
@@ -142,6 +142,12 @@ select is(pg_temp.registrar('b3', '{"cedula":"   "}'), 'ok', 'en blanco el regis
 select is(pg_temp.ficha('b3'), '(sin ficha)', 'sin ficha');
 select is(pg_temp.registrar('b4', '{"cedula":""}'), 'ok', 'vacía el registro se crea');
 select is(pg_temp.ficha('b4'), '(sin ficha)', 'sin ficha');
+select is(pg_temp.registrar('b6', '{"cedula":"\t"}'), 'ok', 'solo un tabulador cuenta como en blanco');
+select is(pg_temp.ficha('b6'), '(sin ficha)', 'sin ficha');
+select is(pg_temp.registrar('b7', '{"cedula":" \n\r\t "}'), 'ok', 'espacios y saltos de línea mezclados, también');
+select is(pg_temp.ficha('b7'), '(sin ficha)', 'sin ficha');
+select is(pg_temp.registrar('b8', '{"cedula":"\t1.234.567\n"}'), 'ok', 'tabulador y salto de línea en los extremos de una buena');
+select is(pg_temp.ficha('b8'), '1234567', 'se guarda en solo dígitos');
 select is(pg_temp.registrar('b5', null), 'ok', 'sin metadatos el registro se crea');
 select is(pg_temp.ficha('b5'), '(sin ficha)', 'sin ficha');
 
