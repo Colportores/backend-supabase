@@ -70,7 +70,8 @@ supabase/
 │                        0006 estado de la cuenta, 0007 inscripción en campaña, 0008 zona,
 │                        0009 lecturas del panel, 0010 mapa de la campaña, 0011 mapa en el delta,
 │                        0012 zona solo en la inscripción, 0013 ubicación sin zona,
-│                        0014 qué baja del pull, 0028 el pull baja toda la ciudad
+│                        0014 qué baja del pull, 0028 el pull baja toda la ciudad;
+│                        shell: sync_concurrencia, concurrencia del push y del delta
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno: `informe-reportes` (el «Informe PDF» de Reportes) `foto-ticket` (enlaces firmados de R2 para la foto del ticket) y `push-fcm` (manda por FCM los avisos de la cola `push.evento`), cada una con su README
@@ -83,9 +84,11 @@ scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / 
 
 `db-test-migracion.sh` prueba las migraciones que mueven datos: por cada caso de `supabase/tests_migracion/` limpia la base, aplica las migraciones hasta la versión previa, carga los datos del caso, aplica el resto y verifica (pgTAP, o que aborte con el mensaje esperado). Al final deja la base como `db-reset.sh`.
 
+`sync_concurrencia.sh` es shell y no pgTAP: prueba lo que pasa cuando dos transacciones se cruzan —un reintento que llega con el primer envío todavía en vuelo, dos colportores que actualizan la misma casa desde la misma versión, commits fuera de orden en el delta—, y eso necesita dos conexiones vivas a la vez. `db-test.sh` lo corre después de `pg_prove`.
+
 ## CI/CD
 
-- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
+- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP, el test de concurrencia y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
 - `tiles.yml` (a mano, `workflow_dispatch`, y cada hora para los mapas de las zonas, solo en los environments con su variable `MAPAS_ZONAS_<ENV>` en `true`): publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo; las ciudades salen de `public.ciudad`) en el bucket público `mapas` del environment y lo verifica. No lleva secretos nuevos. [`docs/mapas-tiles.md`](./docs/mapas-tiles.md). El job **tiles** de `ci.yml` corre las pruebas del publicador (`npm ci && npm test` en `tiles/`) y el job **funciones**, las de las Edge Functions del informe PDF, de la foto del ticket y de las push (`deno task check && deno task test` en `supabase/functions/informe-reportes/`, `supabase/functions/foto-ticket/` y `supabase/functions/push-fcm/`, sin Docker).
 - `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment* y, después, `supabase functions deploy --use-api --yes`: publica **todas** las Edge Functions de `supabase/functions/` (hoy `informe-reportes`, `foto-ticket` y `push-fcm`) en el mismo environment (develop, staging o production), con la misma `SUPABASE_ACCESS_TOKEN` y con el `verify_jwt` y el import map de cada una en `supabase/config.toml` (backend-supabase#203). `--use-api` empaqueta del lado de Supabase, sin Docker en el runner; no lleva `--prune`, así que una función que existe en el proyecto y no en el repo no se borra sola. **Los secretos de cada función no viajan**: se cargan una vez por environment con `supabase secrets set` (README de cada función). **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
@@ -168,11 +171,12 @@ Al registrarse, la persona acepta los Términos y la Política de Privacidad (HU
 
 La cédula que la persona pone al registrarse (HU-AUTH-001) la necesita Administración para identificarla (becas, pagos, casa editora). Decisión de Cristian del 11/11 («Cédula adm.», docs-organizacion#184): **ficha propia en el servidor**.
 
-- **Cómo llega:** el móvil la manda en los metadatos del registro, `signUp(data: {'cedula': …})`, como siempre. El trigger del registro (`tg_auth_usuario_nuevo`) la copia a `public.ficha_administrativa` (una fila por cuenta), sin los espacios de los extremos. Sin la clave, null o en blanco no se crea la ficha y el registro sigue igual.
+- **Cómo llega:** el móvil la manda en los metadatos del registro, `signUp(data: {'cedula': …})`, como siempre. El trigger del registro (`tg_auth_usuario_nuevo`) la copia a `public.ficha_administrativa` (una fila por cuenta). Sin la clave, null o en blanco no se crea la ficha y el registro sigue igual.
+- **Forma (`0199`, decisión del orquestador del 11/11, seguridad barata):** se guarda en **solo dígitos** (`cedula_normalizada()` saca puntos, guion y espacios) y tienen que quedar **7 u 8**, la misma regla de la app. Si no, el registro se rechaza con **`CD005`** («La cédula no es válida: tienen que ser 7 u 8 dígitos, con o sin puntos y guion. Revisala y volvé a registrarte.»; el aviso no repite lo que llegó) y no se crea ni la cuenta ni el perfil. El CHECK de la tabla exige `^[0-9]{7,8}$`.
 - **Solo de la nube:** `ficha_administrativa` no está en `sync.entidad` (no baja al teléfono) y no es una columna de `usuario`. Es dato personal: no entra al `audit_log` (su CHECK ya rechaza la clave `cedula`, 0073) y la ficha no registra eventos.
 - **Quién la lee:** solo Administración (rol ADMIN), por `cedula_de_la_cuenta(p_usuario_id)` → la cédula o null (sin ficha, cuenta inexistente o ficha dada de baja). Cualquier otra sesión, `42501`. Nadie con su JWT tiene privilegios sobre la tabla (ni el ADMIN directo); la escriben el trigger del registro o el servidor (`service_role`).
 - **Rocío no la cambia sola:** cambiar después los metadatos de Auth (`auth.updateUser`) no toca la ficha; el trigger corre solo al crear la cuenta.
-- Pendientes de decisión (ver el PR): si el servidor valida o normaliza la forma, completar las cuentas que ya existían y la corrección por Administración.
+- Las cuentas de antes de la `0188` siguen sin ficha (datos de demo hasta diciembre); hasta la pantalla de Administración, una corrección se hace a mano con `service_role`, en solo dígitos.
 
 ## Inscripción en campaña
 
