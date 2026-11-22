@@ -111,6 +111,20 @@ También se puede disparar a mano contra cualquier environment desde la pestaña
 **`supabase/config.toml` no viaja con `db push`.** Vale para el Supabase local y para CI; el proyecto hosteado se configura aparte, con `supabase config push` o desde el panel. Pendiente de despliegue en cada environment (backend-supabase#59): `minimum_password_length = 8` (Authentication, política de contraseñas), el mismo mínimo que la app, para que el servidor no acepte una contraseña que la app rechaza. `password_requirements` queda vacío a propósito: la mayúscula (cualquier letra mayúscula Unicode, con tilde o Ñ) la valida la app.
 
 
+## Redirecciones permitidas de Auth (backend-supabase#299)
+
+El enlace del correo de «Olvidé mi contraseña» del panel de coordinadores ([front-coordinadores-web#111](https://github.com/Colportores/front-coordinadores-web/issues/111)) lleva a `<panel>/acceso/nueva-contrasena`. Si esa dirección no está entre las redirecciones permitidas, Supabase manda al usuario a la `site_url` y no puede cambiar la contraseña.
+
+**Ninguna lleva comodín**: cada dirección va completa y exacta (`additional_redirect_urls`). Un patrón como `https://*.vercel.app/**` dejaría que el enlace —que trae la sesión de recuperación— termine en cualquier sitio que coincida con él. `scripts/check-config.sh` (corre en CI) falla si la lista lleva un `*` o si falta alguna de las dos locales de abajo.
+
+| Ambiente | Dirección permitida | Dónde se configura |
+|---|---|---|
+| Local (`supabase/config.toml`) | `http://localhost:3000/acceso/nueva-contrasena` y `http://127.0.0.1:3000/acceso/nueva-contrasena` | versionado: el archivo |
+| Demo / staging (`ohdsavwpasfpapbyutrv`) | `https://<panel de staging>/acceso/nueva-contrasena` | a mano: Auth → URL Configuration → Redirect URLs (o `supabase config push`) |
+| Producción (cuando exista) | `https://<panel de producción>/acceso/nueva-contrasena` | igual que staging |
+
+El valor del proyecto hosteado no sale de `config.toml` (el CI no hace `config push`): una dirección nueva se suma a mano en cada proyecto y se anota acá. Si el panel cambia de dirección (otro dominio, un `basePath`), se suma la nueva y se saca la vieja.
+
 ## Infraestructura de sincronización
 
 Lo que ADR-008 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
