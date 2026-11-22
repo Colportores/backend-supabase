@@ -16,7 +16,7 @@
 -- Se puede correr dos veces: la segunda no encuentra nada vivo.
 --
 -- Los depósitos YA VALIDADOS no se pueden dar de baja (trigger DP001: «una corrección es un movimiento nuevo», vale
--- también para el servidor): quedan vivos y el resumen los cuenta. Quitarlos del todo es una decisión de dominio de
+-- también para el servidor) ni los retiros RECHAZADOS (quedan como historia): quedan vivos y el resumen los cuenta. Quitarlos del todo es una decisión de dominio de
 -- Cristian (ver el archivo de pendientes del PR); este script no desactiva ese trigger.
 --
 -- Para volver a cargar la demo después de retirarla hay que borrar las filas a mano: el generador se detiene si ve
@@ -45,7 +45,8 @@ begin
     -- el prefijo por sí misma.
     for t in
       select * from (values
-        (1,  'deposito',                          'id::text like $1 and validado_en is null'),
+        (1,  'deposito',                          'id::text like $1 and validado_en is null and rechazado_en is null'),
+        (1.5, 'jornada_acompaniante',             'id::text like $1'),
         (2,  'agenda',                            'id::text like $1'),
         (3,  'cobranza',                          'id::text like $1'),
         (4,  'ticket',                            'id::text like $1'),
@@ -60,6 +61,8 @@ begin
         (13, 'ubicacion',                         'id::text like $1'),
         (14, 'movimiento_stock',                  'usuario_id = any ($2)'),
         (15, 'stock',                             'id::text like $1'),
+        (15.5, 'transferencia_item',              'id::text like $1'),
+        (15.8, 'transferencia_stock',             'id::text like $1'),
         (16, 'pedido_item',                       'id::text like $1'),
         (17, 'pedido_casa_editora',               'id::text like $1'),
         (18, 'campania_coordinador',              'campania_id::text like $1'),
@@ -93,9 +96,10 @@ begin
       v_resumen := v_resumen || jsonb_build_object('que', t.tabla, 'filas', v_n);
     end loop;
 
-    -- Un depósito validado no se da de baja ni siquiera desde el servidor (DP001, migración 0129): queda vivo y se informa.
+    -- Un depósito validado no se da de baja ni siquiera desde el servidor (DP001, migración 0129), y un retiro rechazado queda como
+    -- historia (tg_deposito_rechazado_no_se_edita): quedan vivos y se informa.
     select count(*) into v_n from public.deposito where id::text like v_pre and deleted_at is null;
-    v_resumen := v_resumen || jsonb_build_object('que', 'AVISO: depósitos validados que NO se pueden dar de baja (DP001)', 'filas', v_n);
+    v_resumen := v_resumen || jsonb_build_object('que', 'AVISO: depósitos validados o retiros rechazados que NO se pueden dar de baja (DP001)', 'filas', v_n);
 
     -- Los usuarios se dan de baja al final (otras filas los referencian).
     update public.usuario set deleted_at = now() where deleted_at is null and id = any (v_usr);
