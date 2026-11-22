@@ -164,8 +164,8 @@ consultar "
     ('$ANA',  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ana.concurrencia@example.com',  'x', now(), now()),
     ('$BETO', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'beto.concurrencia@example.com', 'x', now(), now());
   insert into public.pais (id, nombre, iso_code) values ('$PAIS', 'Uruguay', 'UY');
-  insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-    values ('$CIUDAD', 'Montevideo', '$PAIS', -34.9, -56.16);
+  insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+    values ('$CIUDAD', 'Montevideo', 'Montevideo', '$PAIS', -34.9, -56.16);
   insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
     values ('$CAMPANIA', 'Campaña concurrencia', 'VERANO', current_date - 10, current_date + 30);
   insert into public.campania_ciudad (id, campania_id, ciudad_id) values ('$CAMPANIA_CIUDAD', '$CAMPANIA', '$CIUDAD');
