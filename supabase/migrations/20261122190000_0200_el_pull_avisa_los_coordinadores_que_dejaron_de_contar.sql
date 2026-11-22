@@ -336,13 +336,14 @@ begin
     -- Los coordinadores que dejaron de contar (0200): la política de la 0178 esconde la fila pero la fila no cambia (cambió
     -- la cuenta o el rol, o venció `valido_hasta`), así que el delta no trae nada. En cada pull de la entidad, con delta o
     -- desde cero (el teléfono no borra lo que ya tiene), van sus ids para que la app los saque de «¿Quién te acompaña?».
+    -- A diferencia de `ubicacion` (0195), la clave viene SIEMPRE, también vacía (`[]`): es la lista completa de hoy. Así el
+    -- teléfono distingue «nadie afuera» de «servidor sin aviso» y el coordinador reactivado (o al que le empieza o le
+    -- renuevan el rol) vuelve a la lista aunque su fila no cambie y el delta no la traiga (decisión del 22/11, P1 del rescate).
     if v_tabla = 'public.campania_coordinador'::regclass then
       select coalesce(jsonb_agg(q.id order by q.id), '[]'::jsonb)
         into v_ids
         from public.coordinadores_que_no_cuentan_en_mis_campanias() q (id);
-      if jsonb_array_length(v_ids) > 0 then
-        v_fuera := v_fuera || jsonb_build_object(v_entidad, v_ids);
-      end if;
+      v_fuera := v_fuera || jsonb_build_object(v_entidad, v_ids);
     end if;
   end loop;
 
@@ -382,5 +383,5 @@ comment on function sync.pull(text[], jsonb, integer, uuid, text) is
   'columna_duenio bajan solo las filas del usuario autenticado (0014); si la columna es una lista separada por '
   'coma, las filas donde el usuario es cualquiera de ellas (0148). out_of_area: las ubicaciones '
   'que cambiaron de ciudad en el tramo y las de las ciudades que dejaron de ser suyas (0195), y en cada pull de '
-  'campania_coordinador los ids de los coordinadores de sus campañas que hoy no cuentan (0200); area_reset: las entidades '
+  'campania_coordinador, siempre (también []), los ids de los coordinadores de sus campañas que hoy no cuentan (0200); area_reset: las entidades '
   'que arrancaron de cero porque cambió el área (0016).';

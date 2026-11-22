@@ -7,6 +7,7 @@
 --     esconde la baja y va en el aviso;
 --   · el administrador que figura en la campaña y nunca fue coordinador se avisa desde el primer pull;
 --   · repetir el pull da lo mismo (idempotente), con delta o desde cero; un coordinador de otra campaña no se avisa nunca;
+--   · la clave viene SIEMPRE (también `[]`): con un coordinador reactivado el delta la trae sin su id, y sin nadie afuera vacía;
 --   · quien igual ve las filas (el coordinador de la campaña, el ADMIN) no recibe aviso;
 --   · el aviso son solo ids de fila, y el helper no se llama sin sesión.
 --
@@ -124,13 +125,13 @@ select is(pg_temp.avisados(d), array['fa'],
 select is(jsonb_typeof(d -> 'out_of_area' -> 'campania_coordinador' -> 0), 'string',
           'el aviso son ids sueltos, sin nombre ni persona') from p1;
 
--- El coordinador de e1 (no inscripto) y el ADMIN ven las filas: no reciben aviso.
+-- El coordinador de e1 (no inscripto) y el ADMIN ven las filas: no reciben ids avisados (la clave viene, vacía).
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000) -> 'out_of_area', null,
-          'el coordinador de la campaña ve a todos sus colegas: sin out_of_area');
+select is(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000) -> 'out_of_area', '{"campania_coordinador": []}'::jsonb,
+          'el coordinador de la campaña ve a todos sus colegas: la clave viene, vacía');
 select pg_temp.actuar_como(pg_temp.u('ad'));
-select is(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000) -> 'out_of_area', null,
-          'el ADMIN ve todo: sin out_of_area');
+select is(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000) -> 'out_of_area', '{"campania_coordinador": []}'::jsonb,
+          'el ADMIN ve todo: la clave viene, vacía');
 
 -- ---------------------------------------------------------------------------
 -- 3. En el servidor: suspender (c2), dar de baja la cuenta (c3), quitar el rol (c5), quitar de la campaña (c6),
@@ -173,6 +174,28 @@ select is((select coalesce(array_agg(right(q.id::text, 2) order by q.id), array[
              from public.coordinadores_que_no_cuentan_en_mis_campanias() q (id)),
           array['f2','f3','f4','f5','f7','fa'], 'el helper da lo mismo que el aviso');
 
+-- El coordinador reactivado vuelve: su fila no cambió, el delta no la trae, pero la clave viene siempre y ya no lleva su id.
+select pg_temp.como_servidor();
+update public.usuario set suspendido_en = null where id = pg_temp.u('c2');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table p4 as select sync.pull(array['campania_coordinador'], (select d -> 'watermark' from p3), 1000) as d;
+select ok(p4.d -> 'out_of_area' ? 'campania_coordinador', 'reactivado c2: la clave viene aunque el delta no traiga filas') from p4;
+select is(pg_temp.avisados(d), array['f3','f4','f5','f7','fa'], 'y la lista de hoy ya no lleva a c2 (vuelve al teléfono)') from p4;
+
+-- Nadie afuera: se reactiva a todos y se saca al administrador de la campaña. La clave viene vacía (`[]`), no ausente.
+select pg_temp.como_servidor();
+update public.usuario set suspendido_en = null where id = pg_temp.u('c7');
+update public.usuario set deleted_at = null where id = pg_temp.u('c3');
+update public.usuario_rol set valido_hasta = null where usuario_id = pg_temp.u('c4');
+update public.usuario_rol set deleted_at = null
+ where usuario_id = pg_temp.u('c5') and rol_id = (select id from public.rol where codigo = 'COORDINADOR');
+delete from public.campania_coordinador where id = pg_temp.u('fa');
+select pg_temp.actuar_como(pg_temp.u('b1'));
+create temp table p5 as select sync.pull(array['campania_coordinador'], (select d -> 'watermark' from p4), 1000) as d;
+select is(p5.d -> 'out_of_area', '{"campania_coordinador": []}'::jsonb, 'sin nadie afuera: out_of_area de campania_coordinador viene como []') from p5;
+select is(pg_temp.avisados(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000)), array[]::text[],
+          'y desde cero también: nadie afuera') ;
+
 -- Otra entidad en el mismo pull no se toca: la clave de campania_coordinador es la única nueva.
 select is((select array_agg(k order by k)
              from jsonb_object_keys(sync.pull(array['campania_coordinador', 'campania'], '{}'::jsonb, 1000)
@@ -183,8 +206,8 @@ select is((select array_agg(k order by k)
 -- 5. Quien no está inscripto en e1 no recibe aviso de e1; el coordinador de la campaña tampoco
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('c1'));
-select is(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000) -> 'out_of_area', null,
-          'el coordinador de e1 sigue sin aviso (ve las filas de sus colegas)');
+select is(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000) -> 'out_of_area', '{"campania_coordinador": []}'::jsonb,
+          'el coordinador de e1 sigue sin ids avisados (ve las filas de sus colegas): la clave viene, vacía');
 select is((select count(*)::int from public.coordinadores_que_no_cuentan_en_mis_campanias()), 0,
           'y el helper le da vacío');
 select pg_temp.actuar_como(pg_temp.u('c9'));
@@ -200,7 +223,7 @@ select throws_ok($$ select * from public.coordinadores_que_no_cuentan_en_mis_cam
 -- Limpieza
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
-drop table p1, p2, p3;
+drop table p1, p2, p3, p4, p5;
 select pg_temp.limpiar();
 select is((select count(*)::int from public.campania_coordinador
             where campania_id in (pg_temp.u('e1'), pg_temp.u('e2'))), 0, 'limpieza: no queda nada de la prueba');
