@@ -55,8 +55,8 @@ select ('01920000-0000-7000-8000-0000000007' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000007c0', 'Pais inscribir', 'ZI');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000007c1', 'Ciudad inscribir', '01920000-0000-7000-8000-0000000007c0', -34.9, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000007c1', 'Ciudad inscribir', 'Departamento de prueba', '01920000-0000-7000-8000-0000000007c0', -34.9, -56.16);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000007e1', 'Verano', 'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000007a1', null),
@@ -172,10 +172,8 @@ select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e5', '01920000-0000-7000-8000-0000000007b1') $$,
   'CI001', null, 'campaña borrada → CI001'
 );
-select throws_ok(
-  $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e3', '01920000-0000-7000-8000-0000000007b1') $$,
-  'CI002', null, 'campaña futura (no activa) → CI002'
-);
+-- Una campaña futura (e3) ya no es CI002: se inscribe desde que la campaña existe (0058, backend#103);
+-- lo cubre 0063_inscribir_y_asignar_zona_antes_del_inicio_test.
 select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e4', '01920000-0000-7000-8000-0000000007b1') $$,
   'CI002', null, 'campaña terminada → CI002'
@@ -202,11 +200,13 @@ select throws_ok(
 );
 select throws_ok(
   $$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5') $$,
-  'CI007', 'Está en campaña Salto. Reasignar primero.', 'inscripto en otra campaña activa → CI007 con el literal de la HU'
+  'CI007', 'Está en la campaña Salto (desde el ' || to_char(current_date - 10, 'DD/MM') || ', sin fecha de fin). Elegí otra campaña o quitalo de esa primero.',
+  'inscripto en otra campaña activa → CI007 con el aviso que nombra la campaña y sus fechas (0102)'
 );
 select is(
   pg_temp.detalle_error($$ select public.inscribir_colportor('01920000-0000-7000-8000-0000000007e1', '01920000-0000-7000-8000-0000000007b5') $$)::jsonb,
-  jsonb_build_object('campania_id', '01920000-0000-7000-8000-0000000007e2', 'campania_nombre', 'Salto'),
+  jsonb_build_object('campania_id', '01920000-0000-7000-8000-0000000007e2', 'campania_nombre', 'Salto',
+                     'fecha_inicio', to_char(current_date - 10, 'YYYY-MM-DD'), 'fecha_fin', null),
   'CI007 trae en details la campaña en conflicto (id y nombre) para el BFF'
 );
 -- Una inscripción borrada en esta campaña (b6, b3) ya no es CI008: inscribir_colportor() la reactiva

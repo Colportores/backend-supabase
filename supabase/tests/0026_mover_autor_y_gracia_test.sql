@@ -70,9 +70,9 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'mover-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3','b4']) s;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais mover', 'ZM');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad en curso mover', pg_temp.u('c0'), -34.9, -56.2),
-  (pg_temp.u('c2'), 'Ciudad futura mover',   pg_temp.u('c0'), -33.0, -55.0);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad en curso mover', 'Departamento de prueba', pg_temp.u('c0'), -34.9, -56.2),
+  (pg_temp.u('c2'), 'Ciudad futura mover', 'Departamento de prueba',   pg_temp.u('c0'), -33.0, -55.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
   (pg_temp.u('e1'), 'En curso mover', 'VERANO', current_date - 10, current_date + 30),
   (pg_temp.u('e2'), 'Futura mover',   'VERANO', current_date + 3,  current_date + 60);

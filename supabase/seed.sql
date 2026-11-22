@@ -41,10 +41,12 @@ insert into public.pais (id, nombre, iso_code) values
   ('09990000-0000-7000-8001-000000000001', 'Uruguay', 'UY')
 on conflict do nothing;
 
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial) values
-  ('09990000-0000-7000-8002-000000000001', 'Ciudad Ejemplo Norte', '09990000-0000-7000-8001-000000000001', -33.0, -56.0, 13),
-  ('09990000-0000-7000-8002-000000000002', 'Ciudad Ejemplo Sur',   '09990000-0000-7000-8001-000000000001', -34.0, -55.5, 13)
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial) values
+  ('09990000-0000-7000-8002-000000000001', 'Ciudad Ejemplo Norte', 'Departamento Ejemplo Norte', '09990000-0000-7000-8001-000000000001', -33.0, -56.0, 13),
+  ('09990000-0000-7000-8002-000000000002', 'Ciudad Ejemplo Sur',   'Departamento Ejemplo Sur',   '09990000-0000-7000-8001-000000000001', -34.0, -55.5, 13)
 on conflict do nothing;
+-- El departamento de las dos de ejemplo es ficticio, como ellas (migración 0066, backend-supabase#92): el
+-- de una ciudad real se carga con docs/guia-carga-manual.md §2.
 
 -- Montevideo, con su rectángulo (migración 0031, backend-supabase#42): es la ciudad del mapa propio de la
 -- demo del Hito 1 y la única que el publicador de mapas (tiles/) publica de este seed; las dos de ejemplo
@@ -54,8 +56,8 @@ on conflict do nothing;
 -- (el mismo bloque, idempotente). `where not exists`: si la base ya tiene una Montevideo viva en Uruguay
 -- (cargada a mano, con otro id) no se agrega una segunda.
 insert into public.ciudad
-  (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial, bbox_oeste, bbox_sur, bbox_este, bbox_norte)
-select '09990000-0000-7000-8002-000000000003', 'Montevideo', p.id, -34.9011, -56.1645, 13,
+  (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial, bbox_oeste, bbox_sur, bbox_este, bbox_norte)
+select '09990000-0000-7000-8002-000000000003', 'Montevideo', 'Montevideo', p.id, -34.9011, -56.1645, 13,
        -56.433, -34.945, -55.948, -34.701
   from public.pais p
  where p.iso_code = 'UY'
@@ -117,7 +119,9 @@ insert into public.zona_vertice (id, zona_id, orden, lat, lon, calle_a, calle_b)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
--- 4. Catálogo — un producto por tipo, más una colección con dos productos
+-- 4. Catálogo — un producto por tipo, más dos colecciones: una serie de dos libros y un
+--    combo («Pack Familiar»: 1 libro y 2 revistas), que es una colección con precio propio
+--    y se vende como un solo ítem (migración 0056, backend-supabase#99, HU-CAT-009)
 -- ----------------------------------------------------------------------------
 
 insert into public.producto
@@ -136,14 +140,20 @@ insert into public.producto
 on conflict do nothing;
 
 insert into public.coleccion (id, nombre) values
-  ('09990000-0000-7000-8006-000000000001', 'Colección de Ejemplo — Serie A')
+  ('09990000-0000-7000-8006-000000000001', 'Colección de Ejemplo — Serie A'),
+  ('09990000-0000-7000-8006-000000000002', 'Pack Familiar de Ejemplo')
 on conflict do nothing;
 
-insert into public.producto_coleccion (id, producto_id, coleccion_id) values
+-- cantidad = unidades del producto que lleva la colección (el combo lleva 1 libro y 2 revistas).
+insert into public.producto_coleccion (id, producto_id, coleccion_id, cantidad) values
   ('09990000-0000-7000-8007-000000000001',
-    '09990000-0000-7000-8005-000000000001', '09990000-0000-7000-8006-000000000001'),
+    '09990000-0000-7000-8005-000000000001', '09990000-0000-7000-8006-000000000001', 1),
   ('09990000-0000-7000-8007-000000000002',
-    '09990000-0000-7000-8005-000000000002', '09990000-0000-7000-8006-000000000001')
+    '09990000-0000-7000-8005-000000000002', '09990000-0000-7000-8006-000000000001', 1),
+  ('09990000-0000-7000-8007-000000000003',
+    '09990000-0000-7000-8005-000000000001', '09990000-0000-7000-8006-000000000002', 1),
+  ('09990000-0000-7000-8007-000000000004',
+    '09990000-0000-7000-8005-000000000003', '09990000-0000-7000-8006-000000000002', 2)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
@@ -169,7 +179,10 @@ insert into public.precio_general
   ('09990000-0000-7000-800b-000000000005',
     '09990000-0000-7000-8005-000000000005', null, 0, '2026-01-01', null),
   ('09990000-0000-7000-800b-000000000006',
-    null, '09990000-0000-7000-8006-000000000001', 44000, '2026-01-01', null)
+    null, '09990000-0000-7000-8006-000000000001', 44000, '2026-01-01', null),
+  -- El combo vale menos que sus partes (24000 + 2 x 7500 = 39000): su precio es propio, no una suma.
+  ('09990000-0000-7000-800b-000000000007',
+    null, '09990000-0000-7000-8006-000000000002', 36000, '2026-01-01', null)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
@@ -198,5 +211,9 @@ insert into public.precio_por_ciudad
     15000, '2026-01-01', null),
   ('09990000-0000-7000-8008-000000000006',
     '09990000-0000-7000-8005-000000000005', null, '09990000-0000-7000-8009-000000000003',
-    0, '2026-01-01', null)
+    0, '2026-01-01', null),
+  -- El combo tiene su propia excepción en la segunda ciudad de campaña; en las otras rige su general.
+  ('09990000-0000-7000-8008-000000000007',
+    null, '09990000-0000-7000-8006-000000000002', '09990000-0000-7000-8009-000000000002',
+    38000, '2026-01-01', null)
 on conflict do nothing;

@@ -72,16 +72,16 @@ select '01920000-0000-7000-8000-0000000042a4'::uuid, r.id, now() - interval '10 
 update public.usuario set deleted_at = now() where id = '01920000-0000-7000-8000-0000000042a5';
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000042c0', 'Pais panel', 'ZP');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, zoom_inicial, deleted_at) values
-  ('01920000-0000-7000-8000-0000000042c1', 'Montevideo q54',     '01920000-0000-7000-8000-0000000042c0', -34.90, -56.16, 13, null),
-  ('01920000-0000-7000-8000-0000000042c2', 'Salto q54',          '01920000-0000-7000-8000-0000000042c0', -31.40, -57.96, 12, null),
-  ('01920000-0000-7000-8000-0000000042c3', 'Paysandú q54',       '01920000-0000-7000-8000-0000000042c0', -32.32, -58.08, 12, null),
-  ('01920000-0000-7000-8000-0000000042c4', 'Baja q54',           '01920000-0000-7000-8000-0000000042c0', -33.00, -56.00, 11, now()),
-  ('01920000-0000-7000-8000-0000000042c5', 'Ñandú q54',          '01920000-0000-7000-8000-0000000042c0', -33.50, -56.50, 11, null),
-  ('01920000-0000-7000-8000-0000000042c6', 'Villa Salto q54',    '01920000-0000-7000-8000-0000000042c0', -31.50, -57.90, 11, null),
-  ('01920000-0000-7000-8000-0000000042c7', 'Borrada q54',        '01920000-0000-7000-8000-0000000042c0', -30.00, -56.00, 11, now()),
-  ('01920000-0000-7000-8000-0000000042c8', 'Azeta q54',          '01920000-0000-7000-8000-0000000042c0', -33.10, -55.90, 11, null),
-  ('01920000-0000-7000-8000-0000000042c9', 'Zeta q54',           '01920000-0000-7000-8000-0000000042c0', -33.20, -55.80, 11, null);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, zoom_inicial, deleted_at) values
+  ('01920000-0000-7000-8000-0000000042c1', 'Montevideo q54', 'Departamento de prueba',     '01920000-0000-7000-8000-0000000042c0', -34.90, -56.16, 13, null),
+  ('01920000-0000-7000-8000-0000000042c2', 'Salto q54', 'Departamento de prueba',          '01920000-0000-7000-8000-0000000042c0', -31.40, -57.96, 12, null),
+  ('01920000-0000-7000-8000-0000000042c3', 'Paysandú q54', 'Departamento de prueba',       '01920000-0000-7000-8000-0000000042c0', -32.32, -58.08, 12, null),
+  ('01920000-0000-7000-8000-0000000042c4', 'Baja q54', 'Departamento de prueba',           '01920000-0000-7000-8000-0000000042c0', -33.00, -56.00, 11, now()),
+  ('01920000-0000-7000-8000-0000000042c5', 'Ñandú q54', 'Departamento de prueba',          '01920000-0000-7000-8000-0000000042c0', -33.50, -56.50, 11, null),
+  ('01920000-0000-7000-8000-0000000042c6', 'Villa Salto q54', 'Departamento de prueba',    '01920000-0000-7000-8000-0000000042c0', -31.50, -57.90, 11, null),
+  ('01920000-0000-7000-8000-0000000042c7', 'Borrada q54', 'Departamento de prueba',        '01920000-0000-7000-8000-0000000042c0', -30.00, -56.00, 11, now()),
+  ('01920000-0000-7000-8000-0000000042c8', 'Azeta q54', 'Departamento de prueba',          '01920000-0000-7000-8000-0000000042c0', -33.10, -55.90, 11, null),
+  ('01920000-0000-7000-8000-0000000042c9', 'Zeta q54', 'Departamento de prueba',           '01920000-0000-7000-8000-0000000042c0', -33.20, -55.80, 11, null);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000042e1', 'Verano',  'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000042a1', null),
@@ -151,16 +151,16 @@ select is((select pg_get_function_result('public.mi_perfil()'::regprocedure)),
 select is((select pg_get_function_result('public.campanias_del_coordinador()'::regprocedure)),
           'TABLE(id uuid, nombre text, tipo text, fecha_inicio date, fecha_fin date)',
           'campanias_del_coordinador(): la forma de la respuesta');
-select is((select pg_get_function_result('public.ciudades_de_campania(uuid)'::regprocedure)),
-          'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
+select is((select pg_get_function_result('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure)),
+          'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, departamento text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
           'ciudades_de_campania(): la forma de la respuesta');
 select is((select pg_get_function_result('public.ciudades_del_catalogo(uuid,text)'::regprocedure)),
-          'TABLE(ciudad_id uuid, nombre text)', 'ciudades_del_catalogo(): la forma de la respuesta');
+          'TABLE(ciudad_id uuid, nombre text, departamento text)', 'ciudades_del_catalogo(): la forma de la respuesta');
 select is((select pg_get_function_result('public.zonas_de_ciudad(uuid,uuid)'::regprocedure)),
           'TABLE(zona_id uuid, nombre text, tipo_forma text, color text, centro_lat double precision, centro_lon double precision, radio_m integer, poligono_geojson jsonb, esquinas jsonb, colportores jsonb, ubicaciones_registradas integer)',
           'zonas_de_ciudad(): la forma de la respuesta (sin email, sin clientes, sin personas)');
 
-select is((select pg_get_function_result('public.colportores_de_campania(uuid)'::regprocedure)),
+select is((select pg_get_function_result('public.colportores_de_campania(uuid,integer,integer)'::regprocedure)),
           'TABLE(usuario_id uuid, nombre text, apellido text, zona_id uuid, zona_nombre text, suspendido boolean, email text, estado text)',
           'colportores_de_campania(): la forma de la respuesta no cambió al alinear el criterio');
 select is((select pg_get_function_result('public.zonas_asignables(uuid)'::regprocedure)),
@@ -174,35 +174,35 @@ select is((select p.prosecdef from pg_proc p where p.oid = 'public.campanias_del
 select is((select p.provolatile from pg_proc p where p.oid = 'public.campanias_del_coordinador()'::regprocedure), 's',
           'campanias_del_coordinador() es STABLE (solo lee)');
 select is((select array_agg(p.prosecdef order by p.proname) from pg_proc p
-            where p.oid in ('public.ciudades_de_campania(uuid)'::regprocedure,
+            where p.oid in ('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure,
                             'public.ciudades_del_catalogo(uuid,text)'::regprocedure,
                             'public.zonas_de_ciudad(uuid,uuid)'::regprocedure)),
           array[true, true, true], 'las tres lecturas de campaña son SECURITY DEFINER');
 select is((select count(*)::int from pg_proc p
             where p.oid in ('public.mi_perfil()'::regprocedure,
                             'public.campanias_del_coordinador()'::regprocedure,
-                            'public.ciudades_de_campania(uuid)'::regprocedure,
+                            'public.ciudades_de_campania(uuid,integer,integer)'::regprocedure,
                             'public.ciudades_del_catalogo(uuid,text)'::regprocedure,
                             'public.zonas_de_ciudad(uuid,uuid)'::regprocedure,
                             'public.exigir_lectura_de_campania(uuid)'::regprocedure)
               and p.proconfig = array['search_path=""']), 6, 'las seis fijan search_path vacío');
 
 select ok(has_function_privilege('authenticated', f, 'execute'), 'authenticated ejecuta ' || f)
-  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid)',
+  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid,integer,integer)',
                     'public.ciudades_del_catalogo(uuid,text)', 'public.zonas_de_ciudad(uuid,uuid)']) f;
 select ok(not has_function_privilege('anon', f, 'execute'), 'anon NO ejecuta ' || f)
-  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid)',
+  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid,integer,integer)',
                     'public.ciudades_del_catalogo(uuid,text)', 'public.zonas_de_ciudad(uuid,uuid)',
                     'public.exigir_lectura_de_campania(uuid)']) f;
 select ok(not has_function_privilege('service_role', f, 'execute'), 'service_role NO ejecuta ' || f)
-  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid)',
+  from unnest(array['public.mi_perfil()', 'public.campanias_del_coordinador()', 'public.ciudades_de_campania(uuid,integer,integer)',
                     'public.ciudades_del_catalogo(uuid,text)', 'public.zonas_de_ciudad(uuid,uuid)']) f;
 select is((select count(*)::int
              from pg_proc p, aclexplode(p.proacl) a
             where a.grantee = 0 and a.privilege_type = 'EXECUTE'
               and p.oid in ('public.mi_perfil()'::regprocedure,
                             'public.campanias_del_coordinador()'::regprocedure,
-                            'public.ciudades_de_campania(uuid)'::regprocedure,
+                            'public.ciudades_de_campania(uuid,integer,integer)'::regprocedure,
                             'public.ciudades_del_catalogo(uuid,text)'::regprocedure,
                             'public.zonas_de_ciudad(uuid,uuid)'::regprocedure,
                             'public.exigir_lectura_de_campania(uuid)'::regprocedure)),
@@ -345,8 +345,9 @@ select throws_ok($$ select * from public.ciudades_de_campania('01920000-0000-700
   'CZ011', null, 'y a un ADMIN la terminada también le da CZ011');
 
 -- colportores_de_campania() y zonas_asignables() leen con el mismo criterio (0033): la vista 24 de
--- una campaña por empezar carga zonas, zonas asignables y colportores sin error. Inscribir exige que
--- la campaña haya empezado, así que la lista de colportores de una por empezar es vacía, no un error.
+-- una campaña por empezar carga zonas, zonas asignables y colportores sin error. En esta fixture nadie
+-- está inscripto en la campaña por empezar, así que su lista de colportores es vacía, no un error (desde
+-- 0058 se puede inscribir antes del inicio: 0063_inscribir_y_asignar_zona_antes_del_inicio_test).
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a1');
 select is_empty(
   $$ select * from public.colportores_de_campania('01920000-0000-7000-8000-0000000042e5') $$,
@@ -376,10 +377,11 @@ select throws_ok($$ select * from public.colportores_de_campania('01920000-0000-
   'CZ001', null, 'campaña dada de baja: CZ001 (colportores)');
 select throws_ok($$ select * from public.zonas_asignables('01920000-0000-7000-8000-0000000042e4') $$,
   'CZ001', null, 'campaña dada de baja: CZ001 (zonas asignables)');
--- Asignar zona sigue pidiendo una campaña que empezó: la regla de escritura no cambia.
+-- Asignar zona ya no pide una campaña que empezó (0058): b1 no está en la campaña por empezar, así que la
+-- regla que lo frena es CZ003 y no CZ002.
 select throws_ok(
   $$ select public.asignar_zona('01920000-0000-7000-8000-0000000042e5', '01920000-0000-7000-8000-0000000042b1', '01920000-0000-7000-8000-0000000042d6') $$,
-  'CZ002', null, 'asignar_zona() en una campaña por empezar sigue en CZ002');
+  'CZ003', null, 'asignar_zona() en una campaña por empezar ya no da CZ002: llega a CZ003 (no inscripto)');
 -- El permiso va primero: el coordinador de otra campaña, el colportor y quien no tiene sesión no
 -- leen una por empezar.
 select pg_temp.actuar_como('01920000-0000-7000-8000-0000000042a2');

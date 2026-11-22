@@ -1,7 +1,7 @@
 -- pgTAP · migración 0034 (backend-supabase#78): precio general de venta (Administración) y búsqueda
 -- «modificado o, si no hay, general» (HU-CAT-004, HU-CAT-005, HU-CAT-006; decisión de Cristian del 06/10).
 --   1. La forma: tabla, columnas, FK, restricciones de no solapamiento, políticas, privilegios, índice
---      del delta; todavía fuera de sync.entidad (el contrato espera el OK de Bruno); la función es
+--      del delta; en sync.entidad desde la 0144 (antes, fuera hasta el OK del contrato); la función es
 --      SECURITY INVOKER, STABLE y solo la ejecutan authenticated y service_role.
 --   2. Las vigencias: importes negativos, producto y colección a la vez, rango al revés; un solo
 --      general vigente a la vez por producto o colección; tramos contiguos sí, una baja lógica no cuenta.
@@ -92,10 +92,10 @@ select pg_temp.u(x.s), r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais general43', 'ZG');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  (pg_temp.u('c1'), 'Ciudad c1 general43', pg_temp.u('c0'), -34.90, -56.16),
-  (pg_temp.u('c2'), 'Ciudad c2 general43', pg_temp.u('c0'), -34.70, -56.20),
-  (pg_temp.u('c3'), 'Ciudad c3 general43', pg_temp.u('c0'), -34.50, -56.30);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  (pg_temp.u('c1'), 'Ciudad c1 general43', 'Departamento de prueba', pg_temp.u('c0'), -34.90, -56.16),
+  (pg_temp.u('c2'), 'Ciudad c2 general43', 'Departamento de prueba', pg_temp.u('c0'), -34.70, -56.20),
+  (pg_temp.u('c3'), 'Ciudad c3 general43', 'Departamento de prueba', pg_temp.u('c0'), -34.50, -56.30);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   (pg_temp.u('e1'), 'e1 general43', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a1')),
   (pg_temp.u('e2'), 'e2 general43', 'VERANO', pg_temp.h() - 10, pg_temp.h() + 30, pg_temp.u('a2')),
@@ -195,7 +195,7 @@ select ok((select relrowsecurity from pg_class where oid = 'public.precio_genera
 select has_trigger('public', 'precio_general', 'precio_general_auditoria_insert', 'trigger de auditoría en el INSERT');
 select has_trigger('public', 'precio_general', 'precio_general_auditoria_update', 'trigger de auditoría en el UPDATE');
 select has_index('public', 'precio_general', 'precio_general_delta_idx', array['xmin_w', 'id'],
-                 'el índice del delta, listo para cuando el contrato de sync la registre');
+                 'el índice del delta (lo usa el pull desde la 0144)');
 
 select ok(has_table_privilege('authenticated', 'public.precio_general', 'select'), 'authenticated lee');
 select ok(has_table_privilege('authenticated', 'public.precio_general', 'insert'), 'authenticated inserta (si la RLS lo deja)');
@@ -212,10 +212,10 @@ select ok(has_table_privilege('service_role', 'public.precio_general', 'select')
           and has_table_privilege('service_role', 'public.precio_general', 'update'),
           'service_role lee y escribe (seeds y jobs)');
 
--- El contrato de sync no se toca en este issue: la tabla no está registrada. Cuando el contrato la
--- sume (PR de docs que revisa Bruno), esta comprobación se cambia por la de su registro.
-select is((select count(*)::int from sync.entidad where nombre = 'precio_general'), 0,
-          'todavía no es una entidad del sync (espera el OK del contrato)');
+-- La 0034 la dejó fuera del sync «hasta el OK del contrato»; la 0144 (#205) la registra (pull, sin
+-- push). El detalle del registro y del pull está en 0144_precio_general_en_sync_y_realtime_test.sql.
+select is((select count(*)::int from sync.entidad where nombre = 'precio_general'), 1,
+          'es una entidad del sync (desde la 0144)');
 
 select has_function('public', 'precio_vigente', array['uuid', 'uuid', 'uuid', 'date'], 'existe precio_vigente');
 select is((select p.prosecdef from pg_proc p where p.oid = 'public.precio_vigente(uuid,uuid,uuid,date)'::regprocedure),

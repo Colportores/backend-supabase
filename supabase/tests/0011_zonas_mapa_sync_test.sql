@@ -24,8 +24,8 @@ select ('01920000-0000-7000-8000-0000000011' || s)::uuid, '00000000-0000-0000-00
   from unnest(array['b1','b2']) s;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000011c0', 'Pais mapa sync', 'ZS');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000011c1', 'Ciudad mapa sync', '01920000-0000-7000-8000-0000000011c0', -34.9, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000011c1', 'Ciudad mapa sync', 'Departamento de prueba', '01920000-0000-7000-8000-0000000011c0', -34.9, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio) values
   ('01920000-0000-7000-8000-0000000011e1', 'Verano sync', 'PERMANENTE', current_date - 10),
   ('01920000-0000-7000-8000-0000000011e2', 'Otra sync',   'PERMANENTE', current_date - 10),
@@ -234,8 +234,8 @@ insert into auth.users (id, instance_id, aud, role, email, encrypted_password, c
 select ('01920000-0000-7000-8000-0000000011' || s)::uuid, '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'mapa-sync-' || s || '@example.com', 'x', now(), now()
   from unnest(array['b4','b5']) s;
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000011c2', 'Ciudad casas sync', '01920000-0000-7000-8000-0000000011c0', -34.80, -56.00);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000011c2', 'Ciudad casas sync', 'Departamento de prueba', '01920000-0000-7000-8000-0000000011c0', -34.80, -56.00);
 insert into public.campania (id, nombre, tipo, fecha_inicio) values
   ('01920000-0000-7000-8000-0000000011e4', 'Futura casas sync', 'PERMANENTE', current_date + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values

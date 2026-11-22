@@ -44,9 +44,9 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'espprop-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3']) s;
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000021c0', 'Pais espprop', 'ZQ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000021c1', 'Ciudad espprop',   '01920000-0000-7000-8000-0000000021c0', -34.9, -56.2),
-  ('01920000-0000-7000-8000-0000000021c3', 'Ciudad espprop 2', '01920000-0000-7000-8000-0000000021c0', -30.0, -51.0);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000021c1', 'Ciudad espprop', 'Departamento de prueba',   '01920000-0000-7000-8000-0000000021c0', -34.9, -56.2),
+  ('01920000-0000-7000-8000-0000000021c3', 'Ciudad espprop 2', 'Departamento de prueba', '01920000-0000-7000-8000-0000000021c0', -30.0, -51.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
 values ('01920000-0000-7000-8000-0000000021e1', 'Verano espprop', 'VERANO', current_date - 10, current_date + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values ('01920000-0000-7000-8000-0000000021f1', '01920000-0000-7000-8000-0000000021e1', '01920000-0000-7000-8000-0000000021c1');

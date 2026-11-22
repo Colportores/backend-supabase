@@ -55,8 +55,8 @@ update public.usuario u set nombre = x.n, apellido = x.a
  where u.id = ('01920000-0000-7000-8000-0000000015' || x.s)::uuid;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000015c0', 'Pais quitar', 'ZQ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000015c1', 'Montevideo quitar', '01920000-0000-7000-8000-0000000015c0', -34.90, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000015c1', 'Montevideo quitar', 'Departamento de prueba', '01920000-0000-7000-8000-0000000015c0', -34.90, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000015e1', 'Verano',  'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000015a1'),
   ('01920000-0000-7000-8000-0000000015e2', 'Otra',    'PERMANENTE', current_date - 10, null,              '01920000-0000-7000-8000-0000000015a2'),

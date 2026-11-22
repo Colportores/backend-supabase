@@ -82,8 +82,15 @@ DB_URL=postgresql://… bash scripts/db-importar-calles.sh <ciudad_id> calles-mo
 Es volver a bajar el archivo y volver a correr el script: OSM cambia todos los días y no hay una actualización automática.
 No hace falta ningún aviso: la próxima llamada del panel ya usa la red nueva.
 Se puede reimportar con el panel en uso: cada ciudad tiene un candado (`pg_advisory_xact_lock`): la recarga espera a que terminen las llamadas en
-curso de esa ciudad y las llamadas nuevas esperan a que la recarga confirme (unos segundos). Así ninguna llamada junta esquinas de la red
+curso de esa ciudad y las llamadas nuevas esperan a que la recarga confirme. Así ninguna llamada junta esquinas de la red
 vieja con un camino de la nueva, que daría un `CZ016` falso. Las otras ciudades no se enteran.
+
+La espera cuenta como parte de la consulta, y la API de Supabase corta las consultas del rol `authenticated` a los 8 segundos
+(`statement_timeout` por defecto). Si la recarga dura más que eso, la llamada que esperaba falla con **`57014`**
+(`canceling statement due to statement timeout`) en vez de contestar: no es un error de datos ni de permisos, la red nueva está bien, y
+repetir la llamada cuando la recarga terminó funciona. Para que casi nadie lo vea, conviene reimportar en un momento tranquilo
+(la recarga solo bloquea mientras corre `ruteo.cargar_red()`: el `analyze` posterior no espera a nadie). El script no pone tope de tiempo a la
+recarga (`statement_timeout = 0`): una ciudad grande puede tardar más de 8 segundos.
 
 ### Atribución
 
@@ -183,4 +190,4 @@ del schema, solo para `service_role` (o el dueño, que es quien corre el script 
   no se tocan acá. Un barrio aislado de la red no tiene camino hacia el resto (`CZ016`).
 - **No hay `provincia`** en el catálogo de ciudades ni se usa acá.
 - **El aviso «Comparte la calle Heredia con Belvedere»** de la vista 24 necesita comparar el borde con el de las otras zonas de la ciudad, y no sale de estas
-  funciones. Decidido el 16/10: va a la vista previa de `guardar_zona()` (backend-supabase#87), que devolverá las calles compartidas con otras zonas.
+  funciones. Decidido el 16/10: sale de la vista previa de `guardar_zona()` (migración `0038`, backend-supabase#87; desde la `0059`, backend-supabase#91, solo cuentan los tramos del camino por calles entre las esquinas, el mismo de `poligono_por_calles()`), que devuelve `calles_compartidas`: las zonas vivas de la misma ciudad de la campaña cuyo borde recorre al menos un mismo tramo de la red (un tramo de ese camino que además queda entero a 1 m o menos del borde de la vecina, sin largo mínimo; tocarse en una esquina no cuenta, ni un tramo que queda entero a 1 m o menos de un punto donde los dos bordes se tocan; un tramo que sale del borde, aunque quede dentro del metro, tampoco). Cada una con `zona_id`, `nombre` (de la zona), `calle` (`null` si el tramo no tiene nombre en OSM) y `punto` (GeoJSON del medio del tramo, para el rótulo). Si la ciudad no tiene calles cargadas, o el camino entre las esquinas no se puede armar, `calles_compartidas` es `null` y el guardado sigue igual (no hay `CZ015` ahí). Compartir una calle no es superponerse: la superposición mira solo el área en común (`superposiciones`).

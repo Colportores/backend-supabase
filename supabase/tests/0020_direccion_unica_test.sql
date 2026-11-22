@@ -82,9 +82,9 @@ select ('01920000-0000-7000-8000-0000000020' || s)::uuid, '00000000-0000-0000-00
   from unnest(array['b1','b2']) s;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000020c0', 'Pais D1', 'ZD');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000020c1', 'Ciudad D1',      '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2),
-  ('01920000-0000-7000-8000-0000000020c2', 'Otra ciudad D1', '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000020c1', 'Ciudad D1', 'Departamento de prueba',      '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2),
+  ('01920000-0000-7000-8000-0000000020c2', 'Otra ciudad D1', 'Departamento de prueba', '01920000-0000-7000-8000-0000000020c0', -34.9, -56.2);
 -- b1 está inscripto (sin zona) en una campaña vigente de c1: desde 0021 el autor de una casa carga
 -- espacios en ella solo con campaña en la que escribir.
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
@@ -331,14 +331,14 @@ create or replace function pg_temp.lote(p_numero text) returns jsonb language sq
     pg_temp.job('93', 'espacio_persona', 'insert', jsonb_build_object('id', pg_temp.id('d7'),
       'espacio_id', pg_temp.id('d8'), 'persona_id', pg_temp.id('d0'))),
     pg_temp.job('94', 'visita', 'insert', jsonb_build_object('id', pg_temp.id('d6'),
-      'espacio_persona_id', pg_temp.id('d7'), 'fecha', '2026-10-01T15:00:00Z', 'tipo_resultado', 'VENTA')),
+      'espacio_persona_id', pg_temp.id('d7'), 'fecha', to_jsonb(now() - interval '1 hour'), 'tipo_resultado', 'VENTA')),
     pg_temp.job('95', 'venta', 'insert', jsonb_build_object('id', pg_temp.id('d5'),
       'espacio_persona_id', pg_temp.id('d7'), 'visita_id', pg_temp.id('d6'), 'numero_talonario', 'T-1',
-      'monto_total', 150000, 'fecha', '2026-10-01T15:05:00Z')),
+      'monto_total', 150000, 'fecha', to_jsonb(now()))),
     pg_temp.job('96', 'house_status', 'insert', jsonb_build_object('ubicacion_id', pg_temp.id('d9'),
       'lat', (pg_temp.a(30, 0)).lat, 'lon', (pg_temp.a(30, 0)).lon, 'tipo_ubicacion', 'CASA', 'color', 'VENTA_COMPLETA',
       'prioridad', 4)),
-    pg_temp.job('97', 'espacio', 'update', jsonb_build_object('id', pg_temp.id('d8'), 'descripcion', 'fondo'), 0),
+    pg_temp.job('97', 'espacio', 'update', jsonb_build_object('id', pg_temp.id('d8'), 'piso', '2'), 0),
     pg_temp.job('98', 'espacio', 'insert', jsonb_build_object('id', pg_temp.id('d4'), 'ubicacion_id', pg_temp.id('d3'))),
     pg_temp.job('99', 'ubicacion', 'insert', jsonb_build_object('id', pg_temp.id('d2'), 'tipo', 'CASA',
       'calle', 'Colonia', 'numero', '1', 'lat', -34.95, 'lon', -56.25, 'ciudad_id', '01920000-0000-7000-8000-0000000020c1')));

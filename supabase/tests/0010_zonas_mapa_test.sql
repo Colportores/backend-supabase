@@ -97,10 +97,10 @@ select ('01920000-0000-7000-8000-0000000010' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000010c0', 'Pais mapa', 'ZM');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000010c1', 'Montevideo mapa',  '01920000-0000-7000-8000-0000000010c0', -34.90, -56.16),
-  ('01920000-0000-7000-8000-0000000010c2', 'Las Piedras mapa', '01920000-0000-7000-8000-0000000010c0', -34.73, -56.22),
-  ('01920000-0000-7000-8000-0000000010c3', 'Canelones mapa',   '01920000-0000-7000-8000-0000000010c0', -34.52, -56.28);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000010c1', 'Montevideo mapa', 'Departamento de prueba',  '01920000-0000-7000-8000-0000000010c0', -34.90, -56.16),
+  ('01920000-0000-7000-8000-0000000010c2', 'Las Piedras mapa', 'Departamento de prueba', '01920000-0000-7000-8000-0000000010c0', -34.73, -56.22),
+  ('01920000-0000-7000-8000-0000000010c3', 'Canelones mapa', 'Departamento de prueba',   '01920000-0000-7000-8000-0000000010c0', -34.52, -56.28);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000010e1', 'Verano', 'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000010a1'),
@@ -342,14 +342,15 @@ update zonas_ab set b = pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010
 select is((select a ->> 'guardada' from zonas_ab), 'true', 'Zona A se guarda');
 select is((select b ->> 'guardada' from zonas_ab), 'true', 'Zona B comparte un borde (la calle) con A → se guarda');
 select is((select jsonb_array_length(a -> 'vertices') from zonas_ab), 4, 'Zona A queda con sus 4 esquinas');
-select ok(not ((select a from zonas_ab) ? 'superposiciones'), 'la respuesta ya no trae superposiciones');
+select is((select a -> 'superposiciones' from zonas_ab), '[]'::jsonb, 'la respuesta trae superposiciones (0038), vacías: nadie más en la ciudad');
+select is((select b -> 'superposiciones' from zonas_ab), '[]'::jsonb, 'B comparte borde con A y no se superpone: compartir la calle no es solapar (el detalle lo prueba 0048)');
 
 -- La vista previa no guarda: devuelve el polígono y cuántas ubicaciones incluye.
 create temp table previa on commit drop as
 select pg_temp.guardar_rect('01920000-0000-7000-8000-0000000010f1', 'Zona C', -56.165, -34.91, -56.155, -34.90,
                             p_previa => true) as p;
 select is((select p ->> 'guardada' from previa), 'false', 'vista previa: no guarda');
-select ok(not ((select p from previa) ? 'superposiciones'), 'vista previa: sin superposiciones');
+select is((select jsonb_array_length(p -> 'superposiciones') from previa), 2, 'vista previa: C se mete en A y en B, y lo avisa sin frenar (0038; el detalle lo prueba 0048)');
 select is((select p -> 'ubicaciones_incluidas' from previa), '0'::jsonb,
           'vista previa: ubicaciones_incluidas (0: no hay ubicaciones; el conteo lo prueba 0013)');
 select pg_temp.actuar_como_servidor();

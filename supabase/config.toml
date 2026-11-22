@@ -127,6 +127,10 @@ public = true
 file_size_limit = "50MiB"
 allowed_mime_types = ["application/json", "application/octet-stream", "application/x-protobuf", "image/png", "text/plain"]
 
+# `tickets` (0113) ya no se declara: desde la 0134 (backend-supabase#182) la foto del ticket vive en un bucket privado de
+# Cloudflare R2 y se pide con la Edge Function `foto-ticket`. La migración 0113 todavía inserta la fila del bucket (vacía,
+# privada, sin políticas); acá no se vuelve a crear.
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true
@@ -389,6 +393,33 @@ policy = "per_worker"
 inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
+
+# Informe PDF de Reportes (backend-supabase#144, HU-REP-005). Lee las RPC con el JWT de la coordinadora, así que
+# la puerta de Supabase exige un JWT de usuario (verify_jwt); la autorización de verdad la hace la RLS de las RPC.
+[functions.informe-reportes]
+enabled = true
+verify_jwt = true
+import_map = "./functions/informe-reportes/deno.json"
+entrypoint = "./functions/informe-reportes/index.ts"
+
+# Foto del ticket en Cloudflare R2 (backend-supabase#182, HU-COB-007 y HU-COB-009). Devuelve enlaces firmados de R2 para subir o ver
+# la foto; el permiso lo da la base con el JWT de quien pide (verify_jwt: la puerta de Supabase exige un usuario). Los secretos
+# R2_CUENTA, R2_CLAVE_DE_ACCESO, R2_CLAVE_SECRETA y R2_BUCKET se cargan con `supabase secrets set` (README de la función).
+[functions.foto-ticket]
+enabled = true
+verify_jwt = true
+import_map = "./functions/foto-ticket/deno.json"
+entrypoint = "./functions/foto-ticket/index.ts"
+
+# Avisos push por FCM (backend-supabase#237, HU-NOT-003, ADR-014). La despierta pg_cron por pg_net cada minuto si hay avisos listos
+# (migración 0163), así que no lleva JWT de usuario: se autentica con la clave compartida PUSH_CLAVE en `x-push-clave`. Lee y
+# actualiza la cola por dos RPC que solo ejecuta service_role. Secretos: PUSH_CLAVE y FCM_CUENTA_DE_SERVICIO (JSON de la cuenta
+# de servicio de Firebase), con `supabase secrets set` (README de la función).
+[functions.push-fcm]
+enabled = true
+verify_jwt = false
+import_map = "./functions/push-fcm/deno.json"
+entrypoint = "./functions/push-fcm/index.ts"
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"

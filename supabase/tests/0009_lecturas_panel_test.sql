@@ -43,9 +43,9 @@ select ('01920000-0000-7000-8000-0000000009' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000009c0', 'Pais lect', 'ZL');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000009c1', 'Montevideo lect', '01920000-0000-7000-8000-0000000009c0', -34.9, -56.16),
-  ('01920000-0000-7000-8000-0000000009c2', 'Salto lect',      '01920000-0000-7000-8000-0000000009c0', -31.4, -57.96);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000009c1', 'Montevideo lect', 'Departamento de prueba', '01920000-0000-7000-8000-0000000009c0', -34.9, -56.16),
+  ('01920000-0000-7000-8000-0000000009c2', 'Salto lect', 'Departamento de prueba',      '01920000-0000-7000-8000-0000000009c0', -31.4, -57.96);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id, deleted_at) values
   ('01920000-0000-7000-8000-0000000009e1', 'Verano', 'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000009a1', null),
@@ -96,15 +96,15 @@ select is((select prosecdef from pg_proc where oid = 'public.zonas_asignables(uu
           true, 'zonas_asignables() es SECURITY DEFINER');
 select is((select proconfig from pg_proc where oid = 'public.zonas_asignables(uuid)'::regprocedure),
           array['search_path=""'], 'zonas_asignables() fija search_path vacío');
-select is((select proconfig from pg_proc where oid = 'public.colportores_de_campania(uuid)'::regprocedure),
+select is((select proconfig from pg_proc where oid = 'public.colportores_de_campania(uuid, integer, integer)'::regprocedure),
           array['search_path=""'], 'colportores_de_campania() fija search_path vacío');
 select ok(has_function_privilege('authenticated', 'public.zonas_asignables(uuid)', 'execute'),
           'authenticated ejecuta zonas_asignables()');
-select ok(has_function_privilege('authenticated', 'public.colportores_de_campania(uuid)', 'execute'),
+select ok(has_function_privilege('authenticated', 'public.colportores_de_campania(uuid, integer, integer)', 'execute'),
           'authenticated ejecuta colportores_de_campania()');
 select ok(not has_function_privilege('anon', 'public.zonas_asignables(uuid)', 'execute'),
           'anon NO ejecuta zonas_asignables()');
-select ok(not has_function_privilege('anon', 'public.colportores_de_campania(uuid)', 'execute'),
+select ok(not has_function_privilege('anon', 'public.colportores_de_campania(uuid, integer, integer)', 'execute'),
           'anon NO ejecuta colportores_de_campania()');
 -- Sin datos personales de más: zonas_asignables() no devuelve email. colportores_de_campania()
 -- sí desde 0015 (decisión de Cristian del 30/09, front-coordinadores-web#20 punto 5: el

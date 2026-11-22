@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { avisosDeCiudades, ciudadesPublicables, leerCiudades, normalizar, slugDe } from '../src/ambito.mjs';
+import { avisosDeCiudades, ciudadesPublicables, leerCiudades, normalizar, normalizarPais, slugDe } from '../src/ambito.mjs';
 
 const ID_1 = '09990000-0000-7000-8003-000000000001';
 const ID_2 = '09990000-0000-7000-8003-000000000002';
@@ -68,14 +68,79 @@ test('no hay ninguna ciudad con rectángulo: no hay nada que publicar y no es un
   assert.deepEqual(ciudadesPublicables([]), { publicables: [], sinRectangulo: [] });
 });
 
-test('dos ciudades con rectángulo que darían el mismo paquete detienen todo y las nombran', () => {
+test('dos ciudades con rectángulo que darían el mismo paquete (mismo nombre en el mismo departamento) detienen todo y las nombran', () => {
+  const conDepartamento = { ...MONTEVIDEO, departamento: 'Montevideo' };
   assert.throws(
-    () => ciudadesPublicables([MONTEVIDEO, { ...MONTEVIDEO, id: ID_3, nombre: 'MONTEVIDEO' }]),
-    new RegExp(`mismo paquete «montevideo».*${ID_1}.*${ID_3}.*No se subió nada`, 's'),
+    () => ciudadesPublicables([conDepartamento, { ...conDepartamento, id: ID_3, nombre: 'MONTEVIDEO', departamento: 'MONTEVIDEO' }]),
+    new RegExp(`mismo paquete «montevideo-montevideo».*${ID_1}.*${ID_3}.*Dejá una sola.*No se subió nada`, 's'),
   );
   // Si una de las dos no tiene rectángulo, no hay choque: solo se publica la que lo tiene.
   const { publicables } = ciudadesPublicables([MONTEVIDEO, { ...SALTO_SIN_RECTANGULO, id: ID_3, nombre: 'Montevideo' }]);
   assert.equal(publicables.length, 1);
+});
+
+const LA_PAZ_CANELONES = { ...MONTEVIDEO, id: ID_2, nombre: 'La Paz', departamento: 'Canelones' };
+const LA_PAZ_COLONIA = { ...MONTEVIDEO, id: ID_3, nombre: 'La Paz', departamento: 'Colonia' };
+
+test('dos ciudades del mismo nombre en distintos departamentos se publican las dos: su paquete suma el departamento (#259)', () => {
+  const { publicables } = ciudadesPublicables([MONTEVIDEO, LA_PAZ_CANELONES, LA_PAZ_COLONIA]);
+  assert.deepEqual(
+    publicables.map((c) => [c.ciudad_id, c.slug, c.nombre]),
+    [
+      [ID_1, 'montevideo', 'Montevideo'],
+      [ID_2, 'la-paz-canelones', 'La Paz'],
+      [ID_3, 'la-paz-colonia', 'La Paz'],
+    ],
+  );
+  // El departamento se normaliza como el nombre: sin tildes, en minúsculas y con guiones.
+  const tilde = ciudadesPublicables([
+    { ...LA_PAZ_CANELONES, nombre: 'Cerro Chato', departamento: 'Paysandú' },
+    { ...LA_PAZ_COLONIA, nombre: 'Cerro Chato', departamento: 'Treinta y Tres' },
+  ]).publicables;
+  assert.deepEqual(tilde.map((c) => c.slug), ['cerro-chato-paysandu', 'cerro-chato-treinta-y-tres']);
+});
+
+test('una ciudad sin homónima conserva el paquete de siempre, aunque tenga departamento: lo ya publicado no cambia de nombre', () => {
+  const { publicables } = ciudadesPublicables([{ ...MONTEVIDEO, departamento: 'Montevideo' }, LA_PAZ_CANELONES]);
+  assert.deepEqual(publicables.map((c) => c.slug), ['montevideo', 'la-paz']);
+});
+
+test('una homónima sin rectángulo no cuenta: la que lo tiene conserva su paquete sin el departamento', () => {
+  const { publicables, sinRectangulo } = ciudadesPublicables([
+    LA_PAZ_CANELONES,
+    { ...LA_PAZ_COLONIA, bbox_oeste: null, bbox_sur: null, bbox_este: null, bbox_norte: null },
+  ]);
+  assert.deepEqual(publicables.map((c) => c.slug), ['la-paz']);
+  assert.deepEqual(sinRectangulo, ['La Paz']);
+});
+
+test('dos homónimas y a una le falta el departamento: se detiene antes de subir nada y dice cómo cargarlo', () => {
+  for (const vacio of [null, undefined, '', '  ']) {
+    assert.throws(
+      () => ciudadesPublicables([LA_PAZ_CANELONES, { ...LA_PAZ_COLONIA, departamento: vacio }]),
+      new RegExp(`2 ciudades con rectángulo que se llaman «La Paz» y ${ID_3} no tiene departamento.*Cargá el departamento de la ciudad.*No se subió nada`, 's'),
+      `departamento ${JSON.stringify(vacio)}`,
+    );
+  }
+});
+
+test('todo el catálogo de OSM de Uruguay (0109) da un paquete distinto por ciudad: el publicador no se frena por los nombres repetidos (#259)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const catalogo = JSON.parse(await readFile(new URL('../datos/uruguay-osm.json', import.meta.url), 'utf8'));
+  const filas = catalogo.ciudades.map((c, i) => ({
+    id: `09990000-0000-7000-8004-${String(i).padStart(12, '0')}`,
+    nombre: c.nombre,
+    departamento: c.departamento,
+    bbox_oeste: c.bbox?.[0] ?? null,
+    bbox_sur: c.bbox?.[1] ?? null,
+    bbox_este: c.bbox?.[2] ?? null,
+    bbox_norte: c.bbox?.[3] ?? null,
+  }));
+  const { publicables } = ciudadesPublicables(filas);
+  assert.equal(publicables.length, catalogo.ciudades.filter((c) => c.bbox).length);
+  assert.equal(new Set(publicables.map((c) => c.slug)).size, publicables.length);
+  const repetidas = publicables.filter((c) => c.nombre === 'Las Piedras').map((c) => c.slug).sort();
+  assert.deepEqual(repetidas, ['las-piedras-artigas', 'las-piedras-canelones']);
 });
 
 test('un nombre sin letras ni números no da un paquete: se detiene antes de subir nada', () => {
@@ -114,7 +179,7 @@ test('leerCiudades pide a PostgREST las ciudades de Uruguay no borradas, con su 
   assert.equal(pedido.url.searchParams.get('pais.iso_code'), 'eq.UY');
   assert.equal(pedido.url.searchParams.get('deleted_at'), 'is.null');
   const columnas = pedido.url.searchParams.get('select').split(',');
-  for (const c of ['id', 'nombre', 'bbox_oeste', 'bbox_sur', 'bbox_este', 'bbox_norte']) assert.ok(columnas.includes(c), `pide ${c}`);
+  for (const c of ['id', 'nombre', 'departamento', 'bbox_oeste', 'bbox_sur', 'bbox_este', 'bbox_norte']) assert.ok(columnas.includes(c), `pide ${c}`);
   assert.equal(pedido.opciones.headers.authorization, 'Bearer CLAVE-DE-SERVICIO');
   assert.equal(pedido.opciones.headers.apikey, 'CLAVE-DE-SERVICIO');
 });
@@ -126,4 +191,57 @@ test('leerCiudades dice qué falló, con el estado HTTP', async () => {
     throw Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
   };
   await assert.rejects(leerCiudades({ url: 'https://p.supabase.co', clave: 'x'.repeat(20), fetchImpl: sinRed }), /ECONNREFUSED/);
+});
+
+test('leerCiudades pide las de Uruguay si no se le dice el país, y las del país pedido si se le dice (`ar` se lee `AR`)', async () => {
+  const pedidos = [];
+  const fetchImpl = async (url) => {
+    pedidos.push(new URL(url));
+    return new Response('[]', { status: 200 });
+  };
+  const base = { url: 'https://p.supabase.co', clave: 'x'.repeat(20), fetchImpl };
+  await leerCiudades(base);
+  await leerCiudades({ ...base, pais: 'AR' });
+  await leerCiudades({ ...base, pais: 'ar' });
+  assert.deepEqual(pedidos.map((p) => p.searchParams.get('pais.iso_code')), ['eq.UY', 'eq.AR', 'eq.AR']);
+  for (const p of pedidos) {
+    assert.equal(p.searchParams.get('deleted_at'), 'is.null');
+    assert.ok(p.searchParams.get('select').includes('pais!inner(iso_code)'), 'filtra por la tabla pais');
+  }
+});
+
+test('leerCiudades con `pais: null` pide las ciudades vivas de todos los países, sin filtro de país', async () => {
+  let pedido;
+  const fetchImpl = async (url) => {
+    pedido = new URL(url);
+    return new Response(JSON.stringify([MONTEVIDEO]), { status: 200 });
+  };
+  const leidas = await leerCiudades({ url: 'https://p.supabase.co', clave: 'x'.repeat(20), pais: null, fetchImpl });
+  assert.deepEqual(leidas, [MONTEVIDEO]);
+  assert.equal(pedido.searchParams.get('pais.iso_code'), null);
+  assert.equal(pedido.searchParams.get('deleted_at'), 'is.null');
+  assert.ok(!pedido.searchParams.get('select').includes('pais'));
+});
+
+for (const invalido of ['A', 'ARG', '1R', '', ' AR', 'A-', 'AR&deleted_at=is.null', undefined]) {
+  test(`un país inválido (${JSON.stringify(invalido)}) se rechaza nombrando el valor, antes de leer nada`, async () => {
+    let pedidos = 0;
+    const fetchImpl = async () => {
+      pedidos += 1;
+      return new Response('[]');
+    };
+    assert.throws(() => normalizarPais(invalido), /--pais tiene que ser un código de país de dos letras.*llegó/);
+    if (invalido !== undefined) {
+      await assert.rejects(leerCiudades({ url: 'https://p.supabase.co', clave: 'x'.repeat(20), pais: invalido, fetchImpl }), (error) => {
+        assert.ok(error.message.includes(JSON.stringify(invalido)), error.message);
+        return true;
+      });
+    }
+    assert.equal(pedidos, 0, 'no llegó a pedirle nada a la base');
+  });
+}
+
+test('normalizarPais pasa a mayúsculas el código de dos letras', () => {
+  assert.equal(normalizarPais('ar'), 'AR');
+  assert.equal(normalizarPais('UY'), 'UY');
 });

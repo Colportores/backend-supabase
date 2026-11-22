@@ -34,9 +34,9 @@ select is(
   (select count(*) from information_schema.columns
     where table_schema = 'public' and table_name <> 'usuario'
       and column_name in ('nombre','apellido') and table_name not in
-      ('pais','ciudad','zona','campania','rol','producto','coleccion')),
+      ('pais','ciudad','zona','campania','rol','producto','coleccion','carrera','campania_coordinador')),
   0::bigint,
-  'nombre/apellido solo en usuario y catálogos (nunca en tablas del cliente final)'
+  'nombre/apellido solo en usuario y catálogos (y la copia del nombre de los coordinadores de la campaña, 0174) (nunca en tablas del cliente final)'
 );
 
 select col_hasnt_default('public', 'espacio_persona', 'persona_id', 'persona_id lo genera el dispositivo');
@@ -153,8 +153,8 @@ select is(sync_version, 0::bigint, 'INSERT ignora el sync_version que manda el c
 from public.pais where id = '01920000-0000-7000-8000-0000000000ac';
 
 -- Dos precios abiertos para el mismo producto en la misma ciudad de la campaña harían ambiguo "el precio actual".
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values ('01920000-0000-7000-8000-0000000000ad', 'Montevideo', 'Departamento de prueba', '01920000-0000-7000-8000-0000000000aa', -34.9, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio)
 values ('01920000-0000-7000-8000-0000000000b0', 'Verano', 'VERANO', '2026-01-01');
 insert into public.campania_ciudad (id, campania_id, ciudad_id)
@@ -203,7 +203,7 @@ select bag_eq(
 -- ---------------------------------------------------------------------------
 select bag_eq(
   $$ select tablename::text from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' $$,
-  array['producto','coleccion','producto_coleccion','precio_por_ciudad'],
+  array['producto','coleccion','producto_coleccion','precio_por_ciudad','precio_general'],
   'supabase_realtime publica solo el catálogo'
 );
 

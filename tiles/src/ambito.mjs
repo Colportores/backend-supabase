@@ -26,14 +26,35 @@ export function slugDe(nombre) {
     .replace(/^-+|-+$/g, '');
 }
 
-const COLUMNAS = 'id,nombre,lat_centro,lon_centro,bbox_oeste,bbox_sur,bbox_este,bbox_norte';
+const COLUMNAS = 'id,nombre,departamento,lat_centro,lon_centro,bbox_oeste,bbox_sur,bbox_este,bbox_norte';
+
+/** El país que se publica cuando nadie elige otro: el dominio es Uruguay. */
+export const PAIS_POR_DEFECTO = 'UY';
 
 /**
- * Las ciudades (no borradas) del país `pais` (ISO 3166-1 alpha-2) en public.ciudad, con su rectángulo si lo
- * tienen: [{ id, nombre, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte }].
+ * El código de país (ISO 3166-1 alpha-2) que llegó por `--pais`: dos letras, y `ar` se lee como `AR`.
+ * Cualquier otra cosa (`A`, `ARG`, `1R`, vacío) lanza con el valor recibido, así que se puede llamar ANTES
+ * de leer la base o de escribir en el bucket. Lo que sale de acá es seguro para ir dentro de una consulta.
  */
-export async function leerCiudades({ url, clave, pais = 'UY', fetchImpl = fetch }) {
-  const consulta = `select=${COLUMNAS},pais!inner(iso_code)&pais.iso_code=eq.${pais}&deleted_at=is.null&order=nombre.asc&limit=1000`;
+export function normalizarPais(valor) {
+  const codigo = typeof valor === 'string' ? valor.toUpperCase() : valor;
+  if (typeof codigo !== 'string' || !/^[A-Z]{2}$/.test(codigo)) {
+    throw new Error(`--pais tiene que ser un código de país de dos letras (ISO 3166-1, p. ej. UY o AR); llegó ${JSON.stringify(valor ?? null)}. No se leyó ni se subió nada.`);
+  }
+  return codigo;
+}
+
+/**
+ * Las ciudades (no borradas) del país `pais` (ISO 3166-1 alpha-2, `UY` si no se dice) en public.ciudad, con su
+ * rectángulo si lo tienen: [{ id, nombre, departamento, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte }].
+ * Con `pais: null` son las de **todos** los países (para avisar de lo ya publicado y detectar choques de
+ * paquetes entre países; lo que se publica siempre es de un solo país por corrida).
+ */
+export async function leerCiudades({ url, clave, pais = PAIS_POR_DEFECTO, fetchImpl = fetch }) {
+  const consulta =
+    pais === null
+      ? `select=${COLUMNAS}&deleted_at=is.null&order=nombre.asc&limit=1000`
+      : `select=${COLUMNAS},pais!inner(iso_code)&pais.iso_code=eq.${normalizarPais(pais)}&deleted_at=is.null&order=nombre.asc&limit=1000`;
   let respuesta;
   try {
     respuesta = await fetchImpl(`${url.replace(/\/+$/, '')}/rest/v1/ciudad?${consulta}`, {
@@ -56,22 +77,50 @@ const tieneRectangulo = (fila) =>
  * De las filas de public.ciudad, las que se publican y las que no.
  *
  * Devuelve `{ publicables: [{ ciudad_id, slug, nombre, bbox }], sinRectangulo: [nombre] }`. Una ciudad sin
- * rectángulo no se publica (no tiene mapa propio) y se lista para que se vea. Lanza, **antes de que se suba
- * nada**, si dos ciudades con rectángulo darían el mismo slug (el nombre del archivo y el `id` del paquete):
- * no hay forma de saber cuál es cuál sin que alguien lo decida.
+ * rectángulo no se publica (no tiene mapa propio) y se lista para que se vea.
+ *
+ * El slug (el nombre del archivo y el `id` del paquete, `ciudad-<slug>`) es el nombre de la ciudad. **Dos ciudades
+ * del mismo nombre en distintos departamentos son válidas** (hay dos «La Paz», en Canelones y en Colonia; el
+ * catálogo de OSM de la 0109 trae diez nombres así, y `agregar_ciudad_a_mano` lo marca como
+ * `MISMO_NOMBRE_OTRO_DEPARTAMENTO`): a esas, y solo a esas, el slug les suma el departamento
+ * (`la-paz-canelones`, `la-paz-colonia`), igual que el paquete de departamento (`departamento-<slug>`). Las demás
+ * conservan el slug de siempre, así que un paquete ya publicado no cambia de nombre (backend-supabase#259).
+ *
+ * Lanza, **antes de que se suba nada**, si aun así dos ciudades con rectángulo darían el mismo slug: mismo nombre
+ * en el mismo departamento (casi seguro una repetida) o mismo nombre y a alguna le falta el departamento. No hay
+ * forma de saber cuál es cuál sin que alguien lo decida, y el error dice qué hacer.
  */
 export function ciudadesPublicables(filas) {
-  const publicables = [];
   const sinRectangulo = [];
-  const porSlug = new Map();
+  const conRectangulo = [];
+  const porNombre = new Map();
   for (const fila of filas) {
     if (!tieneRectangulo(fila)) {
       sinRectangulo.push(fila.nombre);
       continue;
     }
-    const slug = slugDe(fila.nombre);
-    if (slug === '') {
+    const base = slugDe(fila.nombre);
+    if (base === '') {
       throw new Error(`La ciudad ${fila.id} (${JSON.stringify(fila.nombre)}) no tiene un nombre con letras o números: no se puede armar su paquete. No se subió nada.`);
+    }
+    conRectangulo.push({ fila, base });
+    porNombre.set(base, [...(porNombre.get(base) ?? []), fila]);
+  }
+
+  const publicables = [];
+  const porSlug = new Map();
+  for (const { fila, base } of conRectangulo) {
+    const homonimas = porNombre.get(base);
+    let slug = base;
+    if (homonimas.length > 1) {
+      const sinDepartamento = homonimas.filter((h) => slugDe(h.departamento ?? '') === '');
+      if (sinDepartamento.length > 0) {
+        throw new Error(
+          `Hay ${homonimas.length} ciudades con rectángulo que se llaman «${fila.nombre}» y ${sinDepartamento.map((h) => h.id).join(', ')} no tiene departamento: ` +
+            'sin él no se puede distinguir su paquete. Cargá el departamento de la ciudad (docs/guia-carga-manual.md § 2, «Ciudades sin departamento»). No se subió nada.',
+        );
+      }
+      slug = `${base}-${slugDe(fila.departamento)}`;
     }
     if (porSlug.has(slug)) {
       const otra = porSlug.get(slug);

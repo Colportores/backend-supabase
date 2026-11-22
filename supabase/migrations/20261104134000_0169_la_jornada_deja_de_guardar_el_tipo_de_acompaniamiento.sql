@@ -1,0 +1,33 @@
+-- ============================================================================
+-- 0169 · La jornada deja de guardar el tipo de acompañamiento
+--        (backend-supabase#243, casilla «Tipo acomp.»; decisión de Cristian del 04/11, «Sacarlo del esquema», en
+--        front-colportores-mobile#544)
+--
+-- ## El caso
+--
+-- El campo «tipo de acompañamiento» de la jornada (`jornada.tipo_acompaniamiento`, texto libre desde la 0001) no lo pide
+-- ninguna pantalla ni HU: nadie lo escribe ni lo lee. Cristian decidió sacarlo del esquema. El acompañamiento de verdad
+-- (`acompaniamiento`, 0043/0100) es otra tabla y no se toca.
+--
+-- ## Qué hace
+--
+-- Saca la columna `jornada.tipo_acompaniamiento`. No hay nada más que sacar en el servidor: el sync baja y sube las
+-- columnas que existen (`sync.expresion_json` y `sync.columnas_escribibles` las leen del catálogo), ninguna función, trigger,
+-- política ni índice la nombraba. Si un teléfono viejo manda la clave, el push la ignora (solo pasan las columnas que
+-- existen).
+--
+-- ## Los datos
+--
+-- La columna estaba vacía y los datos son simulados hasta diciembre: no se pierde nada. Ninguna jornada cambia de
+-- `sync_version` por esta migración. Lo prueba supabase/tests_migracion/0169_ok. Forward-only.
+--
+-- ## Para otros repos
+--
+--   · front-colportores-mobile#544: dejar de leer y de mandar `tipo_acompaniamiento` en la jornada (el push lo ignora si
+--     llega; el delta ya no lo baja).
+--   · docs-organizacion: `esquema-datos.md` (jornada) y el contrato del sync, casilla del cuerpo del PR.
+--
+-- Forward-only: esta migración no se edita una vez aplicada.
+-- ============================================================================
+
+alter table public.jornada drop column tipo_acompaniamiento;

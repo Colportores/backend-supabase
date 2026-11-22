@@ -12,7 +12,10 @@ Esta guía cubre las dos etapas de backend-supabase#42:
   lo tienen, sin ninguna lista en el repo) y **los paquetes de las zonas** se publican **fuera del catálogo público**,
   cada uno con su enlace en `public.zona.paquete_mapa` ([§ Mapas de las zonas](#mapas-de-las-zonas)).
 
-Departamento y Uruguay quedan fuera: backend-supabase#68, con el plan Pro.
+Departamento y Uruguay (backend-supabase#68, con el plan Pro): **la lista fija de departamentos, de Uruguay y de sus
+ciudades sale de OpenStreetMap** y vive en el repo ([§ El catálogo de Uruguay](#el-catálogo-de-uruguay-departamentos-y-ciudades-de-openstreetmap),
+backend-supabase#139); el publicador ya corta los dos niveles con esos rectángulos, a pedido (`--solo departamentos|uruguay`).
+Falta el tope de tamaño de Pro y el bucket (backend-supabase#68, [§ Qué falta](#qué-falta)).
 
 ## Qué hay en el bucket
 
@@ -63,13 +66,19 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    `sources.protomaps.url`: si los deja, MapLibre los pide al bucket y, sin red, no dibuja rótulos ni íconos aunque
    el mapa esté bajado. Lo que hay que copiar: `estilo/glyphs/<fuente>/<rango>.pbf` (NotoSans-Regular, -Medium e
    -Italic; los rangos `0-255`, `256-511` y `8192-8447`) y `estilo/sprites/grayscale{,@2x}.{json,png}`; están en
-   [`tiles/assets/`](../tiles/assets) (con sus licencias) y son los mismos que se publican. `glyphs` queda como
+   `assets/` de [lib-mapa](https://github.com/Colportores/lib-mapa) (con sus licencias, ADR-019) y son los mismos que
+   se publican. `glyphs` queda como
    `<local>/glyphs/{fontstack}/{range}.pbf` y `sprite` como `<local>/sprites/grayscale`.
+   **Por eso la URL absoluta del estilo publicado no es un error** (revisado en backend-supabase#259 contra ADR-011 y
+   ADR-019): es la que necesita el panel, que lee el estilo del bucket con conexión. La app no usa ese estilo: el suyo
+   viaja con ella (decisión de Cristian del 21/10, «Estilo mapa», ADR-011) y reemplaza `glyphs` y `sprite` por los que
+   lleva adentro (`file://<local>/…`, `estilo_mapa.dart` de front-colportores-mobile), que con lib-mapa salen del
+   paquete de la librería (ADR-019).
 5. **¿Hay mapa nuevo?** Comparar el `version` del paquete con el que se bajó: es el SHA-256 de la parte (o,
    con varias, el de sus SHA-256 en orden). Es lo que usa `hayActualizacion`.
    **El estilo se compara igual**: `estilo.version` es el SHA-256 de `estilo/colportores.json`. Si es distinto del
-   que la app guardó, vuelve a pedir el estilo (~240 KB); si es igual, no lo pide. Cambia cuando se publica la
-   paleta nueva (`publicar --solo estilo`, que sube el estilo **y el catálogo**).
+   que la app guardó, vuelve a pedir el estilo (~240 KB); si es igual, no lo pide. Cambia cuando se publica una
+   release nueva de lib-mapa (`publicar --solo estilo`, que sube el estilo **y el catálogo**).
 6. **Atribución visible**: «© OpenStreetMap» (ODbL). Viene en `sources.protomaps.attribution` y en `fuente` del catálogo.
 7. **El mapa de la zona del colportor** no está en el catálogo: el enlace viene **con la zona**, en su columna
    `paquete_mapa`, por el sync (el pull serializa todas las columnas de `zona`; el contrato lo documenta un PR de
@@ -137,9 +146,13 @@ ciudad traiga su `ambito_id` y que un archivo no esté a la vez en un paquete y 
 no se publica.
 
 El publicador **lee el catálogo anterior y pregunta si un paquete ya está por la API autenticada del Storage**
-(`/storage/v1/object/authenticated/…`, con la clave de servicio), no por la URL pública: así decide con lo que
-hay en el bucket y no con una copia que el CDN guardó hasta 60 s (el catálogo se sirve con `max-age=60`). Sin
-clave (`--dry-run`) lee por la URL pública.
+(`/storage/v1/object/authenticated/…`, con la clave de servicio), no por la URL pública. Esa API también puede
+contestar con la copia que el CDN guardó hasta 60 s (el catálogo se sirve con `max-age=60`), aunque se pida con
+`no-cache`: dos `publicar --ciudad` seguidos perdían la ciudad de la primera corrida (backend-supabase#271). Por eso
+el catálogo leído **solo vale si su eTag es el que da el listado del bucket** (`POST /storage/v1/object/list`, que va
+a la base y no pasa por el CDN); si no coinciden, el publicador espera 15 s y vuelve a leer, y si en 75 s no consigue
+la copia vigente **falla sin subir nada** («esperá un par de minutos y volvé a correr»): nunca fusiona sobre un
+catálogo viejo. Sin clave (`--dry-run`) lee por la URL pública, sin esa comprobación (un simulacro no escribe).
 
 ### Privacidad
 
@@ -163,21 +176,35 @@ está en el teléfono de cada colportor de la zona. Las ciudades no tienen el pr
 
 ## El estilo
 
-`tiles/paleta.json` + las capas de [`@protomaps/basemaps`](https://github.com/protomaps/basemaps) 5.7.2 dan
-**un** estilo MapLibre (`estilo/colportores.json`), con la paleta del canvas de Claude Design (tierra
-`#F6F5F0`, parques `#DDE8D3`, calles `#FFFFFF` y avenidas `#FBF1D6`), rótulos en español
-(`name:es`), tipografía Noto Sans y la atribución de OSM. Lo genera `node src/cli.mjs estilo` (o `publicar`)
-de forma determinista: la misma paleta da el mismo archivo.
+**El estilo sale de la librería [`lib-mapa`](https://github.com/Colportores/lib-mapa)** ([ADR-019](https://github.com/Colportores/docs-organizacion/blob/main/docs/decisiones/ADR-019-libreria-del-mapa-compartida-lib-mapa.md),
+backend-supabase#256): ahí viven el estilo MapLibre, la paleta del canvas, los ajustes (los números de puerta), las
+letras (glyphs Noto Sans) y los íconos (sprites), con sus tests (MapLibre válido, contraste AA, capturas a z16-z18) y
+sus licencias. Backend **no arma ni pinta nada**: el publicador depende de la librería por npm, con el tag de la release
+fijado en [`tiles/package.json`](../tiles/package.json) (`github:Colportores/lib-mapa#vX.Y.Z`, decisión de Cristian del
+09/11, «Usar lib-mapa»: por versión del repo), y **republica en el bucket el estilo, los glyphs y los sprites de esa
+release**. El recorte, el catálogo, el bucket, los secretos y el workflow «Mapas» se quedan acá: la clave de servicio no
+sale de este repo.
 
-Los rótulos que se leen (calles menores y mayores, barrios y números de puerta) van en `#5B6B82`, el «texto
-atenuado» del canvas: **4,97:1 sobre su halo, AA**. Los grises que el canvas usa para esos rótulos dan 3,41:1 y
-2,85:1 sobre la tierra y no llegan a 4,5:1; en este caso gana la accesibilidad (decisión del 06/10) y lo vigila
-`tiles/test/estilo.test.mjs`. Los rótulos de provincia y de país (`state_label`, `country_label`) siguen en el gris
-del canvas (`#8A93A0`): solo se ven con el mapa muy alejado y la decisión no los incluyó.
+- `node src/cli.mjs estilo` (o `publicar`) toma `armarEstilo` de la librería ([`tiles/src/lib-mapa.mjs`](../tiles/src/lib-mapa.mjs))
+  y solo le pasa la URL pública del bucket: es el mismo `colportores.json` de la release de lib-mapa, con
+  `<SUPABASE_URL>/storage/v1/object/public/mapas/estilo` donde la release dice `https://REEMPLAZAR/estilo`. Es
+  determinista: la misma release y la misma URL dan el mismo archivo, byte por byte.
+- Los glyphs y los sprites se suben desde `node_modules/@colportores/lib-mapa/assets/` a `estilo/glyphs/` y
+  `estilo/sprites/`. La versión de la librería queda en el estilo (`metadata["colportores:estilo"]`) y en el log del
+  publicador.
+- Las URL de glyphs y sprites tienen que ser absolutas (MapLibre no las resuelve contra la del estilo), así que el
+  estilo se genera **por proyecto**, con la URL pública de su bucket.
+- **Números de puerta de OpenStreetMap** (`address_label`): desde el zoom 16 de MapLibre, el zoom de calle del móvil,
+  letra 11, halo 1,5 y el color AA de los rótulos `#5B6B82` (decisión P4 del 05/11, lib-mapa#3). Las capas propias de la
+  app y del panel van por encima: donde chocan con un cuadrado numerado de la casa, gana el cuadrado.
+- Los rótulos que se leen van en `#5B6B82` (4,97:1 sobre su halo, AA; decisión del 06/10) y el estilo no dibuja los
+  puntos de interés. El detalle de la paleta y sus tests está en lib-mapa (`estilo/README.md`).
 
-Las URL de glyphs y sprites tienen que ser absolutas (MapLibre no las resuelve contra la del estilo), así que el
-estilo se genera **por proyecto**, con la URL pública de su bucket. Sin los puntos de interés (el sprite no trae
-sus íconos; el canvas no los dibuja). Los assets y sus licencias: [`tiles/assets/NOTICE.md`](../tiles/assets/NOTICE.md).
+**Cambiar el aspecto del mapa** es una release nueva de lib-mapa y, acá, un PR que sube el tag en `tiles/package.json` y
+`tiles/package-lock.json` (`npm install` en Docker) y, después del merge, `publicar --solo estilo` en cada proyecto
+([§ Publicar](#publicar)). `tiles/test/lib-mapa.test.mjs` falla si el tag fijado y la versión instalada no coinciden, si
+el estilo no apunta al bucket o si falta un glyph o un sprite que el estilo pide. Los assets y sus licencias:
+`NOTICE.md` y `assets/NOTICE.md` de lib-mapa.
 
 ## Tamaño: ningún archivo pasa de 50 MB
 
@@ -190,10 +217,15 @@ El plan Free de Supabase rechaza archivos de más de 50 MB. La política (`tiles
    de más de 50 MB.
 
 Medido el 06/10 con el build `20261006` de Protomaps: **Montevideo pesa 10,9 MB a zoom 15** (3,5 MB a zoom 14 y 1,9 a 13),
-así que no hace falta bajar el zoom ni partirla. **El piso es el zoom 14**: es el último en el que todavía se
-distingue una manzana (a 13 se pierden las puertas), así que antes de bajar de ahí la ciudad se parte en dos
-archivos. El 15 es solo el primer intento, no un piso. Una ciudad partida pide que front-colportores-mobile#189 use
-una fuente por parte.
+así que no hace falta bajar el zoom ni partirla. Una ciudad partida pide que front-colportores-mobile#189 use una
+fuente por parte.
+
+**El piso pasa a ser el zoom 15** (decisión de Cristian del 09/11, «Zoom 14»: «Siempre 15, partir en dos»; ADR-019 y
+ADR-011): los números de puerta de OSM solo vienen en las teselas de zoom 15 (0 en zoom 14, medido el 05/11), así que
+una ciudad cortada a 14 se quedaría sin números. Si una ciudad no entra en 50 MB a zoom 15, se parte en dos o más
+archivos, sin bajar el zoom. **El código todavía no lo hace**: el paso 2 de arriba (bajar a 14) lo saca
+[backend-supabase#68](https://github.com/Colportores/backend-supabase/issues/68) en `politica.mjs` y `recorte.mjs`. Hasta
+entonces no hay diferencia práctica: ninguna ciudad publicada pasa de 50 MB a zoom 15.
 Cada descarga de Montevideo son 10,9 MB: conviene mirar en el panel de Supabase el límite mensual de salida
 (*egress*) del plan antes de que el piloto tenga muchos teléfonos bajando el mapa.
 
@@ -241,8 +273,8 @@ de Supabase y no se resuelve desde este repo.
 
 ## Publicar
 
-El código está en [`tiles/`](../tiles) (Node 22; las dependencias son `@protomaps/basemaps` y, para probar,
-`@maplibre/maplibre-gl-style-spec`). Usa el CLI de Protomaps
+El código está en [`tiles/`](../tiles) (Node 22; la única dependencia es lib-mapa, por tag de GitHub, que trae
+`@protomaps/basemaps`; `npm ci` la baja de GitHub sin credenciales, porque el repo es público). Usa el CLI de Protomaps
 [`go-pmtiles`](https://github.com/protomaps/go-pmtiles) **1.31.2** (se baja solo, con SHA-256 verificado), que lee por
 `Range` solo la zona pedida de `https://build.protomaps.com/AAAAMMDD.pmtiles` (el planeta entero pesa ~138 GB: no se
 descarga).
@@ -255,14 +287,24 @@ se corta por su polígono (`public.zona.poligono_geojson`).
 
 ```
 node src/cli.mjs estilo     [--url-base URL] [--salida DIR]      # solo escribe el estilo en un archivo
-node src/cli.mjs publicar   [--solo estilo|ciudades|zonas] [--ciudad SLUG] [--zona ID] [--regenerar]
-                            [--quitar ID] [--build AAAAMMDD] [--dry-run]
+node src/cli.mjs publicar   [--solo estilo|ciudades|zonas|departamentos|uruguay] [--ciudad SLUG] [--zona ID]
+                            [--pais ISO] [--regenerar] [--quitar ID] [--build AAAAMMDD] [--dry-run]
 node src/cli.mjs verificar  [--url URL]
+node src/cli.mjs catalogo-uruguay [--salida ARCHIVO] [--funcion-sql ARCHIVO] [--overpass URL]
 ```
 
 `publicar` (sin `--solo`: todo), en este orden, para que el catálogo **nunca apunte a algo que todavía no está**:
-1. lee de `public.ciudad` (PostgREST, con la clave de servicio) las ciudades de Uruguay con rectángulo. Si dos dan el
-   mismo nombre de paquete, o una tiene un nombre sin letras, **se detiene antes de subir nada** y dice cuáles;
+1. lee de `public.ciudad` (PostgREST, con la clave de servicio) las ciudades **del país** con rectángulo (`UY` si no
+   se pasa `--pais`, [§ Otro país: `--pais`](#otro-país---pais)). **Dos ciudades del mismo nombre en distintos
+   departamentos se publican las dos** (el catálogo de OSM trae diez nombres así: «La Paz» en Canelones y en Colonia,
+   «Las Piedras» en Artigas y en Canelones…): a esas, y solo a esas, el paquete les suma el departamento
+   (`ciudad-la-paz-canelones`, `ciudad-la-paz-colonia`); las demás conservan `ciudad-<nombre>`, así que un paquete ya
+   publicado no cambia de nombre. Si una ciudad publicada como `ciudad-la-paz` gana una homónima con rectángulo, pasa a
+   `ciudad-la-paz-canelones` como en un renombre (el archivo viejo se retira con su gracia) (backend-supabase#259). Si
+   aun así dos dan el mismo nombre de paquete (mismo nombre **en el mismo departamento**: casi seguro una repetida, se
+   da de baja la sobrante), si a una de las homónimas le falta el departamento (se carga con
+   [`guia-carga-manual.md` § 2](guia-carga-manual.md#2-ciudad)) o si una tiene un nombre sin letras, **se detiene antes
+   de subir nada** y dice cuáles y qué hacer;
 2. crea o ajusta el bucket `mapas` (público, 50 MiB, tipos permitidos);
 3. sube el estilo, glyphs y sprites;
 4. corta cada ciudad según la política de tamaño y sube sus partes **solo si ese SHA-256 todavía no está**;
@@ -288,10 +330,36 @@ de avisarse.
 `--dry-run` hace todo menos escribir; sin clave de servicio no puede leer la base, lo avisa y no simula ciudades ni zonas.
 
 `--ciudad <slug>` publica solo esa ciudad (el slug es su nombre en minúsculas, sin tildes y con guiones: `montevideo`,
-`san-jose`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
+`san-jose`; con una homónima en otro departamento, también el departamento: `la-paz-colonia`); si ninguna ciudad con rectángulo coincide, se detiene sin subir nada. `--solo estilo` sube el estilo **y
 también el catálogo**, con la `estilo.version` nueva y los paquetes como estaban: así los teléfonos se enteran de que el
 estilo cambió. `--solo ciudades` exige que el catálogo ya tenga `estilo.version` (o sea, que el estilo ya se haya
 publicado). `--solo zonas` solo hace lo de las zonas.
+
+#### Otro país: `--pais`
+
+El dominio es Uruguay: sin `--pais`, `publicar` toma las ciudades de `UY`, como siempre. Para publicar las de otro país
+(`public.ciudad` → `pais.iso_code`) se pasa su código **ISO 3166-1 alpha-2**:
+
+```
+node src/cli.mjs publicar --solo ciudades --pais AR --dry-run   # lista y arma solo las ciudades de AR con rectángulo
+node src/cli.mjs publicar --solo ciudades --pais AR             # y las publica
+```
+
+- Son dos letras (`ar` se lee `AR`). Cualquier otra cosa (`A`, `ARG`, `1R`, vacío) **corta antes de leer la base y de
+  escribir en el bucket**, con un mensaje que nombra el valor recibido.
+- Un país válido sin ciudades vivas en `public.ciudad` lo dice con el país («no hay ciudades de AR en public.ciudad»);
+  si tiene ciudades pero ninguna con rectángulo, dice «no hay ciudades de AR con rectángulo en public.ciudad».
+- **Una corrida publica un solo país**, pero el catálogo puede nombrar ciudades de más de un país: cada paquete de
+  ciudad lleva el `ambito_id` de SU ciudad, y es lo que la app usa para elegirlo. Los paquetes de los otros países
+  no se tocan (se conservan como están). Los avisos de «sigue en el catálogo, pero …» se calculan contra
+  `public.ciudad` entera (todos los países), así que publicar `AR` no avisa de que sobran los mapas de `UY`.
+- **El nombre del paquete (`ciudad-<slug>`) sale del nombre de la ciudad, no del país.** Si la ciudad a publicar daría
+  el mismo paquete que el de OTRA ciudad viva del catálogo (un «San José» de cada país), el publicador **se detiene
+  antes de subir nada** y dice cuáles son; se resuelve cambiando el nombre de una de las dos en `public.ciudad`. Si la
+  dueña del paquete ya no está viva, el nombre se reutiliza como en un renombre.
+- `--solo departamentos` y `--solo uruguay` salen del catálogo de Uruguay (`tiles/datos/uruguay-osm.json`) y siguen
+  siendo solo de Uruguay: con `--pais` distinto de `UY` se rechazan, sin tocar nada. Con `--solo estilo` o `--solo zonas`,
+  `--pais` no cambia nada (el publicador lo avisa).
 
 ### Mapas de las zonas
 
@@ -364,8 +432,8 @@ en la misma corrida del 06/11, sin gracia alguna; lo reproduce y lo vigila la pr
 Workflow **Mapas** (`.github/workflows/tiles.yml`). Dos disparos:
 
 - **A mano** (`workflow_dispatch`): elegir environment (`develop`, `staging`, `production`), qué publicar (`todo`,
-  `estilo`, `ciudades`, `zonas`), y opcionalmente una ciudad, una zona, un build, forzar el corte de las zonas
-  (`regenerar`) o simular (`simulacro`). Corre las pruebas, publica y después `verificar`.
+  `estilo`, `ciudades`, `zonas`), y opcionalmente una ciudad, un país (`pais`: vacío = `UY`; se pasa como `--pais` solo
+  si viene lleno), una zona, un build, forzar el corte de las zonas (`regenerar`) o simular (`simulacro`). Corre las pruebas, publica y después `verificar`.
 - **Cada hora** (`schedule`, minuto 17): `publicar --solo zonas`, para que una zona nueva o movida tenga su mapa en
   la hora siguiente, sin que nadie lo pida. **Una corrida programada no tiene quién elija el environment**: publica
   solo en los que tienen su variable de repo en `true` (Settings → Variables → Actions): `MAPAS_ZONAS_DEVELOP`,
@@ -416,6 +484,8 @@ Tiene que terminar con «Todo bien» (el `verificar`). Si dice **«ciudades sin 
 ciudades con rectángulo», faltó el paso 0 o se cargó en otro proyecto. Si se detiene con «dos ciudades … el mismo
 paquete», hay dos Montevideo vivas: dejá una.
 
+**Ciudades de otro país:** el mismo comando con `--pais AR` ([§ Otro país](#otro-país---pais)); sin `--pais`, solo `UY`.
+
 **Paso 2 (aparte; no hace falta para el Hito 1): las zonas.** Las mismas tres líneas, con esto dentro del `sh -c`:
 `npm ci && node src/cli.mjs publicar --solo zonas`. Publica el mapa de cada zona activa y guarda su enlace en la zona.
 Va aparte para que una zona con problemas nunca tape el resultado de las ciudades; el `schedule`
@@ -447,7 +517,7 @@ Un «aviso» no es un error: hoy es que el gateway no expone `Content-Range` al 
 | qué cambia | qué se hace | qué ven los teléfonos |
 |---|---|---|
 | un build nuevo de Protomaps (diario) | **nada** por defecto. Re-cortar cada vez le haría bajar a todos ~11 MB de mapa casi idéntico. Se publica a mano cuando el mapa de OSM cambió lo que importa (calles nuevas, un barrio) | un `version` nuevo en el paquete → «hay actualización» |
-| la paleta | editar `tiles/paleta.json`, probar, y publicar con `--solo estilo` (sube el estilo y el catálogo) | un `estilo.version` nuevo → la app vuelve a pedir el estilo |
+| el aspecto del mapa (paleta, números de puerta, letras, íconos) | una release nueva de [lib-mapa](https://github.com/Colportores/lib-mapa); acá, subir el tag en `tiles/package.json` y `package-lock.json`, probar, y publicar con `--solo estilo` (sube el estilo y el catálogo) | el panel, un `estilo.version` nuevo apenas se publica; la app, con su versión nueva que sube el tag (su estilo viaja con ella, ADR-019) |
 | una ciudad nueva | cargarla en `public.ciudad` **con su rectángulo** ([guía de carga manual § 2](guia-carga-manual.md#2-ciudad)) y publicar (`publicar --solo ciudades`). No se toca ningún archivo del repo | una entrada nueva en el catálogo |
 | el rectángulo de una ciudad | `UPDATE` de los cuatro `bbox_*` a la vez y publicar: sale un mapa nuevo | un `version` nuevo en el paquete |
 | una ciudad que no entra en 50 MB | nada: la política baja el zoom o la parte en dos | `partes` con dos archivos |
@@ -463,7 +533,7 @@ vuelve a cortar esa zona y guarda su enlace nuevo ([§ Mapas de las zonas](#mapa
 
 ## Probar contra un Storage real
 
-La base de CI no trae el servicio Storage (el schema `storage` está vacío), así que **la migración
+La base del job `migraciones` de CI no trae el servicio Storage (el schema `storage` está vacío), así que **la migración
 `0029_bucket_mapas.sql` se saltea** ahí y **pgTAP 0036 también** (con un `skip` explícito). Para probarlas de
 verdad, y el publicador de punta a punta, sin credenciales ni proyecto en la nube:
 
@@ -482,20 +552,117 @@ publica de nuevo (tiene que dar «sin cambios») y comprueba que con la clave an
 `zonas/`. Después **crea una zona** en una campaña vigente, publica su paquete (recorte real por su polígono),
 comprueba que el enlace quedó en `public.zona.paquete_mapa` con el mismo tamaño y SHA-256 del archivo del bucket, que el
 catálogo público no lo nombra y que la consola no imprimió su nombre (`tiles/prueba-storage/zona-publicada.mjs`), y que
-publicar las zonas otra vez no cambia nada (ni `sync_version`). Con `SOLO_BASE=1` se detiene después de pgTAP 0036 (sin
-red ni recorte). Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
+publicar las zonas otra vez no cambia nada (ni `sync_version`). Con `SOLO_BASE=1` se detiene después de los pgTAP de
+Storage (hoy la 0036): sin red, sin recorte y sin cargar Montevideo. Es lo que corre CI. Baja imágenes la primera vez (`storage-api` ~1,4 GB, `node:22-bookworm` ~1,6 GB) y no construye ninguna.
 
-**CI no ejercita nada de esto.** Sus jobs usan un Postgres sin el servicio Storage: la 0029 y pgTAP 0036 se saltean
-(el job de migraciones las corre y las marca como salteadas) y el job **tiles** (`npm ci && npm test`) prueba el
-publicador contra un Storage de mentira. Sumar un job con un Storage real a CI es el issue de seguimiento
-[backend-supabase#75](https://github.com/Colportores/backend-supabase/issues/75), **a hacer antes de cualquier otra
-migración que toque `storage.objects`**; hasta entonces, `correr.sh` se corre a mano cuando se toca la 0029, la 0036
-o el publicador.
+### Qué corre CI y qué no
+
+- **El job `storage`** (backend-supabase#75) corre `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh` en cada PR y push:
+  levanta la base y el `storage-api` oficial (de `ghcr.io`, el mismo digest que en ECR Public), espera a que Storage cree
+  sus tablas, aplica las migraciones, comprueba que **la 0029 creó el bucket `mapas`** y corre **todos los pgTAP que
+  dependen de Storage** (hoy, la 0036 completa). **Falla si la 0029 o alguno de esos tests se saltean**: pgTAP corre con
+  `EXIGIR_STORAGE=1`, que convierte el `skip` de «la base no tiene Storage» en una falla, y el script además falla si
+  algún test sale como `SKIP`. Un cambio que rompa el bucket o las políticas de `storage.objects` ya no pasa en verde.
+  Tarda unos minutos, casi todo en bajar el `storage-api` (~1,4 GB).
+- **Qué pgTAP corre ahí**: `correr.sh` toma todos los de `supabase/tests` que nombran `hay_storage` o las tablas de
+  storage (`storage.buckets`, `storage.objects`). Una prueba nueva que dependa del servicio sigue el patrón de la 0036
+  (`\if :hay_storage` … `\else` `skip`, y `fail()` cuando `EXIGIR_STORAGE=1`) y entra sola al job `storage`; en el job
+  `migraciones` se saltea a la vista.
+- **El job `migraciones`** sigue corriendo la 0029 y pgTAP 0036 contra un Postgres sin Storage: ahí se saltean (el `skip`
+  queda a la vista en el log) y está bien, porque quien las ejercita es el job `storage`. Lo que se prueba ahí es que la
+  migración no rompe el resto cuando falta el servicio.
+- **El job `tiles`** (`npm ci && npm test`) prueba el publicador contra un Storage de mentira.
+- **Lo que CI no corre**: lo que necesita red y recorte real (publicar el estilo y las ciudades, `verificar`, las zonas)
+  y la carga de Montevideo con el bloque de `docs/guia-carga-manual.md` (dos veces, una sola ciudad). Eso sigue siendo
+  `bash tiles/prueba-storage/correr.sh` entero, a mano, cuando se toca el publicador o ese bloque de la guía.
+- Para probar en la máquina lo mismo que CI: `docker compose -f compose.dev.yml build cli` (una sola vez) y
+  `SOLO_BASE=1 bash tiles/prueba-storage/correr.sh`. Para ver el `skip` o la falla sin Storage, contra una base sin él
+  (la de `compose.dev.yml`): `docker compose -f compose.dev.yml run --rm -e EXIGIR_STORAGE=1 cli bash scripts/db-test.sh`
+  falla en la 0036; sin la variable, se saltea. Con `-e`: una variable puesta delante de `docker compose` no entra al
+  contenedor y la 0036 daría `PASS` con el `skip`.
+
+## El catálogo de Uruguay: departamentos y ciudades de OpenStreetMap
+
+Decisión de Cristian del 23/10, «Área depto» (backend-supabase#68, implementada en #139): **«Lista fija con el publicador»**,
+con su nota: «Lista fija, pero todos los departamentos y ciudades de Uruguay que ya se carguen de OSM, así los nombres
+coinciden, no hay malos typos». Los nombres de departamentos y ciudades salen de **una sola lista**, la de OpenStreetMap, y
+ya no se escriben a mano: el departamento se elige, nunca se tipea. Así Lucía, en Rivera, baja el mapa de todo su
+departamento y el nombre de su ciudad y el del departamento coinciden con los del paquete.
+
+La lista es [`tiles/datos/uruguay-osm.json`](../tiles/datos/uruguay-osm.json):
+
+| Clave | Qué trae |
+|---|---|
+| `fuente` | De dónde salió: © OpenStreetMap contributors, ODbL 1.0, la vía (Overpass), **de qué día son los datos de OSM** (`datos_osm_de`) y cuándo se armó la lista (`generado_en`) |
+| `pais` | Uruguay y su rectángulo `[oeste, sur, este, norte]` (la relación `relation/287072`) |
+| `departamentos` | Los 19, con su nombre de OSM («Paysandú», «Río Negro», «Treinta y Tres»…), su código ISO 3166-2 y su rectángulo |
+| `ciudades` | Las ciudades, pueblos y villas (`place` = `city`, `town` o `village`) con nombre: su departamento, su centro y su rectángulo **cuando OSM trae el límite** (el límite administrativo de nivel 8 con el mismo nombre que contiene al centro; si un lugar está mapeado como área, el suyo). Sin límite en OSM, `bbox` es `null`: **no se inventa un rectángulo** y la ciudad no tiene mapa propio hasta tener uno |
+| `descartados` | Lo que se dejó afuera al armarla, con el motivo: un pueblo repartido entre departamentos (OSM lo mapea con un solo nodo: Agraciada, Merinos, Tambores, Cerro Chato) queda en uno solo, el que fija `DEPARTAMENTO_DE_LOS_PUEBLOS_REPARTIDOS` en `tiles/src/uruguay.mjs`, y uno nuevo que no figure ahí cae en el primero A-Z y se anota para decidirlo; dos del mismo nombre en un departamento son uno (queda el de mayor categoría y población) |
+
+Se arma con `node src/cli.mjs catalogo-uruguay` (Overpass, de a una consulta y con espera creciente si el servidor está
+saturado; `--overpass URL` o `OVERPASS_URL` para usar otro servidor). El comando valida la lista antes de escribirla y,
+con `--funcion-sql <archivo>`, escribe también la función de la base. **No se actualiza sola**: cambiarla es un commit
+(se ve en el diff qué ciudad apareció o cambió) y una migración nueva.
+
+De esa lista salen tres cosas:
+
+1. **La base** ([migración 0109](../supabase/migrations/20261027000000_0109_catalogo_de_ciudades_de_uruguay_osm_origen_y_alta_a_mano.sql)):
+   `public.catalogo_osm_uruguay()` es la misma lista dentro de la base (un test del publicador,
+   `tiles/test/catalogo-en-la-base.test.mjs`, falla si difieren) y `public.cargar_catalogo_ciudades()` la carga en
+   `public.ciudad` **sin borrar ni duplicar**: empareja por nombre y departamento normalizados (sin tildes ni mayúsculas;
+   también con las dadas de baja, que no se vuelven a crear), marca `origen = 'OSM'` a las que casan, agrega las que faltan
+   y **avisa** de las que ya estaban y no casan (quedan como estaban, `origen = 'MANUAL'`). Es idempotente. La migración
+   la corre una vez; en una base sin el país Uruguay no carga nada y lo dice (se corre después, con
+   [`guia-carga-manual.md` § 1 y § 2](guia-carga-manual.md#2-ciudad)). `public.departamentos_de_uruguay()` devuelve los 19
+   A-Z: es lo que leen los selectores del panel (front-coordinadores-web#80).
+2. **El publicador**: corta el paquete de cada **departamento** y el de **todo Uruguay** con esos rectángulos, no con
+   los de `public.ciudad` (`publicar --solo departamentos` y `publicar --solo uruguay`; no entran en `publicar` sin
+   `--solo`, porque son archivos de cientos de MB). En el catálogo del bucket (`catalogo.json`):
+
+   | Paquete | `id` | `ambito_id` | Archivo |
+   |---|---|---|---|
+   | Departamento | `departamento-<slug>` (`departamento-san-jose`) | el **nombre normalizado** del departamento (`san jose`, `rio negro`): sin tildes, en minúsculas, espacios colapsados; es el mismo texto con el que el panel agrupa y con el que la app lo compara con el departamento de la ciudad del colportor | `paquetes/departamento/<slug>.<sha12>.pmtiles` |
+   | Todo Uruguay | `uruguay-uruguay` | **ninguno** (cubre cualquier lugar; hay uno solo) | `paquetes/uruguay/uruguay.<sha12>.pmtiles` |
+
+   Las mismas garantías que las ciudades: se mira todo antes de subir, el catálogo va último, repetir no sube nada y lo que
+   dejó de estar en el catálogo se borra a los 7 días. **Hoy el tope es el de 50 MB del plan Free para todos los niveles**:
+   un departamento de verdad no entra y el publicador se detiene con un error que lo dice y no sube nada. El tope de 2 GB
+   de Pro, la migración del bucket y la medición de cuánto pesan son de backend-supabase#68
+   ([«Tope Pro»](#qué-falta)).
+3. **El alta a mano** (abajo): el departamento de una ciudad nueva se valida contra esta lista.
+
+### Una ciudad que no está en OSM: el alta a mano
+
+Decisión de Cristian del 23/10, «Fuera de OSM»: **«A mano, con el departamento de la lista»**. Si un pueblo o barrio no
+está en la lista de OSM, Administración lo agrega escribiendo **solo su nombre**; el departamento se elige de la lista,
+nunca se escribe. Mientras no haya panel de Administración, es una llamada desde el SQL Editor
+([`guia-carga-manual.md` § 2](guia-carga-manual.md#2-ciudad)):
+
+```sql
+select * from public.agregar_ciudad_a_mano('Pueblo Nuevo', 'Rivera');
+```
+
+- Queda con `origen = 'MANUAL'`, **sin rectángulo** (sin mapa propio hasta tener su área) y con el centro del departamento
+  elegido (la columna es obligatoria y no hay otro dato del que partir; se corrige con un `UPDATE`).
+- **El aviso de parecido no frena.** La ciudad se crea igual y la función devuelve en `parecidas` las que ya estaban y se
+  le parecen (hasta 10), cada una con su `motivo`: `IGUAL` (mismo nombre en el mismo departamento: casi seguro una
+  repetida; si lo es, se da de baja la sobrante), `MISMO_NOMBRE_OTRO_DEPARTAMENTO` (hay dos «San José»: es válido) o
+  `PARECIDO` (una letra de diferencia, dos si el nombre pasa de 8, o uno contiene al otro).
+- Errores: `CD002` nombre en blanco o de más de 100 caracteres; `CD003` el departamento no es uno de los 19 (se compara sin
+  tildes ni mayúsculas y se guarda como está en la lista); `CD004` la base no tiene el país Uruguay. Solo `service_role`
+  (y quien corre desde el SQL Editor) la ejecuta.
 
 ## Qué falta
 
-- **Las demás ciudades**: cargarlas en `public.ciudad` con su rectángulo (guía de carga manual § 2) y medir cuánto
-  pesa cada una; la política de tamaño se ocupa del resto.
+- **Departamento y todo Uruguay (backend-supabase#68, con el paso a Pro del S11)**. Hecho en #139: la lista fija de
+  OpenStreetMap, la carga de las ciudades y el corte de los dos niveles con esos rectángulos. Sin hacer (#68): el **tope
+  por nivel** («Tope Pro», decisión de Cristian del 23/10: un archivo por mapa, hasta 2 GB para departamento y Uruguay; zona
+  y ciudad siguen en 50 MB) en `politica.mjs` y `validar`, la migración del bucket, `config.toml` y `bucket.mjs` con 2 GB, y
+  **no se mergea hasta que Cristian avise que subió el límite global en Pro**; la medición de cuánto pesan
+  (`pmtiles extract --dry-run`) y cuántas descargas entran en la transferencia de Pro.
+- **Las ciudades**: las de OpenStreetMap ya están cargadas por la 0109, pero **solo tienen mapa propio las que traen
+  rectángulo**; las que no (11 de 350 el 26/10) no se publican. Medir cuánto pesa cada una de las que sí; la política de
+  tamaño se ocupa del resto.
 - **El contrato del sync**: `zona.paquete_mapa` (y `ciudad.bbox_*`) ya viajan en el pull, porque el pull serializa todas
   las columnas, pero **no están en `docs-organizacion/contrato`**. Entran en un PR de docs aparte, que revisa Bruno
   (decisión de Cristian): hasta entonces la app puede leerlas pero el contrato no las promete.
@@ -511,9 +678,19 @@ o el publicador.
   el enlace a su paquete y le llega al colportor con su zona por el sync, con un nombre de archivo que no se puede adivinar.
 - **Contrato**: `zona.paquete_mapa` entra al contrato en un PR de docs aparte, que revisa Bruno.
 
+## Decisiones tomadas el 23/10
+
+- **Área depto** (`backend-68-area-depto`): «Lista fija con el publicador». La lista de departamentos y ciudades de Uruguay es
+  la de OpenStreetMap, guardada en el repo con su fuente, su fecha y su atribución; el departamento se elige, nunca se escribe.
+- **Fuera de OSM** (`backend-68-fuera-de-osm`): «A mano, con el departamento de la lista»: solo el nombre, aviso de parecido que
+  no frena, marcada `MANUAL` y sin mapa propio hasta tener su área.
+- **Tope Pro**: «Un archivo, hasta 2 GB» para departamento y Uruguay (en #68, pendiente del paso a Pro).
+
 ## Licencias y atribución
 
 - Datos: © OpenStreetMap contributors, **ODbL 1.0**, vía los builds de [Protomaps](https://protomaps.com/).
   La atribución va en el estilo y en el catálogo; la app y el panel tienen que mostrarla.
-- Capas del estilo: `@protomaps/basemaps` (BSD-3-Clause). Tipografía Noto Sans (OFL) y sprites (MIT): ver
-  [`tiles/assets/NOTICE.md`](../tiles/assets/NOTICE.md).
+- La lista de departamentos y ciudades (`tiles/datos/uruguay-osm.json`) también es de OpenStreetMap: © OpenStreetMap
+  contributors, **ODbL 1.0**, consultada por Overpass API; lleva su atribución y la fecha de los datos en `fuente`.
+- Capas del estilo: `@protomaps/basemaps` (BSD-3-Clause). Tipografía Noto Sans (OFL) y sprites (MIT): vienen de
+  lib-mapa con sus avisos (`NOTICE.md` y `assets/NOTICE.md` de [lib-mapa](https://github.com/Colportores/lib-mapa)).

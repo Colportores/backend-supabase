@@ -120,8 +120,8 @@ select pg_temp.u(x.s), r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais par40', 'ZQ');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values (pg_temp.u('f1'), 'Ciudad par40', pg_temp.u('f0'), -34.90, -56.20);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values (pg_temp.u('f1'), 'Ciudad par40', 'Departamento de prueba', pg_temp.u('f0'), -34.90, -56.20);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
 values (pg_temp.u('e0'), 'Verano par40', 'VERANO', current_date - 10, current_date + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id)

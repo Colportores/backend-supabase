@@ -1,0 +1,4 @@
+La migración 0104 (sacar espacio.descripcion) no se aplicó: hay 2 espacio(s) con un texto en la descripción. No se cambió nada.
+· espacio 01920000-0000-7000-8000-0000000104f1 en Av. Italia 100 (ubicación 01920000-0000-7000-8000-0000000104e1, Montevideo): tiene un texto en la descripción.
+· espacio 01920000-0000-7000-8000-0000000104f2 en sin calle s/n (ubicación 01920000-0000-7000-8000-0000000104e2, Montevideo) (dado de baja): tiene un texto en la descripción.
+La descripción de un depto no sube al servidor y la migración no borra un texto que alguien cargó.

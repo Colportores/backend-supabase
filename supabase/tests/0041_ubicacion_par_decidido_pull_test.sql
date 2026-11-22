@@ -82,8 +82,8 @@ select pg_temp.u(x.s), r.id
   from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('ad','ADMIN')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais par41', 'ZP');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values (pg_temp.u('f1'), 'Ciudad par41', pg_temp.u('f0'), -34.90, -56.20);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values (pg_temp.u('f1'), 'Ciudad par41', 'Departamento de prueba', pg_temp.u('f0'), -34.90, -56.20);
 insert into public.ubicacion (id, tipo, calle, numero, lat, lon, ciudad_id) values
   (pg_temp.u('a1'), 'CASA', 'Av. Italia',   '100', -34.900, -56.200, pg_temp.u('f1')),
   (pg_temp.u('a2'), 'CASA', 'Calle Dos',    '2',   -34.905, -56.195, pg_temp.u('f1')),

@@ -52,7 +52,7 @@ export const serializarEstilo = (estilo) => Buffer.from(`${JSON.stringify(estilo
 /** La versión del estilo en el catálogo: el SHA-256 de esos bytes (como la de los paquetes). */
 export const versionDeEstilo = (contenido) => createHash('sha256').update(contenido).digest('hex');
 
-/** Sube el estilo y sus glyphs y sprites; devuelve su `version`. `estilo` es el objeto de armarEstilo(). */
+/** Sube el estilo y sus glyphs y sprites; devuelve su `version`. `estilo` es el de lib-mapa (estiloDeLaLibreria). */
 export async function publicarEstilo({ storage, estilo, raizAssets, log = () => {} }) {
   const archivos = [
     ...(await listarArchivos(join(raizAssets, 'glyphs'), 'estilo/glyphs')),
@@ -125,14 +125,62 @@ export async function prepararPaquete({ nivel, clave, bbox, extraer, tmp, log = 
 }
 
 /**
+ * Recorta, sube (si hace falta) y arma la entrada del catálogo de UN paquete (`id` = `<nivel>-<clave>`). Si el
+ * mapa es el mismo que ya publicó el catálogo `previo`, no sube nada ni cambia su versión ni su fecha (la app no ve
+ * una actualización); lo que dice el catálogo del paquete (nombre, ámbito, bbox) sale de la base o de la lista
+ * fija y puede haber cambiado sin que cambien los tiles: se rearma la entrada con los datos de hoy.
+ */
+async function publicarUnPaquete({ storage, previo, nivel, clave, ambitoId, nombre, bbox, extraer, tmp, build, ahora, dryRun, log, limites }) {
+  const { partes, zoomMax } = await prepararPaquete({ nivel, clave, bbox, extraer, tmp, log, limites });
+  const publicables = partes.map(({ local, ...resto }) => resto);
+  const id = `${nivel}-${clave}`;
+  const anterior = previo?.paquetes.find((p) => p.id === id);
+
+  if (anterior && anterior.version === versionDe(publicables) && anterior.zoom_max === zoomMax) {
+    const rearmado = armarPaquete({
+      nivel,
+      clave,
+      ambitoId,
+      nombre,
+      bbox,
+      zoomMax,
+      partes: publicables,
+      build: anterior.fuente_build,
+      ahora: anterior.actualizado_en,
+    });
+    if (JSON.stringify(rearmado) === JSON.stringify(anterior)) {
+      log(`${id}: sin cambios (${anterior.version.slice(0, 12)})`);
+      return anterior;
+    }
+    log(`${id}: mismo mapa (${anterior.version.slice(0, 12)}), datos del catálogo actualizados`);
+    return rearmado;
+  }
+
+  for (const parte of partes) {
+    if (dryRun) {
+      log(`${id}: [dry-run] subiría ${parte.archivo}`);
+    } else if (await storage.existe(parte.archivo)) {
+      log(`${id}: ${parte.archivo} ya estaba`);
+    } else {
+      await subirArchivo(storage, parte.archivo, await readFile(parte.local));
+      log(`${id}: subido ${parte.archivo}`);
+    }
+  }
+  return armarPaquete({ nivel, clave, ambitoId, nombre, bbox, zoomMax, partes: publicables, build, ahora });
+}
+
+/**
  * Publica las ciudades de `ciudades` (las de public.ciudad que tienen rectángulo, ver ambito.mjs:
  * `{ ciudad_id, slug, nombre, bbox }`) y deja el catálogo al día. `estiloVersion`: la versión del estilo
  * que se acaba de subir; si no viene, se conserva la del catálogo publicado (y si no hay, no se publica:
  * antes va el estilo). `dryRun`: hace todo menos escribir en el bucket.
  *
- * `ciudadesEnBase`: todas las filas de public.ciudad (opcional). Con ellas se avisa de los paquetes que el
- * catálogo ya tenía y esta corrida no publica (la ciudad se dio de baja o perdió su rectángulo): se
- * conservan, retirarlos es una decisión de producto.
+ * `ciudadesEnBase`: todas las filas de public.ciudad, **de todos los países** (opcional; `leerCiudades({ pais: null })`).
+ * Con ellas se avisa de los paquetes que el catálogo ya tenía y esta corrida no publica (la ciudad se dio de
+ * baja o perdió su rectángulo): se conservan, retirarlos es una decisión de producto. Y se detecta el choque
+ * entre países: si una ciudad que se publica daría el mismo paquete (`ciudad-<slug>`) que el de OTRA ciudad
+ * viva del catálogo (p. ej. un «San José» de otro país), se corta antes de subir nada. `avisar: false` apaga
+ * solo los avisos (una corrida parcial, `--ciudad`, no los da); el choque se mira siempre.
  *
  * `quitarIds`: ids de paquete (`ciudad-<slug>`) que se sacan del catálogo a propósito (`--quitar`); sus archivos
  * quedan en `retirados` y se borran a los 7 días. Solo se puede quitar un paquete que el catálogo ya tiene y
@@ -150,6 +198,7 @@ export async function publicarCiudades({
   log = () => {},
   limites,
   ciudadesEnBase,
+  avisar = true,
   quitarIds = [],
 }) {
   // Todo lo que puede impedir publicar se mira ANTES de subir un solo archivo.
@@ -179,6 +228,28 @@ export async function publicarCiudades({
     );
   }
   if (ciudadesEnBase) {
+    const vivas = new Set(ciudadesEnBase.map((f) => f.id));
+    const choques = ciudades.flatMap((c) => {
+      const del = (previo?.paquetes ?? []).find((p) => p.nivel === 'ciudad' && p.id === `ciudad-${c.slug}` && p.ambito_id !== c.ciudad_id);
+      // Si la dueña del paquete ya no está viva, el paquete es de la ciudad nueva (como un renombre): no hay choque.
+      // Tampoco si la dueña se publica en esta misma corrida con otro slug (se renombró): su paquete viejo se
+      // retira por `renombrados` y el nombre queda libre para la otra ciudad (o para el intercambio de nombres).
+      const sePublicaConOtroSlug = del && ciudades.some((o) => o.ciudad_id === del.ambito_id);
+      return del && !sePublicaConOtroSlug && vivas.has(del.ambito_id) ? [{ paquete: del, ciudad: c }] : [];
+    });
+    if (choques.length > 0) {
+      throw new Error(
+        choques
+          .map(
+            ({ paquete, ciudad }) =>
+              `El paquete «${paquete.id}» del catálogo es de la ciudad ${paquete.ambito_id}, que sigue viva, y la ciudad ${ciudad.ciudad_id} («${ciudad.nombre}») daría el mismo paquete: una pisaría a la otra. ` +
+              'Cambiá el nombre de una de las dos en public.ciudad para que el paquete sea distinto. ',
+          )
+          .join('') + 'No se subió nada.',
+      );
+    }
+  }
+  if (ciudadesEnBase && avisar) {
     // Las ciudades que se publican solo en parte (--ciudad) no se avisan: el aviso es de la corrida completa.
     // Los paquetes que esta corrida saca a propósito no se avisan: ya no están.
     const sinLosQuitados = previo && { ...previo, paquetes: previo.paquetes.filter((p) => !aQuitar.includes(p.id)) };
@@ -195,65 +266,22 @@ export async function publicarCiudades({
   const quitar = [...new Set([...renombrados, ...aQuitar])];
 
   for (const ciudad of ciudades) {
-    const { partes, zoomMax } = await prepararPaquete({
-      nivel: 'ciudad',
-      clave: ciudad.slug,
-      bbox: ciudad.bbox,
-      extraer,
-      tmp,
-      log,
-      limites,
-    });
-    const publicables = partes.map(({ local, ...resto }) => resto);
-    const id = `ciudad-${ciudad.slug}`;
-    const anterior = previo?.paquetes.find((p) => p.id === id);
-
-    if (anterior && anterior.version === versionDe(publicables) && anterior.zoom_max === zoomMax) {
-      // El mismo mapa: no se sube nada ni cambia su versión ni su fecha (la app no ve una actualización).
-      // Pero lo que dice el catálogo de la ciudad (nombre, ámbito, bbox) sale de public.ciudad y puede
-      // haber cambiado sin que cambien los tiles: se rearma la entrada con los datos de hoy.
-      const rearmado = armarPaquete({
-        nivel: 'ciudad',
-        clave: ciudad.slug,
-        ambitoId: ciudad.ciudad_id,
-        nombre: ciudad.nombre,
-        bbox: ciudad.bbox,
-        zoomMax,
-        partes: publicables,
-        build: anterior.fuente_build,
-        ahora: anterior.actualizado_en,
-      });
-      if (JSON.stringify(rearmado) === JSON.stringify(anterior)) {
-        log(`${id}: sin cambios (${anterior.version.slice(0, 12)})`);
-        nuevos.push(anterior);
-      } else {
-        log(`${id}: mismo mapa (${anterior.version.slice(0, 12)}), datos del catálogo actualizados`);
-        nuevos.push(rearmado);
-      }
-      continue;
-    }
-
-    for (const parte of partes) {
-      if (dryRun) {
-        log(`${id}: [dry-run] subiría ${parte.archivo}`);
-      } else if (await storage.existe(parte.archivo)) {
-        log(`${id}: ${parte.archivo} ya estaba`);
-      } else {
-        await subirArchivo(storage, parte.archivo, await readFile(parte.local));
-        log(`${id}: subido ${parte.archivo}`);
-      }
-    }
     nuevos.push(
-      armarPaquete({
+      await publicarUnPaquete({
+        storage,
+        previo,
         nivel: 'ciudad',
         clave: ciudad.slug,
         ambitoId: ciudad.ciudad_id,
         nombre: ciudad.nombre,
         bbox: ciudad.bbox,
-        zoomMax,
-        partes: publicables,
+        extraer,
+        tmp,
         build,
         ahora,
+        dryRun,
+        log,
+        limites,
       }),
     );
   }
@@ -283,6 +311,89 @@ export async function publicarCiudades({
     log(`retirados, con su período de gracia de ${DIAS_DE_GRACIA} días: ${catalogo.retirados.map((r) => `${r.archivo} (desde ${r.desde})`).join(', ')}`);
   }
 
+  await storage.borrar(borrar);
+  if (borrar.length > 0) log(`borrados (más de ${DIAS_DE_GRACIA} días fuera del catálogo): ${borrar.join(', ')}`);
+  return { catalogo, borrados: borrar };
+}
+
+/**
+ * Publica los paquetes de un nivel amplio: los 19 departamentos (`nivel: 'departamento'`) o todo Uruguay
+ * (`nivel: 'uruguay'`). Lo que se corta sale de la lista fija de `datos/uruguay-osm.json` (uruguay.mjs:
+ * `departamentosPublicables` y `uruguayPublicable`), no de `public.ciudad`: «Lista fija con el publicador»
+ * (decisión de Cristian del 23/10, «Área depto», backend-supabase#68).
+ *
+ * `ambitos`: `[{ slug, ambito_id, nombre, bbox }]`. El `ambito_id` del departamento es su nombre normalizado; el de
+ * Uruguay no existe. Mismo orden y mismas garantías que `publicarCiudades`: se mira todo antes de subir, el
+ * catálogo va último y los archivos que dejaron de estar en él se borran a los 7 días.
+ *
+ * `limites` (`planificar`): el tope por archivo. Hoy es el de 50 MB del plan Free para todos los niveles, así que
+ * un departamento de verdad no entra y se falla en voz alta; el tope de 2 GB con Pro es de backend-supabase#68.
+ */
+export async function publicarAmplios({
+  storage,
+  nivel,
+  ambitos,
+  extraer,
+  tmp,
+  build,
+  estiloVersion,
+  ahora = ahoraIso(),
+  dryRun = false,
+  log = () => {},
+  limites,
+}) {
+  if (nivel !== 'departamento' && nivel !== 'uruguay') throw new Error(`El nivel ${JSON.stringify(nivel)} no es amplio: usá departamento o uruguay. No se subió nada.`);
+  if (nivel === 'uruguay' && ambitos.length !== 1) throw new Error('Hay un solo paquete de todo Uruguay. No se subió nada.');
+  if (nivel === 'uruguay' && ambitos[0].ambito_id) throw new Error('El paquete de todo Uruguay no lleva ambito_id. No se subió nada.');
+  const sinAmbito = nivel === 'departamento' ? ambitos.filter((a) => !a.ambito_id) : [];
+  if (sinAmbito.length > 0) {
+    throw new Error(`Falta el ambito_id de ${sinAmbito.map((a) => a.slug).join(', ')}: la app no encuentra un departamento sin él. No se subió nada.`);
+  }
+  const previo = await storage.bajarJson(RUTA_CATALOGO);
+  if (!estiloVersion && !previo?.estilo?.version) {
+    throw new Error('El catálogo del bucket no tiene la versión del estilo: publicá el estilo primero (--solo estilo, o todo). No se subió nada.');
+  }
+
+  const nuevos = [];
+  for (const ambito of ambitos) {
+    nuevos.push(
+      await publicarUnPaquete({
+        storage,
+        previo,
+        nivel,
+        clave: ambito.slug,
+        ambitoId: ambito.ambito_id,
+        nombre: ambito.nombre,
+        bbox: ambito.bbox,
+        extraer,
+        tmp,
+        build,
+        ahora,
+        dryRun,
+        log,
+        limites,
+      }),
+    );
+  }
+
+  const maxBytes = limites?.maxBytes;
+  const fusionado = fusionar(previo, nuevos, { ahora, estiloVersion });
+  const erroresFusionado = validar(fusionado, { maxBytes });
+  if (erroresFusionado.length > 0) throw new Error(`El catálogo no es válido:\n  ${erroresFusionado.join('\n  ')}`);
+
+  if (dryRun) {
+    log(`[dry-run] catálogo con ${fusionado.paquetes.length} paquetes, no se sube`);
+    return { catalogo: fusionado, borrados: [] };
+  }
+
+  const publicados = await storage.listar(`paquetes/${nivel}`);
+  const borrar = obsoletos(publicados, fusionado, { ahora });
+  const catalogo = podarRetirados(fusionado, { borrados: borrar, publicados });
+  const errores = validar(catalogo, { maxBytes });
+  if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
+
+  await subirCatalogo(storage, catalogo);
+  log(`catálogo publicado: ${catalogo.paquetes.map((p) => p.id).join(', ')}`);
   await storage.borrar(borrar);
   if (borrar.length > 0) log(`borrados (más de ${DIAS_DE_GRACIA} días fuera del catálogo): ${borrar.join(', ')}`);
   return { catalogo, borrados: borrar };

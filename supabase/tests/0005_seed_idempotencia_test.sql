@@ -29,10 +29,10 @@ select is((select count(*) from public.zona),                4::bigint, 'primera
 select is((select count(*) from public.campania_ciudad),     3::bigint, 'primera pasada: 3 ciudades de campaña');
 select is((select count(*) from public.zona_vertice),        8::bigint, 'primera pasada: 8 esquinas');
 select is((select count(*) from public.producto),            5::bigint, 'primera pasada: 5 productos');
-select is((select count(*) from public.coleccion),           1::bigint, 'primera pasada: 1 colección');
-select is((select count(*) from public.producto_coleccion),  2::bigint, 'primera pasada: 2 vínculos producto-colección');
-select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'primera pasada: 6 precios');
-select is((select count(*) from public.precio_general),      6::bigint, 'primera pasada: 6 precios generales (5 productos y la colección)');
+select is((select count(*) from public.coleccion),           2::bigint, 'primera pasada: 2 colecciones (una serie y el combo)');
+select is((select count(*) from public.producto_coleccion),  4::bigint, 'primera pasada: 4 vínculos producto-colección');
+select is((select count(*) from public.precio_por_ciudad),   7::bigint, 'primera pasada: 7 precios');
+select is((select count(*) from public.precio_general),      7::bigint, 'primera pasada: 7 precios generales (5 productos y las 2 colecciones)');
 
 -- Montevideo trae su rectángulo (0031); las dos ciudades de ejemplo no.
 select is((select count(*) from public.ciudad where bbox_oeste is not null), 1::bigint,
@@ -60,6 +60,26 @@ select results_eq(
   $$ values ('GENERAL'::text, 24000) $$,
   'Libro A en la tercera ciudad de campaña: sin modificado, vale el general');
 
+-- El combo del seed (migración 0056): «Pack Familiar de Ejemplo» lleva 1 libro y 2 revistas, tiene su
+-- propio general (36000, no la suma de sus partes) y una excepción en la segunda ciudad de campaña;
+-- se vende como un solo ítem, así que public.precio_vigente() lo resuelve como a un producto.
+select results_eq(
+  $$ select p.nombre, pc.cantidad from public.producto_coleccion pc
+       join public.producto p on p.id = pc.producto_id
+      where pc.coleccion_id = '09990000-0000-7000-8006-000000000002' order by p.nombre $$,
+  $$ values ('Libro de Ejemplo A'::text, 1), ('Revista de Ejemplo'::text, 2) $$,
+  'el combo del seed lleva 1 libro y 2 revistas');
+select results_eq(
+  $$ select origen, precio_venta from public.precio_vigente(
+       '09990000-0000-7000-8009-000000000001', null, '09990000-0000-7000-8006-000000000002') $$,
+  $$ values ('GENERAL'::text, 36000) $$,
+  'el combo en la primera ciudad de campaña: sin excepción, vale el general');
+select results_eq(
+  $$ select origen, precio_venta from public.precio_vigente(
+       '09990000-0000-7000-8009-000000000002', null, '09990000-0000-7000-8006-000000000002') $$,
+  $$ values ('MODIFICADO'::text, 38000) $$,
+  'el combo en la segunda ciudad de campaña: vale la excepción');
+
 -- Segunda pasada: mismo archivo, no debe duplicar ni fallar.
 \i supabase/seed.sql
 
@@ -70,10 +90,10 @@ select is((select count(*) from public.zona),                4::bigint, 'segunda
 select is((select count(*) from public.campania_ciudad),     3::bigint, 'segunda pasada: sigue en 3 ciudades de campaña');
 select is((select count(*) from public.zona_vertice),        8::bigint, 'segunda pasada: sigue en 8 esquinas');
 select is((select count(*) from public.producto),            5::bigint, 'segunda pasada: sigue en 5 productos');
-select is((select count(*) from public.coleccion),           1::bigint, 'segunda pasada: sigue en 1 colección');
-select is((select count(*) from public.producto_coleccion),  2::bigint, 'segunda pasada: sigue en 2 vínculos producto-colección');
-select is((select count(*) from public.precio_por_ciudad),   6::bigint, 'segunda pasada: sigue en 6 precios');
-select is((select count(*) from public.precio_general),      6::bigint, 'segunda pasada: sigue en 6 precios generales');
+select is((select count(*) from public.coleccion),           2::bigint, 'segunda pasada: sigue en 2 colecciones');
+select is((select count(*) from public.producto_coleccion),  4::bigint, 'segunda pasada: sigue en 4 vínculos producto-colección');
+select is((select count(*) from public.precio_por_ciudad),   7::bigint, 'segunda pasada: sigue en 7 precios');
+select is((select count(*) from public.precio_general),      7::bigint, 'segunda pasada: sigue en 7 precios generales');
 
 select * from finish();
 rollback;

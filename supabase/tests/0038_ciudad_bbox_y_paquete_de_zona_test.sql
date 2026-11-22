@@ -45,12 +45,12 @@ select ok(col_description('public.zona'::regclass, (select attnum from pg_attrib
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais bbox38', 'ZW');
 
 select lives_ok(
-  $$ insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-       ('01920000-0000-7000-8000-000000003801', 'Sin rectángulo 38', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2) $$,
+  $$ insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+       ('01920000-0000-7000-8000-000000003801', 'Sin rectángulo 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2) $$,
   'una ciudad sin rectángulo sigue entrando (las del seed y las recién cargadas)');
 select lives_ok(
-  $$ insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('01920000-0000-7000-8000-000000003802', 'Con rectángulo 38', '01920000-0000-7000-8000-0000000038c0',
+  $$ insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('01920000-0000-7000-8000-000000003802', 'Con rectángulo 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0',
         -34.9, -56.2, -56.433, -34.945, -55.948, -34.701) $$,
   'una ciudad con su rectángulo entero entra');
 select lives_ok(
@@ -63,8 +63,8 @@ select lives_ok(
   'y quitárselo');
 
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste) values
-       ('Incompleta 38', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -56.4) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste) values
+       ('Incompleta 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -56.4) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_completo_check"',
   'un rectángulo a medias (solo el oeste) se rechaza: viene entero o no viene');
 select throws_ok(
@@ -72,33 +72,33 @@ select throws_ok(
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_completo_check"',
   'y no se le puede quitar un lado a uno entero');
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('Fuera de rango 38', '01920000-0000-7000-8000-0000000038c0', -34.5, -100, -190, -35, -56, -34) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('Fuera de rango 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.5, -100, -190, -35, -56, -34) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_rango_check"',
   'una longitud fuera de -180..180 se rechaza');
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('Latitud 38', '01920000-0000-7000-8000-0000000038c0', -34.5, -56.2, -57, -95, -56, -34) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('Latitud 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.5, -56.2, -57, -95, -56, -34) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_rango_check"',
   'una latitud fuera de -90..90 se rechaza');
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('Al revés 38', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -55.948, -34.945, -56.433, -34.701) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('Al revés 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -55.948, -34.945, -56.433, -34.701) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_orden_check"',
   'el oeste a la derecha del este se rechaza, y el error dice «orden», no «centro»');
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('Sur y norte 38', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -56.433, -34.701, -55.948, -34.945) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('Sur y norte 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -56.433, -34.701, -55.948, -34.945) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_orden_check"',
   'el sur arriba del norte también');
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('Sin área 38', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -56.2, -34.945, -56.2, -34.701) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('Sin área 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -34.9, -56.2, -56.2, -34.945, -56.2, -34.701) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_orden_check"',
   'un rectángulo sin ancho no es un área');
 select throws_ok(
-  $$ insert into public.ciudad (nombre, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
-       ('Lat y lon al revés 38', '01920000-0000-7000-8000-0000000038c0', -56.2, -34.9, -56.433, -34.945, -55.948, -34.701) $$,
+  $$ insert into public.ciudad (nombre, departamento, pais_id, lat_centro, lon_centro, bbox_oeste, bbox_sur, bbox_este, bbox_norte) values
+       ('Lat y lon al revés 38', 'Departamento de prueba', '01920000-0000-7000-8000-0000000038c0', -56.2, -34.9, -56.433, -34.945, -55.948, -34.701) $$,
   '23514', 'new row for relation "ciudad" violates check constraint "ciudad_bbox_contiene_centro_check"',
   'un centro con la latitud y la longitud cargadas al revés queda fuera del rectángulo y se rechaza');
 select throws_ok(

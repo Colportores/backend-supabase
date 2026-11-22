@@ -53,8 +53,8 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'dupl-' || s || '@example.com', 'x', now(), now(), now()
   from unnest(array['b1','b2','b3']) s;
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais dupl', 'ZD');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro)
-values (pg_temp.u('c1'), 'Ciudad dupl', pg_temp.u('c0'), -34.9, -56.2);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
+values (pg_temp.u('c1'), 'Ciudad dupl', 'Departamento de prueba', pg_temp.u('c0'), -34.9, -56.2);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin)
 values (pg_temp.u('e1'), 'Verano dupl', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));

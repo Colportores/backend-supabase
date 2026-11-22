@@ -38,9 +38,9 @@ select ('01920000-0000-7000-8000-0000000012' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000012c0', 'Pais insc', 'ZI');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000012c1', 'Montevideo insc',  '01920000-0000-7000-8000-0000000012c0', -34.90, -56.16),
-  ('01920000-0000-7000-8000-0000000012c2', 'Las Piedras insc', '01920000-0000-7000-8000-0000000012c0', -34.73, -56.22);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000012c1', 'Montevideo insc', 'Departamento de prueba',  '01920000-0000-7000-8000-0000000012c0', -34.90, -56.16),
+  ('01920000-0000-7000-8000-0000000012c2', 'Las Piedras insc', 'Departamento de prueba', '01920000-0000-7000-8000-0000000012c0', -34.73, -56.22);
 
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000012e1', 'Verano',  'VERANO',     current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000012a1'),

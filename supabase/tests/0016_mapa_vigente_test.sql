@@ -53,8 +53,8 @@ select ('01920000-0000-7000-8000-0000000016' || x.s)::uuid, r.id
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values ('01920000-0000-7000-8000-0000000016c0', 'Pais mapa16', 'ZV');
-insert into public.ciudad (id, nombre, pais_id, lat_centro, lon_centro) values
-  ('01920000-0000-7000-8000-0000000016c1', 'Ciudad mapa16', '01920000-0000-7000-8000-0000000016c0', -34.90, -56.16);
+insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro) values
+  ('01920000-0000-7000-8000-0000000016c1', 'Ciudad mapa16', 'Departamento de prueba', '01920000-0000-7000-8000-0000000016c0', -34.90, -56.16);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordinador_id) values
   ('01920000-0000-7000-8000-0000000016e1', 'Vigente',   'VERANO', current_date - 10, current_date + 30, '01920000-0000-7000-8000-0000000016a1'),
   ('01920000-0000-7000-8000-0000000016e2', 'Terminada', 'VERANO', current_date - 90, current_date - 30, '01920000-0000-7000-8000-0000000016a1'),
@@ -88,8 +88,8 @@ select hasnt_trigger('public', 'campania_colportor', 'campania_colportor_republi
                      'inscribir ya no republica el mapa: lo reemplaza la huella de las campañas en el pull');
 select results_eq(
   $$ select nombre from sync.entidad where sigue_campanias order by nombre $$,
-  $$ values ('campania_ciudad'), ('precio_por_ciudad'), ('zona'), ('zona_vertice') $$,
-  'el mapa y los precios de sus ciudades (0027), y nada más, bajan según las campañas que ve');
+  $$ values ('campania_ciudad'), ('campania_coordinador'), ('precio_general'), ('precio_por_ciudad'), ('zona'), ('zona_vertice') $$,
+  'el mapa, los precios de sus ciudades (0027) y el precio general (0144) y los coordinadores de la campaña (0178), y nada más, bajan según las campañas que ve');
 select ok(has_function_privilege('authenticated', 'public.mis_campanias_del_mapa()', 'execute'),
           'authenticated ejecuta mis_campanias_del_mapa (la usa la huella, que corre como él)');
 select ok(has_function_privilege('authenticated', 'sync.huella_del_mapa()', 'execute'),

@@ -8,7 +8,8 @@
 services:
   db:
     # ghcr.io y no public.ecr.aws: mismo tag y mismo digest (sha256:ba10e934...), pero sin el
-    # límite de pulls anónimos que rompía CI (#27).
+    # límite de pulls anónimos que rompía CI (#27). CI la baja por digest, con caché y espejos de respaldo:
+    # scripts/ci-imagenes.txt (si cambiás el tag, cambiá también esa fila).
     image: ghcr.io/supabase/postgres:17.6.1.141
     environment:
       POSTGRES_PASSWORD: postgres

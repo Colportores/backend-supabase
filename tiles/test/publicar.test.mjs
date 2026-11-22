@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { ciudadesPublicables } from '../src/ambito.mjs';
 import { validar } from '../src/catalogo.mjs';
+import { RAIZ_ASSETS } from '../src/lib-mapa.mjs';
 import { estiloDePrueba } from './ayudas.mjs';
 import {
   RUTA_CATALOGO,
@@ -18,6 +21,7 @@ import {
   serializarEstilo,
   versionDeEstilo,
 } from '../src/publicar.mjs';
+import { clienteStorage } from '../src/storage.mjs';
 
 const AMBITO = '09990000-0000-7000-8003-000000000001';
 const ESTILO_V = 'e'.repeat(64);
@@ -559,8 +563,7 @@ for (const [que, args, mensaje] of [
 test('publica el estilo con sus glyphs y sprites, cada uno con su tipo de contenido', () =>
   conTmp(async () => {
     const storage = bucketFalso();
-    const raizAssets = fileURLToPath(new URL('../assets', import.meta.url));
-    const { version } = await publicarEstilo({ storage, estilo: estiloDePrueba(), raizAssets });
+    const { version } = await publicarEstilo({ storage, estilo: estiloDePrueba(), raizAssets: RAIZ_ASSETS });
     const porRuta = new Map(storage.subidas.map((s) => [s.ruta, s]));
 
     assert.equal(version, sha(storage.objetos.get(RUTA_ESTILO)), 'la versión es el SHA-256 del estilo subido');
@@ -576,10 +579,414 @@ test('publica el estilo con sus glyphs y sprites, cada uno con su tipo de conten
   }));
 
 test('listarArchivos devuelve rutas con barras, ordenadas', async () => {
-  const raiz = fileURLToPath(new URL('../assets/sprites', import.meta.url));
+  const raiz = join(RAIZ_ASSETS, 'sprites');
   const archivos = await listarArchivos(raiz, 'estilo/sprites');
   assert.deepEqual(
     archivos.map((a) => a.ruta),
     ['estilo/sprites/grayscale.json', 'estilo/sprites/grayscale.png', 'estilo/sprites/grayscale@2x.json', 'estilo/sprites/grayscale@2x.png'],
   );
 });
+
+// ---- Más de un país en el catálogo (backend-supabase#217) ----
+
+const SAN_JOSE_UY = '09990000-0000-7000-8003-0000000000a1';
+const SAN_JOSE_AR = '09990000-0000-7000-8003-0000000000a2';
+const SAN_JOSE_AR_PUBLICABLE = { slug: 'san-jose', nombre: 'San José', ciudad_id: SAN_JOSE_AR, bbox: [-60.1, -31.5, -59.9, -31.3] };
+const fila = (id, nombre) => ({ id, nombre, bbox_oeste: -1, bbox_sur: -1, bbox_este: 1, bbox_norte: 1 });
+
+test('el catálogo con ciudades de dos países conserva cada ambito_id, y publicar las de un país no avisa de las del otro', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const salto = { slug: 'salto', nombre: 'Salto', ciudad_id: '09990000-0000-7000-8003-000000000009', bbox: [-58.1, -31.5, -57.9, -31.3] };
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [MONTEVIDEO, salto] }));
+
+    const mensajes = [];
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [SAN_JOSE_AR_PUBLICABLE],
+        // public.ciudad entera: las de Uruguay (ya publicadas) y la de Argentina.
+        ciudadesEnBase: [fila(AMBITO, 'Montevideo'), fila(salto.ciudad_id, 'Salto'), fila(SAN_JOSE_AR, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+        log: (m) => mensajes.push(m),
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]), [
+      ['ciudad-montevideo', AMBITO],
+      ['ciudad-salto', salto.ciudad_id],
+      ['ciudad-san-jose', SAN_JOSE_AR],
+    ]);
+    assert.deepEqual(mensajes.filter((m) => m.startsWith('aviso:')), [], 'las de Uruguay siguen vivas en public.ciudad: nada que avisar');
+  }));
+
+test('dos ciudades vivas de países distintos con el mismo nombre no se pisan: el publicador corta antes de subir nada', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const sanJoseUy = { slug: 'san-jose', nombre: 'San José', ciudad_id: SAN_JOSE_UY, bbox: [-57.1, -34.4, -56.9, -34.2] };
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [sanJoseUy] }));
+    const antes = new Map(storage.objetos);
+    const subidasAntes = storage.subidas.length;
+
+    const base = [fila(SAN_JOSE_UY, 'San José'), fila(SAN_JOSE_AR, 'San José')];
+    for (const parcial of [false, true]) {
+      await assert.rejects(
+        publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [SAN_JOSE_AR_PUBLICABLE], ciudadesEnBase: base, avisar: !parcial })),
+        (error) => {
+          assert.match(error.message, new RegExp(`«ciudad-san-jose».*${SAN_JOSE_UY}.*sigue viva.*${SAN_JOSE_AR}.*«San José».*mismo paquete.*Cambiá el nombre de una de las dos.*No se subió nada\\.$`));
+          return true;
+        },
+        parcial ? 'también con --ciudad (corrida parcial)' : 'corrida completa',
+      );
+    }
+    assert.equal(storage.subidas.length, subidasAntes, 'ni un archivo ni el catálogo');
+    assert.deepEqual([...storage.objetos.keys()], [...antes.keys()]);
+    assert.equal(storage.objetos.get(RUTA_CATALOGO).toString(), antes.get(RUTA_CATALOGO).toString(), 'el paquete de Uruguay sigue intacto');
+  }));
+
+test('si la dueña del paquete ya no está viva, el mismo nombre de otro país no es un choque: reemplaza al paquete, como un renombre', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const sanJoseUy = { slug: 'san-jose', nombre: 'San José', ciudad_id: SAN_JOSE_UY, bbox: [-57.1, -34.4, -56.9, -34.2] };
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [sanJoseUy] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, { ciudades: [SAN_JOSE_AR_PUBLICABLE], ciudadesEnBase: [fila(SAN_JOSE_AR, 'San José')], ahora: '2026-10-08T12:00:00Z' }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]), [['ciudad-san-jose', SAN_JOSE_AR]]);
+  }));
+
+test('republicar la propia ciudad (mismo id, mismo slug) no es un choque aunque haya otra homónima en otro país', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [SAN_JOSE_AR_PUBLICABLE] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [SAN_JOSE_AR_PUBLICABLE],
+        ciudadesEnBase: [fila(SAN_JOSE_UY, 'San José'), fila(SAN_JOSE_AR, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]), [['ciudad-san-jose', SAN_JOSE_AR]]);
+  }));
+
+// ---- El CLI y --pais ----
+
+const CLI = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
+const correrCli = (args, env = {}) =>
+  new Promise((resolver) => {
+    execFile(process.execPath, [CLI, ...args], { env: { ...process.env, SUPABASE_URL: 'http://127.0.0.1:9', SUPABASE_SERVICE_ROLE_KEY: 'x', ...env }, timeout: 30_000 }, (error, stdout, stderr) => {
+      resolver({ codigo: error ? (error.code ?? 1) : 0, salida: `${stdout}\n${stderr}` });
+    });
+  });
+
+for (const valor of ['A', 'ARG', '1R', '']) {
+  test(`el CLI rechaza --pais ${JSON.stringify(valor)} nombrando el valor, antes de leer la base (no hay nada escuchando en la URL)`, async () => {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'ciudades', '--dry-run', '--pais', valor]);
+    assert.equal(codigo, 1, salida);
+    assert.ok(salida.includes(`llegó ${JSON.stringify(valor)}`), salida);
+    assert.match(salida, /--pais tiene que ser un código de país de dos letras/);
+    assert.doesNotMatch(salida, /ECONNREFUSED|public\.ciudad falló/, 'no llegó a conectarse');
+  });
+}
+
+test('el CLI rechaza un --pais inválido aunque falten las variables de entorno (se valida primero)', async () => {
+  const { codigo, salida } = await correrCli(['publicar', '--pais', 'ARG'], { SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '' });
+  assert.equal(codigo, 1, salida);
+  assert.match(salida, /llegó "ARG"/);
+});
+
+for (const solo of ['departamentos', 'uruguay']) {
+  test(`el CLI rechaza --pais AR con --solo ${solo} (son del catálogo de Uruguay), sin conectarse a nada`, async () => {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', solo, '--dry-run', '--pais', 'ar']);
+    assert.equal(codigo, 1, salida);
+    assert.match(salida, new RegExp(`--pais AR no va con --solo ${solo}.*solo de UY`));
+    assert.doesNotMatch(salida, /ECONNREFUSED/);
+  });
+}
+
+/**
+ * Un PostgREST de mentira que anota qué se pidió: contesta `ciudades(url)` para public.ciudad (por defecto, una
+ * lista vacía) y [] para lo demás. El bucket tiene `catalogo` (o nada).
+ */
+async function servidorVacio({ ciudades = () => [], catalogo } = {}) {
+  const pedidos = [];
+  const servidor = createServer((req, res) => {
+    pedidos.push(req.url);
+    if (req.url.startsWith('/rest/v1/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(req.url.startsWith('/rest/v1/ciudad?') ? ciudades(new URL(req.url, 'http://x').searchParams) : []));
+    } else if (req.method === 'POST' && req.url.startsWith('/storage/v1/object/list/')) {
+      // El listado del bucket: el catálogo con el eTag (MD5) de lo que sirve el GET de abajo, o nada (#271).
+      const etag = catalogo && createHash('md5').update(JSON.stringify(catalogo)).digest('hex');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(catalogo ? [{ id: 'cat', name: 'catalogo.json', metadata: { eTag: `"${etag}"` } }] : []));
+    } else if (catalogo && req.url.includes('catalogo.json')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(catalogo));
+    } else {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{"error":"not_found"}');
+    }
+  });
+  await new Promise((resolver) => servidor.listen(0, '127.0.0.1', resolver));
+  return { url: `http://127.0.0.1:${servidor.address().port}`, pedidos, cerrar: () => servidor.close() };
+}
+
+test('el CLI con --pais AR pide a la base las ciudades de AR (y las de todos los países para avisar) y dice el país si no hay ninguna', async () => {
+  const servidor = await servidorVacio();
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run', '--pais', 'ar'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    const ciudades = servidor.pedidos.filter((p) => p.startsWith('/rest/v1/ciudad?')).map((p) => new URL(p, 'http://x').searchParams);
+    assert.equal(ciudades.length, 2);
+    assert.equal(ciudades[0].get('pais.iso_code'), 'eq.AR');
+    assert.equal(ciudades[1].get('pais.iso_code'), null, 'la segunda mira todos los países');
+    assert.match(salida, /no hay ciudades de AR en public\.ciudad/);
+    assert.doesNotMatch(salida, /no hay ciudades con rectángulo/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('el CLI sin --pais sigue pidiendo las ciudades de UY, como antes', async () => {
+  const servidor = await servidorVacio();
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    const primera = servidor.pedidos.find((p) => p.startsWith('/rest/v1/ciudad?'));
+    assert.equal(new URL(primera, 'http://x').searchParams.get('pais.iso_code'), 'eq.UY');
+    assert.match(salida, /no hay ciudades de UY en public\.ciudad/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('el CLI con --pais y --solo zonas lo avisa: el país solo elige ciudades', async () => {
+  const servidor = await servidorVacio();
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'zonas', '--dry-run', '--pais', 'AR'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    assert.match(salida, /aviso: --pais AR no cambia nada con --solo zonas/);
+    assert.ok(!servidor.pedidos.some((p) => p.startsWith('/rest/v1/ciudad')), 'no lee ciudades');
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+const PAQUETE_DE_MONTEVIDEO = {
+  id: 'ciudad-montevideo',
+  nivel: 'ciudad',
+  ambito_id: AMBITO,
+  nombre: 'Montevideo',
+  zoom_min: 0,
+  zoom_max: 15,
+  tamano_bytes: 5,
+  version: 'a'.repeat(64),
+  partes: [{ archivo: 'paquetes/ciudad/montevideo.aaaaaaaaaaaa.pmtiles', tamano_bytes: 5, sha256: 'a'.repeat(64) }],
+  fuente_build: '20261001',
+  actualizado_en: '2026-10-01T00:00:00Z',
+};
+const CATALOGO_CON_MONTEVIDEO = {
+  version: 1,
+  generado_en: '2026-10-01T00:00:00Z',
+  estilo: { url: RUTA_ESTILO, fuente_de_tiles: 'protomaps' },
+  paquetes: [PAQUETE_DE_MONTEVIDEO],
+};
+
+test('el CLI con --pais AR no avisa que el mapa de Montevideo sobra: mira public.ciudad entera, no solo el país elegido', async () => {
+  const servidor = await servidorVacio({
+    catalogo: CATALOGO_CON_MONTEVIDEO,
+    ciudades: (q) => (q.get('pais.iso_code') === null ? [fila(AMBITO, 'Montevideo')] : []),
+  });
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run', '--pais', 'AR'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    assert.match(salida, /no hay ciudades de AR en public\.ciudad/);
+    assert.doesNotMatch(salida, /aviso: ciudad-montevideo/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('el CLI avisa del paquete cuya ciudad ya no está en public.ciudad en ningún país', async () => {
+  const servidor = await servidorVacio({ catalogo: CATALOGO_CON_MONTEVIDEO });
+  try {
+    const { codigo, salida } = await correrCli(['publicar', '--solo', 'todo', '--dry-run', '--pais', 'AR'], { SUPABASE_URL: servidor.url });
+    assert.equal(codigo, 0, salida);
+    assert.match(salida, /aviso: ciudad-montevideo sigue en el catálogo.*ya no está en public\.ciudad/);
+  } finally {
+    servidor.cerrar();
+  }
+});
+
+test('una corrida parcial (avisar: false) no da los avisos de la completa', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    const mensajes = [];
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [], ciudadesEnBase: [], avisar: false, ahora: '2026-10-08T12:00:00Z', log: (m) => mensajes.push(m) }));
+    assert.deepEqual(mensajes.filter((m) => m.startsWith('aviso:')), []);
+  }));
+
+test('un renombre no es un choque: la ciudad que cambió de nombre se publica en la misma corrida y otra toma su nombre viejo', () =>
+  conTmp(async (tmp) => {
+    const A = '09990000-0000-7000-8003-0000000000b1';
+    const C = '09990000-0000-7000-8003-0000000000b2';
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [{ slug: 'rivera', nombre: 'Rivera', ciudad_id: A, bbox: [-55.6, -31.0, -55.4, -30.8] }] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        // A pasó a llamarse «Tranqueras» y se creó C «Rivera».
+        ciudades: [
+          { slug: 'rivera', nombre: 'Rivera', ciudad_id: C, bbox: [-55.7, -31.1, -55.3, -30.7] },
+          { slug: 'tranqueras', nombre: 'Tranqueras', ciudad_id: A, bbox: [-55.6, -31.0, -55.4, -30.8] },
+        ],
+        ciudadesEnBase: [fila(A, 'Tranqueras'), fila(C, 'Rivera')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-rivera', C], ['ciudad-tranqueras', A]]);
+  }));
+
+test('dos ciudades del mismo nombre en distintos departamentos se publican las dos; la que ya estaba pasa a su paquete con departamento y el viejo se retira (#259)', () =>
+  conTmp(async (tmp) => {
+    const CANELONES = '09990000-0000-7000-8003-0000000000c1';
+    const COLONIA = '09990000-0000-7000-8003-0000000000c2';
+    const laPaz = (id, departamento, bbox) => ({
+      id,
+      nombre: 'La Paz',
+      departamento,
+      bbox_oeste: bbox[0],
+      bbox_sur: bbox[1],
+      bbox_este: bbox[2],
+      bbox_norte: bbox[3],
+    });
+    const canelones = laPaz(CANELONES, 'Canelones', [-56.25, -34.78, -56.2, -34.74]);
+    const colonia = laPaz(COLONIA, 'Colonia', [-57.35, -34.37, -57.31, -34.33]);
+    const storage = bucketFalso();
+    // Primero solo La Paz de Canelones tiene rectángulo: su paquete es el de siempre, sin departamento.
+    const { publicables: antes } = ciudadesPublicables([canelones, { ...colonia, bbox_oeste: null }]);
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: antes }));
+    assert.deepEqual(v1.paquetes.map((p) => p.id), ['ciudad-la-paz']);
+    const archivoViejo = v1.paquetes[0].partes[0].archivo;
+
+    // La de Colonia carga su rectángulo: antes el publicador se frenaba con «mismo paquete», ahora publica las dos.
+    const { publicables: despues } = ciudadesPublicables([canelones, colonia]);
+    const { catalogo: v2 } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, { ciudades: despues, ciudadesEnBase: [canelones, colonia], ahora: '2026-10-08T12:00:00Z' }),
+    );
+    assert.deepEqual(v2.paquetes.map((p) => [p.id, p.ambito_id, p.nombre]).sort(), [
+      ['ciudad-la-paz-canelones', CANELONES, 'La Paz'],
+      ['ciudad-la-paz-colonia', COLONIA, 'La Paz'],
+    ]);
+    assert.deepEqual(v2.retirados, [{ archivo: archivoViejo, desde: '2026-10-08T12:00:00Z' }], 'el archivo viejo queda retirado, con su gracia');
+    assert.deepEqual(validar(v2), []);
+  }));
+
+test('dos ciudades que se intercambian los nombres tampoco chocan: los dos paquetes pasan a su ambito_id nuevo', () =>
+  conTmp(async (tmp) => {
+    const A = '09990000-0000-7000-8003-0000000000b3';
+    const B = '09990000-0000-7000-8003-0000000000b4';
+    const storage = bucketFalso();
+    const de = (slug, nombre, id) => ({ slug, nombre, ciudad_id: id, bbox: [-57.1, -34.4, -56.9, -34.2] });
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ciudades: [de('san-jose', 'San José', A), de('libertad', 'Libertad', B)] }));
+    const { catalogo } = await publicarCiudades(
+      opciones(storage, recorteFalso(), tmp, {
+        ciudades: [de('san-jose', 'San José', B), de('libertad', 'Libertad', A)],
+        ciudadesEnBase: [fila(A, 'Libertad'), fila(B, 'San José')],
+        ahora: '2026-10-08T12:00:00Z',
+      }),
+    );
+    assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-libertad', A], ['ciudad-san-jose', B]]);
+  }));
+
+/**
+ * El Storage de Supabase detrás de su CDN, para `clienteStorage` (#271): guarda los objetos con su eTag (MD5) y su
+ * Cache-Control, y el CDN contesta los GET y HEAD (también los autenticados) con la copia que guardó hasta que vence su
+ * `max-age`, aunque el pedido diga `no-cache`. El listado (POST) va a la base: siempre dice la verdad. El reloj lo
+ * mueve `esperar`, que es lo que el cliente usa para esperar.
+ */
+function storageConCdn() {
+  const objetos = new Map();
+  const cdn = new Map();
+  const estado = { reloj: 0, objetos };
+  const ruta = (url, raiz) => decodeURIComponent(url.slice(url.indexOf(raiz) + raiz.length));
+  const maxAge = (cacheControl) => Number(/max-age=(\d+)/.exec(cacheControl ?? '')?.[1] ?? 60) * 1000;
+  const respuestaDe = (copia, metodo) =>
+    copia.status === 200
+      ? new Response(metodo === 'HEAD' ? null : copia.bytes, { status: 200, headers: { etag: `"${copia.etag}"` } })
+      : new Response(metodo === 'HEAD' ? null : JSON.stringify({ error: 'not_found' }), { status: 400 });
+  const fetchFn = async (url, { method, headers = {}, body } = {}) => {
+    if (method === 'POST' && url.includes('/object/list/mapas')) {
+      const { prefix, search = '' } = JSON.parse(body);
+      const hijos = [...objetos.entries()]
+        .filter(([r]) => (prefix ? r.startsWith(`${prefix}/`) : true) && !r.slice(prefix ? prefix.length + 1 : 0).includes('/'))
+        .map(([r, o]) => ({ id: `id-${r}`, name: r.slice(prefix ? prefix.length + 1 : 0), updated_at: o.subido, metadata: { eTag: `"${o.etag}"` } }))
+        .filter((o) => o.name.startsWith(search));
+      return new Response(JSON.stringify(hijos), { status: 200 });
+    }
+    if (method === 'POST') {
+      const r = ruta(url, '/object/mapas/');
+      const bytes = Buffer.from(body);
+      objetos.set(r, { bytes, etag: createHash('md5').update(bytes).digest('hex'), maxAge: maxAge(headers['cache-control']), subido: new Date(estado.reloj).toISOString() });
+      return new Response('{}', { status: 200 });
+    }
+    if (method === 'DELETE') {
+      for (const r of JSON.parse(body).prefixes) objetos.delete(r);
+      return new Response('[]', { status: 200 });
+    }
+    // GET y HEAD por el endpoint autenticado: pasan por el CDN.
+    const r = ruta(url, '/object/authenticated/mapas/');
+    const clave = `${method} ${r}`;
+    const guardada = cdn.get(clave);
+    if (guardada && estado.reloj < guardada.hasta) return respuestaDe(guardada, method);
+    const o = objetos.get(r);
+    const copia = o ? { status: 200, bytes: o.bytes, etag: o.etag } : { status: 400 };
+    cdn.set(clave, { ...copia, hasta: estado.reloj + (o?.maxAge ?? 60_000) });
+    return respuestaDe(copia, method);
+  };
+  return { estado, fetchFn, esperar: async (ms) => (estado.reloj += ms) };
+}
+
+const MALDONADO = { slug: 'maldonado', nombre: 'Maldonado', ciudad_id: '09990000-0000-7000-8003-000000000002', bbox: [-55.0, -34.95, -54.9, -34.88] };
+const SALTO = { slug: 'salto', nombre: 'Salto', ciudad_id: '09990000-0000-7000-8003-000000000003', bbox: [-58.0, -31.42, -57.9, -31.35] };
+const catalogoDelBucket = (estado) => JSON.parse(estado.objetos.get(RUTA_CATALOGO).bytes.toString());
+
+test('#271: dos publicar --ciudad seguidos (menos de 60 s) dejan las dos ciudades en el catálogo, aunque el CDN tenga el viejo', () =>
+  conTmp(async (tmp) => {
+    const { estado, fetchFn, esperar } = storageConCdn();
+    const storage = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar });
+    const publicar = (ciudad, ahora) =>
+      publicarCiudades({ ...opciones(storage, recorteFalso(), tmp), ciudades: [ciudad], ahora, avisar: false });
+
+    await publicar(MONTEVIDEO, '2026-11-11T09:00:00Z');
+    estado.reloj += 3_600_000; // una hora después: el CDN ya no tiene nada vigente
+    await publicar(MALDONADO, '2026-11-11T10:00:00Z'); // lee el catálogo con Montevideo y el CDN lo guarda 60 s
+    const conMaldonado = catalogoDelBucket(estado).paquetes.map((p) => p.id);
+    assert.deepEqual(conMaldonado, ['ciudad-maldonado', 'ciudad-montevideo']);
+
+    const antes = estado.reloj;
+    estado.reloj += 5_000; // la segunda corrida, a los pocos segundos
+    const { catalogo } = await publicar(SALTO, '2026-11-11T10:00:05Z');
+
+    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo', 'ciudad-salto']);
+    assert.deepEqual(catalogoDelBucket(estado).paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo', 'ciudad-salto']);
+    assert.deepEqual(catalogoDelBucket(estado).retirados, [], 'nada salió del catálogo');
+    assert.ok(estado.reloj - antes >= 60_000, 'esperó a que el CDN soltara el catálogo viejo');
+  }));
+
+test('#271: si el CDN no suelta el catálogo viejo, la segunda corrida falla antes de subir nada y el catálogo sigue con la primera ciudad', () =>
+  conTmp(async (tmp) => {
+    const { estado, fetchFn, esperar } = storageConCdn();
+    const storage = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar });
+    const publicar = (ciudad, ahora, cliente = storage) =>
+      publicarCiudades({ ...opciones(cliente, recorteFalso(), tmp), ciudades: [ciudad], ahora, avisar: false });
+    await publicar(MONTEVIDEO, '2026-11-11T09:00:00Z');
+    estado.reloj += 3_600_000;
+    await publicar(MALDONADO, '2026-11-11T10:00:00Z');
+    const guardados = [...estado.objetos.keys()];
+
+    // Un CDN que no vence en el tiempo que espera el cliente: una sola lectura, sin esperar.
+    const impaciente = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar, intentosVigente: 1 });
+    await assert.rejects(publicar(SALTO, '2026-11-11T10:00:05Z', impaciente), /copia vigente de catalogo\.json/);
+    assert.deepEqual([...estado.objetos.keys()], guardados, 'no subió el paquete de Salto ni un catálogo sin Maldonado');
+    assert.deepEqual(catalogoDelBucket(estado).paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo']);
+  }));
