@@ -70,7 +70,8 @@ supabase/
 │                        0006 estado de la cuenta, 0007 inscripción en campaña, 0008 zona,
 │                        0009 lecturas del panel, 0010 mapa de la campaña, 0011 mapa en el delta,
 │                        0012 zona solo en la inscripción, 0013 ubicación sin zona,
-│                        0014 qué baja del pull, 0028 el pull baja toda la ciudad
+│                        0014 qué baja del pull, 0028 el pull baja toda la ciudad;
+│                        shell: sync_concurrencia, concurrencia del push y del delta
 ├── tests_migracion/   ← migraciones que mueven datos, probadas con datos (db-test-migracion.sh)
 ├── bench/             ← carga sintética y medición del delta (no lo corre CI)
 └── functions/         ← Edge Functions Deno: `informe-reportes` (el «Informe PDF» de Reportes) `foto-ticket` (enlaces firmados de R2 para la foto del ticket) y `push-fcm` (manda por FCM los avisos de la cola `push.evento`), cada una con su README
@@ -83,9 +84,11 @@ scripts/               ← db-migrate / db-test / db-test-migracion / db-lint / 
 
 `db-test-migracion.sh` prueba las migraciones que mueven datos: por cada caso de `supabase/tests_migracion/` limpia la base, aplica las migraciones hasta la versión previa, carga los datos del caso, aplica el resto y verifica (pgTAP, o que aborte con el mensaje esperado). Al final deja la base como `db-reset.sh`.
 
+`sync_concurrencia.sh` es shell y no pgTAP: prueba lo que pasa cuando dos transacciones se cruzan —un reintento que llega con el primer envío todavía en vuelo, dos colportores que actualizan la misma casa desde la misma versión, commits fuera de orden en el delta—, y eso necesita dos conexiones vivas a la vez. `db-test.sh` lo corre después de `pg_prove`.
+
 ## CI/CD
 
-- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
+- `ci.yml` (PR y push a `develop`/`staging`/`production`): levanta el mismo `compose.dev.yml`, aplica todas las migraciones sobre una base vacía, corre pgTAP, el test de concurrencia y `supabase db lint`, y al final prueba las migraciones que mueven datos con `db-test-migracion.sh`. Antes de levantar nada corre dos controles sin Docker: `check-sql-layout.sh` (todo el SQL vive en `supabase/`) y `check-config.sh` (`minimum_password_length` del `config.toml` no baja del de la app).
 - `tiles.yml` (a mano, `workflow_dispatch`, y cada hora para los mapas de las zonas, solo en los environments con su variable `MAPAS_ZONAS_<ENV>` en `true`): publica los mapas propios (PMTiles de OpenStreetMap, estilo y catálogo; las ciudades salen de `public.ciudad`) en el bucket público `mapas` del environment y lo verifica. No lleva secretos nuevos. [`docs/mapas-tiles.md`](./docs/mapas-tiles.md). El job **tiles** de `ci.yml` corre las pruebas del publicador (`npm ci && npm test` en `tiles/`) y el job **funciones**, las de las Edge Functions del informe PDF, de la foto del ticket y de las push (`deno task check && deno task test` en `supabase/functions/informe-reportes/`, `supabase/functions/foto-ticket/` y `supabase/functions/push-fcm/`, sin Docker).
 - `deploy.yml`: `supabase link` + `supabase db push` contra el proyecto Supabase del *environment* y, después, `supabase functions deploy --use-api --yes`: publica **todas** las Edge Functions de `supabase/functions/` (hoy `informe-reportes`, `foto-ticket` y `push-fcm`) en el mismo environment (develop, staging o production), con la misma `SUPABASE_ACCESS_TOKEN` y con el `verify_jwt` y el import map de cada una en `supabase/config.toml` (backend-supabase#203). `--use-api` empaqueta del lado de Supabase, sin Docker en el runner; no lleva `--prune`, así que una función que existe en el proyecto y no en el repo no se borra sola. **Los secretos de cada función no viajan**: se cargan una vez por environment con `supabase secrets set` (README de cada función). **Se dispara al terminar CI en verde sobre el mismo commit**, nunca en paralelo: una migración que rompe pgTAP no llega a la base real.
 
