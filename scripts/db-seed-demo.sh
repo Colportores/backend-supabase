@@ -13,6 +13,9 @@
 #                                           de actividad) para probar la app desde el lado del colportor (sin esa cuenta no hace nada)
 #   scripts/db-seed-demo.sh --volumen       segunda tanda: 150 ciudades, 54 colportores y seis semanas de jornadas, ventas y cobros
 #                                           para las pruebas de los evaluadores (requiere la demo base ya cargada; idempotente)
+#   scripts/db-seed-demo.sh --listas       tercera tanda: que toda lista desplazable del panel y de la app tenga más de 25 registros
+#                                           (después de la base, --coordinador, --colportor y --volumen; idempotente)
+#   scripts/db-seed-demo.sh --chequeo-listas  cuántos registros ve cada lista con coordinador.demo y colportor.demo (solo lectura)
 #   scripts/db-seed-demo.sh --remoto <modo> lo mismo contra el proyecto de DEMO ohdsavwpasfpapbyutrv, con el CLI de
 #                                           Supabase ya logueado (o SUPABASE_ACCESS_TOKEN en el entorno)
 #
@@ -40,8 +43,10 @@ for a in "$@"; do
     --fechas) modo="fechas" ;;
     --colportor) modo="colportor" ;;
     --volumen) modo="volumen" ;;
+    --listas) modo="listas" ;;
+    --chequeo-listas) modo="chequeo-listas" ;;
     --aplicar) aplicar=1 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $a (ver --help)" >&2; exit 2 ;;
   esac
 done
@@ -57,6 +62,8 @@ case "$modo" in
   fechas)  archivo="$DIR/corregir-fechas-de-alta-demo.sql" ;;
   colportor) archivo="$DIR/sumar-colportor-demo.sql" ;;
   volumen) archivo="$DIR/demo-volumen.sql" ;;
+  listas) archivo="$DIR/demo-listas.sql" ;;
+  chequeo-listas) archivo="$DIR/chequeo-listas-demo.sql" ;;
 esac
 
 # Para --aplicar se arma una copia temporal con la confirmación activa dentro del propio DO (el original queda en vista
