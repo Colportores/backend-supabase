@@ -54,13 +54,13 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));
 
--- Un producto de cada categoría (la 0149 la fija con el trigger; se la pasa explícita), con y sin código.
-insert into public.producto (id, nombre, tipo, categoria, es_bonificable, codigo_editor) values
-  (pg_temp.u('11'), 'Bonificable t171',  'LIBRO',    'BONIFICABLES', true,  'ED-0001'),
-  (pg_temp.u('12'), 'Misionero t171',    'LIBRO',    'MISIONEROS',   false, 'ED-0002'),
-  (pg_temp.u('13'), 'Espiritual t171',   'LIBRO',    'ESPIRITUALES', false, null),
-  (pg_temp.u('14'), 'Revista t171',      'REVISTA',  'REVISTAS',     false, 'REV-7'),
-  (pg_temp.u('15'), 'Material t171',     'MATERIAL', 'MATERIAL',     false, null);
+-- Un producto de cada categoría, con y sin código.
+insert into public.producto (id, nombre, categoria, es_bonificable, codigo_editor) values
+  (pg_temp.u('11'), 'Bonificable t171',  'BONIFICABLES', true,  'ED-0001'),
+  (pg_temp.u('12'), 'Misionero t171',    'MISIONEROS',   false, 'ED-0002'),
+  (pg_temp.u('13'), 'Espiritual t171',   'ESPIRITUALES', false, null),
+  (pg_temp.u('14'), 'Revista t171',      'REVISTAS',     false, 'REV-7'),
+  (pg_temp.u('15'), 'Material t171',   'MATERIAL',     false, null);
 insert into public.coleccion (id, nombre) values (pg_temp.u('d1'), 'Combo t171');
 insert into public.precio_general (id, producto_id, coleccion_id, precio_venta, valido_desde) values
   (pg_temp.u('21'), pg_temp.u('11'), null, 24000, pg_temp.h() - 100),

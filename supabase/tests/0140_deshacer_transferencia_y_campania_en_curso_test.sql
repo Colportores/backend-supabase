@@ -109,8 +109,8 @@ insert into public.campania_colportor (campania_id, usuario_id, created_at) valu
   (pg_temp.u('e2'), pg_temp.u('b2'), now() - interval '40 days'),
   (pg_temp.u('e2'), pg_temp.u('b5'), now() - interval '40 days'),
   (pg_temp.u('e2'), pg_temp.u('b6'), now() - interval '40 days');
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('91'), 'Libro Uno t140', 'LIBRO', 1500), (pg_temp.u('92'), 'Libro Dos t140', 'LIBRO', 2500);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('91'), 'Libro Uno t140', 'ESPIRITUALES', 1500), (pg_temp.u('92'), 'Libro Dos t140', 'ESPIRITUALES', 2500);
 insert into public.stock (usuario_id, producto_id, cantidad_disponible) values
   (pg_temp.u('b1'), pg_temp.u('91'), 5), (pg_temp.u('b1'), pg_temp.u('92'), 3),
   (pg_temp.u('b2'), pg_temp.u('91'), 1), (pg_temp.u('b5'), pg_temp.u('91'), 4), (pg_temp.u('b5'), pg_temp.u('92'), 4);

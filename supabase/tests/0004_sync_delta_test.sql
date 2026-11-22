@@ -43,8 +43,8 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   ('01920000-0000-7000-8000-0000000004b0', '01920000-0000-7000-8000-0000000004a1', '01920000-0000-7000-8000-0000000004d1'),
   ('01920000-0000-7000-8000-0000000004b0', '01920000-0000-7000-8000-0000000004a2', '01920000-0000-7000-8000-0000000004d2');
 
-insert into public.producto (id, nombre, tipo) values
-  ('01920000-0000-7000-8000-0000000004e1', 'El Deseado de Todas las Gentes', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  ('01920000-0000-7000-8000-0000000004e1', 'El Deseado de Todas las Gentes', 'ESPIRITUALES');
 
 create or replace function pg_temp.actuar_como(p_uid uuid) returns void language plpgsql as $$
 begin
@@ -186,7 +186,7 @@ select is(
 select is(
   sync.push($$[{"client_op_id":"01920000-0000-7000-8000-000000004b05","entity":"producto",
                 "op":"insert","payload":{"id":"01920000-0000-7000-8000-0000000004e9",
-                "nombre":"Pirata","tipo":"LIBRO"}}]$$::jsonb) #>> '{results,0,code}',
+                "nombre":"Pirata","categoria":"ESPIRITUALES"}}]$$::jsonb) #>> '{results,0,code}',
   'ENTIDAD_DE_SOLO_LECTURA',
   'una entidad pull no se puede escribir: la réplica es de solo lectura (contrato §2)'
 );

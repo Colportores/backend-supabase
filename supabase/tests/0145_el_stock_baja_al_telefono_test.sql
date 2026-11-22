@@ -97,10 +97,10 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
 insert into public.campania_colportor (campania_id, usuario_id) values
   (pg_temp.u('e1'), pg_temp.u('b1')),
   (pg_temp.u('e1'), pg_temp.u('b2'));
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('01'), 'Libro 1 stock145', 'LIBRO'),
-  (pg_temp.u('02'), 'Libro 2 stock145', 'LIBRO'),
-  (pg_temp.u('03'), 'Libro 3 stock145', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('01'), 'Libro 1 stock145', 'ESPIRITUALES'),
+  (pg_temp.u('02'), 'Libro 2 stock145', 'ESPIRITUALES'),
+  (pg_temp.u('03'), 'Libro 3 stock145', 'ESPIRITUALES');
 insert into public.stock (id, usuario_id, producto_id, cantidad_disponible, cantidad_reservada) values
   (pg_temp.u('51'), pg_temp.u('b1'), pg_temp.u('01'), 10, 2),
   (pg_temp.u('52'), pg_temp.u('b1'), pg_temp.u('02'), -2, 0),

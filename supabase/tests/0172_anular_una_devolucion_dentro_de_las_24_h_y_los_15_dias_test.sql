@@ -133,7 +133,7 @@ insert into public.campania_colportor (campania_id, usuario_id, created_at) valu
   (pg_temp.u('c1'), pg_temp.u('b1'), now() - interval '40 days'),
   (pg_temp.u('c4'), pg_temp.u('b4'), now() - interval '59 days'),
   (pg_temp.u('c6'), pg_temp.u('b7'), now() - interval '9 days');
-insert into public.producto (id, nombre, tipo, precio_base_compra) values (pg_temp.u('11'), 'Libro t172', 'LIBRO', 1500);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values (pg_temp.u('11'), 'Libro t172', 'ESPIRITUALES', 1500);
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais dev172', 'ZX');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)

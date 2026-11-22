@@ -100,7 +100,7 @@ insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1'));
 insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   (pg_temp.u('e1'), pg_temp.u('b1'), null);
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('11'), 'Libro 1 t0158', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('11'), 'Libro 1 t0158', 'ESPIRITUALES');
 insert into public.ubicacion (id, tipo, lat, lon, ciudad_id)
 values (pg_temp.u('c8'), 'CASA', -34.88, -56.15, pg_temp.u('c1'));
 insert into public.espacio (id, ubicacion_id) values (pg_temp.u('c9'), pg_temp.u('c8'));

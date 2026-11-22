@@ -93,16 +93,16 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   (pg_temp.u('e2'), pg_temp.u('a3'), null),
   (pg_temp.u('e3'), pg_temp.u('b3'), null);
 
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('a1'), 'Libro A precio33', 'LIBRO'),
-  (pg_temp.u('a2'), 'Libro B precio33', 'LIBRO'),
-  (pg_temp.u('a3'), 'Libro C precio33', 'LIBRO'),
-  (pg_temp.u('a4'), 'Libro D precio33', 'LIBRO'),
-  (pg_temp.u('a5'), 'Libro E precio33', 'LIBRO'),
-  (pg_temp.u('a6'), 'Libro F precio33', 'LIBRO'),
-  (pg_temp.u('a7'), 'Libro G precio33', 'LIBRO'),
-  (pg_temp.u('a8'), 'Libro de la visibilidad precio33', 'LIBRO'),
-  (pg_temp.u('a9'), 'Libro de las escrituras precio33', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('a1'), 'Libro A precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a2'), 'Libro B precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a3'), 'Libro C precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a4'), 'Libro D precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a5'), 'Libro E precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a6'), 'Libro F precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a7'), 'Libro G precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a8'), 'Libro de la visibilidad precio33', 'ESPIRITUALES'),
+  (pg_temp.u('a9'), 'Libro de las escrituras precio33', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values (pg_temp.u('b0'), 'Coleccion precio33');
 
 -- ---------------------------------------------------------------------------

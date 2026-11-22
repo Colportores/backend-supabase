@@ -70,7 +70,7 @@ select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id from (values ('b1','COLPORTOR'), ('b2','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('11'), 'Libro 1 t166', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('11'), 'Libro 1 t166', 'ESPIRITUALES');
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais dev166', 'ZU');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
 values (pg_temp.u('f1'), 'Ciudad dev166', 'Departamento de prueba', pg_temp.u('f0'), -34.90, -56.20);

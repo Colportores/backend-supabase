@@ -116,20 +116,20 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id, deleted
   (pg_temp.u('e1'), pg_temp.u('b5'), null, now());
 update public.usuario set deleted_at = now() where id = pg_temp.u('b6');
 
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro p1 general43', 'LIBRO'),
-  (pg_temp.u('12'), 'Libro p2 general43', 'LIBRO'),
-  (pg_temp.u('13'), 'Libro p3 general43', 'LIBRO'),
-  (pg_temp.u('14'), 'Libro p4 general43', 'LIBRO'),
-  (pg_temp.u('15'), 'Libro p5 general43', 'LIBRO'),
-  (pg_temp.u('16'), 'Libro p6 general43', 'LIBRO'),
-  (pg_temp.u('17'), 'Libro p7 general43', 'LIBRO'),
-  (pg_temp.u('18'), 'Libro p8 general43', 'LIBRO'),
-  (pg_temp.u('19'), 'Libro p9 general43', 'LIBRO'),
-  (pg_temp.u('1a'), 'Libro p10 general43', 'LIBRO'),
-  (pg_temp.u('1b'), 'Libro p11 general43', 'LIBRO'),
-  (pg_temp.u('1c'), 'Libro p12 general43', 'LIBRO'),
-  (pg_temp.u('1d'), 'Libro p13 general43', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro p1 general43', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Libro p2 general43', 'ESPIRITUALES'),
+  (pg_temp.u('13'), 'Libro p3 general43', 'ESPIRITUALES'),
+  (pg_temp.u('14'), 'Libro p4 general43', 'ESPIRITUALES'),
+  (pg_temp.u('15'), 'Libro p5 general43', 'ESPIRITUALES'),
+  (pg_temp.u('16'), 'Libro p6 general43', 'ESPIRITUALES'),
+  (pg_temp.u('17'), 'Libro p7 general43', 'ESPIRITUALES'),
+  (pg_temp.u('18'), 'Libro p8 general43', 'ESPIRITUALES'),
+  (pg_temp.u('19'), 'Libro p9 general43', 'ESPIRITUALES'),
+  (pg_temp.u('1a'), 'Libro p10 general43', 'ESPIRITUALES'),
+  (pg_temp.u('1b'), 'Libro p11 general43', 'ESPIRITUALES'),
+  (pg_temp.u('1c'), 'Libro p12 general43', 'ESPIRITUALES'),
+  (pg_temp.u('1d'), 'Libro p13 general43', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values
   (pg_temp.u('d0'), 'Coleccion general43'),
   (pg_temp.u('d1'), 'Coleccion d1 general43');
@@ -666,12 +666,12 @@ begin
 end $$;
 
 select pg_temp.actuar_como_servidor();
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('61'), 'Libro p14 general43', 'LIBRO'),
-  (pg_temp.u('62'), 'Libro p15 general43', 'LIBRO'),
-  (pg_temp.u('63'), 'Libro p16 general43', 'LIBRO'),
-  (pg_temp.u('64'), 'Libro p17 general43', 'LIBRO'),
-  (pg_temp.u('65'), 'Libro p18 general43', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('61'), 'Libro p14 general43', 'ESPIRITUALES'),
+  (pg_temp.u('62'), 'Libro p15 general43', 'ESPIRITUALES'),
+  (pg_temp.u('63'), 'Libro p16 general43', 'ESPIRITUALES'),
+  (pg_temp.u('64'), 'Libro p17 general43', 'ESPIRITUALES'),
+  (pg_temp.u('65'), 'Libro p18 general43', 'ESPIRITUALES');
 -- p14: general cargado HOY (el caso que antes daba 23514). p15: general que rige y otro programado a
 -- futuro, abierto (el update viejo agarraba el futuro). p16: el general abierto de siempre.
 insert into public.precio_general (id, producto_id, precio_venta, valido_desde, valido_hasta) values

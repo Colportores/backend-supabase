@@ -119,24 +119,24 @@ insert into public.zona_vertice (id, zona_id, orden, lat, lon, calle_a, calle_b)
 on conflict do nothing;
 
 -- ----------------------------------------------------------------------------
--- 4. Catálogo — un producto por tipo, más dos colecciones: una serie de dos libros y un
+-- 4. Catálogo — un producto por categoría, más dos colecciones: una serie de dos libros y un
 --    combo («Pack Familiar»: 1 libro y 2 revistas), que es una colección con precio propio
 --    y se vende como un solo ítem (migración 0056, backend-supabase#99, HU-CAT-009)
 -- ----------------------------------------------------------------------------
 
 insert into public.producto
-  (id, nombre, descripcion, tipo, es_bonificable, es_misionero, precio_base_compra, casa_editora) values
+  (id, nombre, descripcion, categoria, es_bonificable, es_misionero, precio_base_compra, casa_editora) values
   ('09990000-0000-7000-8005-000000000001', 'Libro de Ejemplo A', 'Descripción de ejemplo A',
-    'LIBRO', true, false, 12000, 'Editorial Ejemplo'),
+    'BONIFICABLES', true, false, 12000, 'Editorial Ejemplo'),
   ('09990000-0000-7000-8005-000000000002', 'Libro de Ejemplo B', 'Descripción de ejemplo B',
-    'LIBRO', true, false, 14000, 'Editorial Ejemplo'),
+    'BONIFICABLES', true, false, 14000, 'Editorial Ejemplo'),
   ('09990000-0000-7000-8005-000000000003', 'Revista de Ejemplo', 'Descripción de ejemplo C',
-    'REVISTA', false, false, 3000, 'Editorial Ejemplo'),
+    'REVISTAS', false, false, 3000, 'Editorial Ejemplo'),
   ('09990000-0000-7000-8005-000000000004', 'Material de Ejemplo', 'Descripción de ejemplo D',
     'MATERIAL', false, false, 5000, 'Editorial Ejemplo'),
   -- es_misionero=true + precio_base_compra null: ejemplar de regalo, sin costo de reposición cargado.
   ('09990000-0000-7000-8005-000000000005', 'Ejemplar Misionero de Ejemplo', 'Descripción de ejemplo E',
-    'MISIONERO', false, true, null, 'Editorial Ejemplo')
+    'MISIONEROS', false, true, null, 'Editorial Ejemplo')
 on conflict do nothing;
 
 insert into public.coleccion (id, nombre) values

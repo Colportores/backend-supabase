@@ -130,7 +130,7 @@ insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino,
 -- Un depósito de la casa editora de b1 (nunca se anula) y una venta cobrada en efectivo por b1 (100000), para el «en mano».
 insert into public.deposito (id, colportor_id, monto, fecha, ticket_id, destino, concepto, campania_id, validado_en, validado_por) values
   (pg_temp.u('27'), pg_temp.u('b1'), 1000, now(), null, 'RETIRO_COORDINADOR', 'CASA_EDITORA', null, now(), pg_temp.u('c1'));
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('11'), 'Libro 1 t167', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('11'), 'Libro 1 t167', 'ESPIRITUALES');
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais alq167', 'ZV');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
 values (pg_temp.u('f1'), 'Ciudad alq167', 'Departamento de prueba', pg_temp.u('f0'), -34.90, -56.20);

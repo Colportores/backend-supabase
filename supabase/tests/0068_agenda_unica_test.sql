@@ -138,7 +138,7 @@ insert into public.venta (id, espacio_persona_id, numero_talonario, monto_total,
 select pg_temp.u(x.v), pg_temp.u(x.ep), 'T-' || x.v, x.monto, now(), pg_temp.u(x.quien), pg_temp.u(x.quien)
   from (values ('51', '21', 100000, 'b1'), ('52', '22', 50000, 'b2'), ('53', '23', 30000, 'b1'),
                ('54', '21', 1000000, 'b1'), ('55', '21', 20000, 'b1')) x(v, ep, monto, quien);
-insert into public.producto (id, nombre, tipo) values (pg_temp.u('d1'), 'Libro agenda', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values (pg_temp.u('d1'), 'Libro agenda', 'ESPIRITUALES');
 insert into public.entrega (id, venta_id, producto_id, cantidad, created_by)
 select pg_temp.u(x.e), pg_temp.u(x.v), pg_temp.u('d1'), 1, pg_temp.u(x.quien)
   from (values ('61', '51', 'b1'), ('62', '52', 'b2'), ('63', '53', 'b1')) x(e, v, quien);
