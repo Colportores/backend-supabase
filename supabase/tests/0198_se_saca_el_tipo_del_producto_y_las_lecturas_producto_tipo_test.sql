@@ -1,5 +1,5 @@
 -- pgTAP · 0198 (backend-supabase#233, seguimiento de #226 / #221; decisión P2 del 29/10, «Categorías»):
--- `producto.tipo` ya no existe, el trigger de transición y sus tres helpers tampoco, y las tres lecturas que devolvían
+-- `producto.tipo` ya no existe (el pull sigue mandando la clave `tipo`, derivada), el trigger de transición y dos de sus helpers tampoco, y las tres lecturas que devolvían
 -- `producto_tipo` (stock_por_ciudad, pedido_lineas, transferencia_lineas) dejan de devolverlo con los mismos permisos.
 -- El orden de stock_por_ciudad por categoría está en 0111 (Bonificables y Espirituales juntos, revistas, material,
 -- misioneros); las líneas con datos, en 0112 y 0126.
@@ -14,7 +14,6 @@ select hasnt_trigger('public', 'producto', 'producto_categoria_y_tipo', 'el trig
 select is((select count(*)::int from pg_trigger t where t.tgrelid = 'public.producto'::regclass and not t.tgisinternal
               and t.tgname like '%tipo%'), 0, 'ni otro trigger que nombre al tipo');
 select hasnt_function('public', 'tg_producto_categoria_y_tipo', 'la función del trigger ya no está');
-select hasnt_function('public', 'tipo_de_categoria', array['text'], 'tipo_de_categoria ya no está');
 select hasnt_function('public', 'categoria_de_producto', array['text', 'boolean', 'boolean'], 'categoria_de_producto ya no está');
 select is((select count(*)::int from pg_constraint c where c.conrelid = 'public.producto'::regclass
               and pg_get_constraintdef(c.oid) like '%tipo%'), 0, 'ninguna restricción de producto nombra al tipo');
@@ -53,11 +52,34 @@ select is((select count(*)::int from pg_proc p
               and not has_function_privilege('service_role', p.oid, 'execute')), 3,
           'las ejecuta authenticated y no service_role, como antes');
 
--- El catálogo ya no baja `tipo` al teléfono.
-select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''tipo''%'), 0,
-          'el pull de producto no trae tipo');
+-- El pull de producto sigue trayendo `tipo` (la tabla local del teléfono lo exige NOT NULL), pero como clave derivada
+-- de la categoría, no como columna. La expresión es la que usa sync.pull sobre el alias `t`.
+create or replace function pg_temp.fila_del_pull(p_id uuid) returns jsonb language plpgsql as $$
+declare v_r jsonb;
+begin
+  execute format('select %s from public.producto t where t.id = $1', sync.expresion_json('public.producto'::regclass))
+     into v_r using p_id;
+  return v_r;
+end $$;
+insert into public.producto (id, nombre, categoria) values
+  ('01920000-0000-7000-8000-0000000198b1', 'Bonif t198', 'BONIFICABLES'),
+  ('01920000-0000-7000-8000-0000000198b2', 'Espir t198', 'ESPIRITUALES'),
+  ('01920000-0000-7000-8000-0000000198b3', 'Misio t198', 'MISIONEROS'),
+  ('01920000-0000-7000-8000-0000000198b4', 'Revis t198', 'REVISTAS'),
+  ('01920000-0000-7000-8000-0000000198b5', 'Mater t198', 'MATERIAL');
+select is((select string_agg(pg_temp.fila_del_pull(('01920000-0000-7000-8000-0000000198b' || n)::uuid) ->> 'tipo', ',' order by n)
+             from generate_series(1, 5) n),
+          'LIBRO,LIBRO,MISIONERO,REVISTA,MATERIAL',
+          'el pull de producto manda tipo derivado de la categoría: ninguna fila baja sin él');
+select is((select pg_temp.fila_del_pull('01920000-0000-7000-8000-0000000198b4') ->> 'categoria'), 'REVISTAS',
+          'y la categoría baja igual');
+select is((select count(*)::int from jsonb_object_keys(pg_temp.fila_del_pull('01920000-0000-7000-8000-0000000198b1')) k where k = 'tipo'), 1,
+          'una sola clave tipo en la fila');
 select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''categoria''%'), 1,
           'y sí la categoría');
+select is((select count(*)::int from sync.expresion_json('public.ubicacion'::regclass) e where e like '%''tipo'', public.tipo_de_categoria%'), 0,
+          'la clave derivada es solo de producto');
+select has_function('public', 'tipo_de_categoria', array['text'], 'tipo_de_categoria se queda para el pull');
 
 -- Un producto cargado sin categoría no entra: ya no hay quien se la deduzca del tipo.
 select throws_ok($$ insert into public.producto (id, nombre) values ('01920000-0000-7000-8000-0000000198a0', 'Sin categoria t198') $$,

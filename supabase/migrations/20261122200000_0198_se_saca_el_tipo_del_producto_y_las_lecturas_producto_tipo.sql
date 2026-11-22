@@ -12,8 +12,16 @@
 --
 --   · `producto.tipo` se elimina (con su CHECK). Un producto ya cargado no pierde nada: su categoría es obligatoria
 --     desde 0149 y es la que cuenta. Baja a la app por el pull como columna menos; el motor ignora lo que no conoce.
---   · Se eliminan el trigger de transición `producto_categoria_y_tipo` y las tres funciones que solo él usaba:
---     `tg_producto_categoria_y_tipo()`, `tipo_de_categoria(text)` y `categoria_de_producto(text, boolean, boolean)`.
+--   · Se eliminan el trigger de transición `producto_categoria_y_tipo` y dos de las tres funciones que solo él usaba:
+--     `tg_producto_categoria_y_tipo()` y `categoria_de_producto(text, boolean, boolean)`. `tipo_de_categoria(text)` se
+--     queda (ver el punto siguiente).
+--   · El pull de `producto` SIGUE mandando una clave `tipo`, derivada de la categoría con `tipo_de_categoria` (LIBRO,
+--     MISIONERO, REVISTA o MATERIAL, el mismo valor que mantenía el trigger). Ya no es una columna: es una clave
+--     calculada en `sync.expresion_json`, como `unida_a_id` en `ubicacion` (0051). Por qué: la tabla local del
+--     teléfono (`front-colportores-mobile`, `productos_table.dart`) todavía tiene `tipo` NOT NULL, y una fila de
+--     `producto` que baja sin esa clave rompe el upsert, revierte la página del pull y el watermark no avanza (lo mismo
+--     le pasa a una app vieja instalada). Cuando el móvil saque la columna de su esquema local, un seguimiento quita
+--     la clave de `sync.expresion_json` y `tipo_de_categoria`.
 --     Desde ahora quien escribe un producto tiene que decir su categoría: sin ella, 23502 (NOT NULL), como siempre
 --     para una alta sin categoría.
 --   · Las tres lecturas que devolvían `producto_tipo` lo dejan de devolver (cambia el tipo de retorno: drop + create,
@@ -29,7 +37,8 @@
 --
 --   · front-coordinadores-web: `stock_por_ciudad`, `pedido_lineas` y `transferencia_lineas` ya no traen
 --     `producto_tipo`. Si una vista necesita agrupar o etiquetar, que lea la categoría del catálogo.
---   · front-colportores-mobile: el pull de `producto` ya no trae `tipo` (la app lee `categoria` desde #561).
+--   · front-colportores-mobile: el pull de `producto` sigue trayendo `tipo` (derivado de la categoría) mientras su
+--     tabla local lo exija; la app lee `categoria` desde #561 y puede sacar la columna de su esquema local cuando quiera.
 --   · docs-organizacion: esquema-datos.md (`producto.tipo` y los `producto_tipo` de esas tres lecturas) y el contrato
 --     de las RPC: se piden en el cuerpo del PR.
 --
@@ -304,7 +313,6 @@ grant execute on function public.transferencia_lineas(uuid) to authenticated;
 
 drop trigger producto_categoria_y_tipo on public.producto;
 drop function public.tg_producto_categoria_y_tipo();
-drop function public.tipo_de_categoria(text);
 drop function public.categoria_de_producto(text, boolean, boolean);
 
 alter table public.producto
@@ -315,3 +323,47 @@ comment on column public.producto.categoria is
   'MATERIAL. Una por producto, obligatoria y sin valor por defecto: la elige quien lo carga. Desde 0198 es la única: '
   'el `tipo` heredado ya no existe. `es_bonificable` sigue aparte, como sí/no: es lo que cuenta para la beca y para '
   'la compra a la CES.';
+
+-- ----------------------------------------------------------------------------
+-- 3. El pull de `producto` sigue trayendo `tipo` (derivado de la categoría)
+-- ----------------------------------------------------------------------------
+
+-- Igual que en 0051 (que sumó `unida_a_id` a `ubicacion`), más la clave `tipo` en la fila de `producto`: la que
+-- calcula `tipo_de_categoria(t.categoria)`. El alias de la tabla es `t` en todos los que la usan. create or replace
+-- conserva privilegios. `tipo_de_categoria` es pura e inmutable y la ejecuta quien tiene sesión (authenticated) y el
+-- servidor (service_role), como en 0149.
+create or replace function sync.expresion_json(p_tabla regclass)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select 'jsonb_build_object(' || string_agg(
+           format('%L, %s', c.attname,
+             case when c.atttypid = 'pg_catalog.numeric'::regtype
+                  then format('(t.%I)::text', c.attname)
+                  else format('t.%I', c.attname) end),
+           ', ' order by c.attnum)
+         || case when p_tabla = 'public.ubicacion'::regclass
+                 then ', ''unida_a_id'', public.ubicacion_unida_a(t.id)'
+                 when p_tabla = 'public.producto'::regclass
+                 then ', ''tipo'', public.tipo_de_categoria(t.categoria)'
+                 else '' end
+         || ')'
+  from pg_catalog.pg_attribute c
+  where c.attrelid = p_tabla
+    and c.attnum > 0
+    and not c.attisdropped
+    and c.attname::text <> 'xmin_w';
+$$;
+
+comment on function sync.expresion_json(regclass) is
+  'Serializa una fila a jsonb con los numeric como texto. Se usa con execute format(); los '
+  'nombres salen del catálogo y pasan por %I, así que no hay inyección posible. La fila de ubicacion '
+  'suma unida_a_id (0051): a qué ubicación se unió, o null; no es una columna. La de producto suma `tipo` '
+  '(0198): el tipo heredado derivado de la categoría, mientras la tabla local del teléfono lo exija.';
+
+comment on function public.tipo_de_categoria(text) is
+  'El tipo heredado (LIBRO, REVISTA, MATERIAL o MISIONERO) que corresponde a una categoría (0149). Desde 0198 ya no '
+  'hay columna producto.tipo ni trigger: lo usa solo `sync.expresion_json` para la clave `tipo` que el pull de '
+  'producto sigue mandando al teléfono hasta que su tabla local deje de exigirla.';

@@ -61,8 +61,8 @@ select hasnt_column('public', 'producto', 'tipo', 'el tipo heredado ya no existe
 select is((select count(*)::int from public.producto where categoria is null), 0, 'ningún producto quedó sin categoría');
 select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''categoria''%'), 1,
           'el pull del catálogo baja la categoría (la fila va entera)');
-select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''tipo''%'), 0,
-          'y ya no baja el tipo');
+select is((select count(*)::int from sync.entidad where nombre = 'producto' and sync.expresion_json(tabla) like '%''tipo'', public.tipo_de_categoria(t.categoria)%'), 1,
+          'y el tipo baja como clave derivada de la categoría (0198), no como columna');
 
 -- Alta: una de las cinco, elegida por quien carga el producto.
 insert into public.producto (id, nombre, categoria, es_bonificable) values
