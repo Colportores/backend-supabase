@@ -8,6 +8,7 @@
 // copia vigente, falla. Sin clave (un simulacro) cae a la URL pública, sin esa comprobación.
 
 import { createHash } from 'node:crypto';
+import { ocultar } from './secretos.mjs';
 
 const REINTENTOS = 3;
 
@@ -66,7 +67,8 @@ export function clienteStorage({
   async function exigir(respuesta, que) {
     if (respuesta.ok) return respuesta;
     const texto = await respuesta.text().catch(() => '');
-    throw new Error(`${tapar(que)} falló: ${respuesta.status} ${tapar(texto.slice(0, 300))}`);
+    // La clave se tapa ANTES de cortar a 300: cortada en medio, el pedazo que queda ya no coincide con la clave entera.
+    throw new Error(`${tapar(que)} falló: ${respuesta.status} ${tapar(ocultar(texto, clave).slice(0, 300))}`);
   }
 
   /** { datos, etag } del JSON en `ruta`, o null si no existe. El eTag es el de la respuesta o, si no vino, el MD5 del cuerpo. */
