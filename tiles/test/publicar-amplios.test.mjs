@@ -147,6 +147,24 @@ test('si el mapa del departamento cambia, el archivo viejo sale del catálogo y 
     assert.ok(!storage.objetos.has(viejo), 'pasados los 7 días, se borra');
   }));
 
+test('sin catálogo previo (alguien lo borró) la corrida no borra el archivo viejo: queda retirado desde hoy (#76)', () =>
+  conTmp(async (tmp) => {
+    const storage = conEstilo();
+    await publicarAmplios(opciones(storage, recorteFalso({ bytes: 20_000 }), tmp, { nivel: 'departamento', ambitos: [SALTO] }));
+    const viejo = (await storage.bajarJson(RUTA_CATALOGO)).paquetes[0].partes[0].archivo;
+
+    // El viejo tiene «1 de octubre» como fecha de subida (el bucket falso): más de 7 días antes de esta corrida.
+    storage.objetos.delete(RUTA_CATALOGO);
+    const { catalogo, borrados } = await publicarAmplios(
+      opciones(storage, recorteFalso({ bytes: 21_000 }), tmp, { nivel: 'departamento', ambitos: [SALTO], ahora: '2026-11-05T12:00:00Z', estiloVersion: ESTILO_V }),
+    );
+    assert.notEqual(catalogo.paquetes[0].partes[0].archivo, viejo);
+    assert.deepEqual(borrados, []);
+    assert.ok(storage.objetos.has(viejo), 'el teléfono que lo está bajando lo sigue encontrando');
+    assert.deepEqual(catalogo.retirados, [{ archivo: viejo, desde: '2026-11-05T12:00:00Z' }]);
+    assert.deepEqual(validar(catalogo), []);
+  }));
+
 test('con el tope de 50 MB del plan Free un departamento de verdad no entra: falla en voz alta y no sube nada', () =>
   conTmp(async (tmp) => {
     const storage = conEstilo();

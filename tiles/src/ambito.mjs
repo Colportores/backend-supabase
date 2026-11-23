@@ -9,6 +9,8 @@
 // app usa para elegir SU paquete (PaqueteTiles.cubre), no el slug ni el bbox. Nunca se publica un paquete de
 // ciudad sin él: al leerlo de la fila, no puede faltar.
 
+import { ocultar } from './secretos.mjs';
+
 /** Para comparar nombres: sin tildes, sin mayúsculas y con los espacios normalizados. */
 export function normalizar(nombre) {
   return String(nombre)
@@ -65,7 +67,8 @@ export async function leerCiudades({ url, clave, pais = PAIS_POR_DEFECTO, fetchI
   }
   if (!respuesta.ok) {
     const texto = await respuesta.text().catch(() => '');
-    throw new Error(`Leer public.ciudad falló: ${respuesta.status} ${texto.slice(0, 300)}`);
+    // La clave se tapa ANTES de cortar a 300 (ver storage.mjs `exigir`).
+    throw new Error(`Leer public.ciudad falló: ${respuesta.status} ${ocultar(texto, clave).slice(0, 300)}`);
   }
   return respuesta.json();
 }

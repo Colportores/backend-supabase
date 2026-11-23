@@ -79,6 +79,10 @@ retoma una descarga pausada con `Range`, termina bien; y por eso los paquetes se
    **El estilo se compara igual**: `estilo.version` es el SHA-256 de `estilo/colportores.json`. Si es distinto del
    que la app guardó, vuelve a pedir el estilo (~240 KB); si es igual, no lo pide. Cambia cuando se publica una
    release nueva de lib-mapa (`publicar --solo estilo`, que sube el estilo **y el catálogo**).
+   **Quien baje el estilo compara el SHA-256 de lo que bajó con `estilo.version`**, como con los paquetes: el CDN
+   puede servir `estilo/colportores.json` hasta 60 s con la copia vieja (`max-age=60`) justo después de que el
+   catálogo ya trae la versión nueva. Si no coinciden, se queda con su copia y reintenta más tarde; si no, guardaría
+   el estilo viejo con la versión nueva y no lo volvería a pedir hasta el próximo cambio.
 6. **Atribución visible**: «© OpenStreetMap» (ODbL). Viene en `sources.protomaps.attribution` y en `fuente` del catálogo.
 7. **El mapa de la zona del colportor** no está en el catálogo: el enlace viene **con la zona**, en su columna
    `paquete_mapa`, por el sync (el pull serializa todas las columnas de `zona`; el contrato lo documenta un PR de
@@ -421,7 +425,12 @@ desde que se subió**:
   corrida siguiente junta lo que quedó, por su fecha de subida (que es más vieja que su fecha de retiro, así que
   ya pasaron los 7 días);
 - un archivo que **nunca figuró** en ningún catálogo (una subida que no llegó a publicarse, o la de otro publicador
-  en curso) no tiene `desde`: para ese vale la fecha de subida como piso, también 7 días.
+  en curso) no tiene `desde`: para ese vale la fecha de subida como piso, también 7 días;
+- **si el bucket no tiene catálogo** (alguien borró `catalogo.json` a mano), nadie sabe desde cuándo lo que hay dejó de
+  ser el vigente: esa corrida **no borra nada** y anota en `retirados`, con la fecha de hoy, todo lo que el catálogo
+  nuevo no nombra (con un aviso en el log). Los 7 días se cuentan desde ahí
+  (`tiles/test/publicar.test.mjs`, «sin catálogo previo…»; backend-supabase#76). Qué se borra se decide siempre con el
+  catálogo **que se va a publicar**, no con el previo: un archivo retirado que esta corrida vuelve a nombrar no se borra.
 
 Con la fecha de subida a secas (lo primero que se hizo) un mapa subido el 07/10 y reemplazado el 06/11 se borraba
 en la misma corrida del 06/11, sin gracia alguna; lo reproduce y lo vigila la prueba de `tiles/test/publicar.test.mjs`
@@ -468,8 +477,9 @@ de carga manual. Sirve en cualquier estado de la base y se puede repetir sin dup
 **Paso 1: el estilo y las ciudades.** Son tres líneas de PowerShell:
 
 ```powershell
-# 1. Con la clave de servicio copiada al portapapeles:
-$env:SUPABASE_SERVICE_ROLE_KEY = Get-Clipboard
+# 1. Con la clave de servicio copiada al portapapeles (se la guarda en la sesión y se vacía el portapapeles, para que no
+#    quede ahí ni en el historial de Windows, Win+V):
+$env:SUPABASE_SERVICE_ROLE_KEY = Get-Clipboard; Set-Clipboard -Value " "
 
 # 2. El comando de Docker, con -e SUPABASE_SERVICE_ROLE_KEY SIN valor (Docker toma el de la sesión):
 docker run --rm -v "${PWD}/tiles:/app" -w /app -e SUPABASE_URL=https://<proyecto>.supabase.co -e SUPABASE_SERVICE_ROLE_KEY node:22-bookworm sh -c "npm ci && node src/cli.mjs publicar --solo estilo && node src/cli.mjs publicar --solo ciudades && node src/cli.mjs verificar"

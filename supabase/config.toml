@@ -120,7 +120,7 @@ enabled = true
 file_size_limit = "50MiB"
 
 # Buckets locales. El del proyecto hosteado NO sale de acá: lo crea la migración 0029 (`db push`
-# no manda este archivo). Tienen que decir lo mismo; docs/mapas-tiles.md § «Bucket».
+# no manda este archivo). Tienen que decir lo mismo; docs/mapas-tiles.md § «Qué hay en el bucket».
 # `mapas`: los mapas propios (PMTiles, estilo, glyphs, sprites y catalogo.json), públicos, sin login.
 [storage.buckets.mapas]
 public = true

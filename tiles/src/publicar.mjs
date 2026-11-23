@@ -14,7 +14,17 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { BUCKET, cacheControlDe, tipoDe } from './bucket.mjs';
 import { avisosDeCiudades } from './ambito.mjs';
-import { DIAS_DE_GRACIA, armarPaquete, fusionar, obsoletos, podarRetirados, rutaArchivo, validar, versionDe } from './catalogo.mjs';
+import {
+  DIAS_DE_GRACIA,
+  armarPaquete,
+  fusionar,
+  obsoletos,
+  podarRetirados,
+  retirarLoQueNadieReferencia,
+  rutaArchivo,
+  validar,
+  versionDe,
+} from './catalogo.mjs';
 import { planificar } from './politica.mjs';
 import { sha256DeArchivo } from './recorte.mjs';
 
@@ -170,6 +180,24 @@ async function publicarUnPaquete({ storage, previo, nivel, clave, ambitoId, nomb
 }
 
 /**
+ * Qué se borra en esta corrida y el catálogo que se sube. Se decide con el catálogo FUSIONADO (el que se va a
+ * publicar), no con el previo: un contenido retirado que esta corrida vuelve a hacer vigente no se borra.
+ * Sin catálogo previo no se borra nada: lo que hay en el bucket sin figurar en el catálogo pasa a `retirados`
+ * desde hoy (ver `retirarLoQueNadieReferencia`).
+ */
+function decidirBorrado({ previo, fusionado, publicados, ahora, log }) {
+  if (!previo) {
+    const catalogo = podarRetirados(retirarLoQueNadieReferencia(fusionado, publicados, { ahora }), { borrados: [], publicados });
+    if (catalogo.retirados.length > 0) {
+      log(`aviso: el bucket no tenía catálogo: esta corrida no borra nada y los ${catalogo.retirados.length} archivos que el catálogo no referencia quedan retirados desde hoy, con su gracia de ${DIAS_DE_GRACIA} días`);
+    }
+    return { borrar: [], catalogo };
+  }
+  const borrar = obsoletos(publicados, fusionado, { ahora });
+  return { borrar, catalogo: podarRetirados(fusionado, { borrados: borrar, publicados }) };
+}
+
+/**
  * Publica las ciudades de `ciudades` (las de public.ciudad que tienen rectángulo, ver ambito.mjs:
  * `{ ciudad_id, slug, nombre, bbox }`) y deja el catálogo al día. `estiloVersion`: la versión del estilo
  * que se acaba de subir; si no viene, se conserva la del catálogo publicado (y si no hay, no se publica:
@@ -300,8 +328,7 @@ export async function publicarCiudades({
   // fecha de retiro y la próxima corrida los junta por su fecha de subida (ya vieja).
   // Solo `paquetes/ciudad`: los paquetes de zona no están en el catálogo, viven en `zonas/` y los limpia zonas.mjs.
   const publicados = await storage.listar('paquetes/ciudad');
-  const borrar = obsoletos(publicados, fusionado, { ahora });
-  const catalogo = podarRetirados(fusionado, { borrados: borrar, publicados });
+  const { borrar, catalogo } = decidirBorrado({ previo, fusionado, publicados, ahora, log });
   const errores = validar(catalogo);
   if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
 
@@ -387,8 +414,7 @@ export async function publicarAmplios({
   }
 
   const publicados = await storage.listar(`paquetes/${nivel}`);
-  const borrar = obsoletos(publicados, fusionado, { ahora });
-  const catalogo = podarRetirados(fusionado, { borrados: borrar, publicados });
+  const { borrar, catalogo } = decidirBorrado({ previo, fusionado, publicados, ahora, log });
   const errores = validar(catalogo, { maxBytes });
   if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
 

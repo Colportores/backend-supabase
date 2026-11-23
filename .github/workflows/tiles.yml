@@ -17,6 +17,7 @@ name: Mapas
 # NO necesita secretos nuevos. Usa los del environment de deploy.yml:
 #   SUPABASE_PROJECT_ID    → de ahí sale la URL del proyecto (https://<id>.supabase.co);
 #   SUPABASE_ACCESS_TOKEN  → con él el CLI pide la clave de servicio, que no se guarda en ningún lado.
+#                            Solo lo ve el CLI: se hace `unset` antes de correr el publicador.
 # Si el environment tiene además SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_URL, por si el proyecto
 # tiene dominio propio), se usan esos y no se llama a la API.
 #
@@ -169,6 +170,9 @@ jobs:
             echo "::add-mask::$key"
             export SUPABASE_SERVICE_ROLE_KEY="$key"
           fi
+          # El token de gestión de toda la cuenta ya cumplió (pedir la clave): el publicador no lo usa, así que no
+          # llega al entorno de `node` ni al de `pmtiles` (backend-supabase#76).
+          unset SUPABASE_ACCESS_TOKEN
           # Lo único que sigue: la dirección del proyecto (no es secreta), para el paso de verificación.
           echo "SUPABASE_URL=$SUPABASE_URL" >> "$GITHUB_ENV"
 
