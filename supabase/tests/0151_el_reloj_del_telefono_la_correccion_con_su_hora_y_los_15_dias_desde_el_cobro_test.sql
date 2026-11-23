@@ -359,7 +359,7 @@ select pg_temp.actuar_como(pg_temp.u('b1'));
 select is(pg_temp.anular_a(48, pg_temp.fecha_de(48) + interval '1 hour'), 'ok', 'campaña en curso: vale');
 -- El coordinador y el ADMIN no tienen esa gracia: anulan con la hora del servidor dentro de las 72 h.
 select pg_temp.actuar_como(pg_temp.u('d2'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(49), 'Otro') $$), 'ok',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(49), 'Otro', 'Cobré de más a otra persona') $$), 'ok',
           'el coordinador de la campaña anula aunque la gracia haya cerrado');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.anulado(49), true, 'y queda anulado');

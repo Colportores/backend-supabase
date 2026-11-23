@@ -228,21 +228,21 @@ select is((select count(*)::int from public.cobranza
           0, 'ningún cobro de antes trae datos de tarjeta ni de transferencia');
 select is((select array_agg(tgname::text order by tgname::text collate "C") from pg_trigger
             where tgrelid = 'public.cobranza'::regclass and not tgisinternal and (tgtype & 4) = 4),
-          array['cobranza_anulacion', 'cobranza_auditoria_insert', 'cobranza_avisa_al_ticket', 'cobranza_ticket_propio'],
-          'al insertar corren, en este orden, el control de la anulación, la auditoría, (desde 0146, AFTER) el aviso al ticket y (desde 0113) que el ticket sea de quien vendió');
+          array['cobranza_anulacion', 'cobranza_anulado_por', 'cobranza_auditoria_insert', 'cobranza_avisa_al_ticket', 'cobranza_ticket_propio'],
+          'al insertar corren, en este orden, el control de la anulación, (desde 0203) quién anuló, la auditoría, (desde 0146, AFTER) el aviso al ticket y (desde 0113) que el ticket sea de quien vendió');
 select is((select array_agg(tgname::text order by tgname::text collate "C") from pg_trigger
             where tgrelid = 'public.cobranza'::regclass and not tgisinternal and (tgtype & 16) = 16),
-          array['cobranza_anulacion', 'cobranza_auditoria_update', 'cobranza_avisa_al_ticket', 'cobranza_ticket_propio'],
+          array['cobranza_anulacion', 'cobranza_anulado_por', 'cobranza_auditoria_update', 'cobranza_avisa_al_ticket', 'cobranza_ticket_propio'],
           'y al actualizar también');
 select ok(not has_function_privilege('authenticated', 'public.tg_cobranza_anulacion()', 'execute')
           and not has_function_privilege('anon', 'public.tg_cobranza_anulacion()', 'execute'),
           'la función del trigger no la ejecuta nadie desde afuera');
-select ok(has_function_privilege('authenticated', 'public.anular_cobro(uuid, text)', 'execute')
-          and not has_function_privilege('anon', 'public.anular_cobro(uuid, text)', 'execute')
-          and not has_function_privilege('service_role', 'public.anular_cobro(uuid, text)', 'execute'),
+select ok(has_function_privilege('authenticated', 'public.anular_cobro(uuid, text, text)', 'execute')
+          and not has_function_privilege('anon', 'public.anular_cobro(uuid, text, text)', 'execute')
+          and not has_function_privilege('service_role', 'public.anular_cobro(uuid, text, text)', 'execute'),
           'anular_cobro() la ejecuta authenticated y nadie más');
-select ok((select prosecdef from pg_proc where oid = 'public.anular_cobro(uuid, text)'::regprocedure)
-          and (select proconfig::text from pg_proc where oid = 'public.anular_cobro(uuid, text)'::regprocedure) like '%search_path=%'
+select ok((select prosecdef from pg_proc where oid = 'public.anular_cobro(uuid, text, text)'::regprocedure)
+          and (select proconfig::text from pg_proc where oid = 'public.anular_cobro(uuid, text, text)'::regprocedure) like '%search_path=%'
           and (select prosecdef from pg_proc where oid = 'public.tg_cobranza_anulacion()'::regprocedure),
           'la RPC y el trigger son SECURITY DEFINER con search_path fijo');
 select is((select permite_push from sync.entidad where nombre = 'cobranza'), true, 'el cobro sigue en el push');
@@ -475,7 +475,7 @@ select is((select motivo_anulacion from public.cobranza where id = pg_temp.uc(14
 select ok((select (r ->> 'anulado_at')::timestamptz from r14) = now(), 'y la respuesta trae la misma fecha');
 create temp table v14 as select sync_version from public.cobranza where id = pg_temp.uc(14);
 select pg_temp.actuar_como(pg_temp.u('d1'));
-select is((public.anular_cobro(pg_temp.uc(14), 'Otro')) ->> 'ya_estaba', 'true', 'anular de nuevo devuelve ya_estaba');
+select is((public.anular_cobro(pg_temp.uc(14), 'Otro', 'Cobré de más a otra persona')) ->> 'ya_estaba', 'true', 'anular de nuevo devuelve ya_estaba');
 select pg_temp.actuar_como_servidor();
 select is((select motivo_anulacion from public.cobranza where id = pg_temp.uc(14)), 'Monto equivocado', 'y no pisa el motivo');
 select is((select sync_version from public.cobranza where id = pg_temp.uc(14)), (select sync_version from v14),
@@ -492,17 +492,17 @@ select pg_temp.actuar_como_servidor();
 select is(pg_temp.anulado(16), false, 'y el cobro sigue vivo');
 -- Permisos.
 select pg_temp.actuar_como(pg_temp.u('d2'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro') $$), 'CB004',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro', 'Cobré de más a otra persona') $$), 'CB004',
           'el coordinador de OTRA campaña no ve el cobro: CB004');
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro') $$), 'ok', 'pero sí el de su colportora (b2)');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro', 'Cobré de más a otra persona') $$), 'ok', 'pero sí el de su colportora (b2)');
 select pg_temp.actuar_como(pg_temp.u('d1'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(17), 'Otro') $$), 'CB004', 'd1 no anula el cobro de b2');
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(18), 'Otro') $$), 'CB004',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(17), 'Otro', 'Cobré de más a otra persona') $$), 'CB004', 'd1 no anula el cobro de b2');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(18), 'Otro', 'Cobré de más a otra persona') $$), 'CB004',
           'ni el de b3, cuya inscripción en su campaña está dada de baja');
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(15), 'Otro') $$), 'CB004', 'ni un cobro dado de baja');
-select is(pg_temp.error_de($$ select public.anular_cobro('01920000-0000-7000-8000-000000729999', 'Otro') $$), 'CB004',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(15), 'Otro', 'Cobré de más a otra persona') $$), 'CB004', 'ni un cobro dado de baja');
+select is(pg_temp.error_de($$ select public.anular_cobro('01920000-0000-7000-8000-000000729999', 'Otro', 'Cobré de más a otra persona') $$), 'CB004',
           'ni uno que no existe: el mismo error, no se averigua qué cobros hay');
-select is(pg_temp.mensaje_de($$ select public.anular_cobro('01920000-0000-7000-8000-000000729999', 'Otro') $$),
+select is(pg_temp.mensaje_de($$ select public.anular_cobro('01920000-0000-7000-8000-000000729999', 'Otro', 'Cobré de más a otra persona') $$),
           'CB004: No encontramos ese cobro entre los de tu equipo.', 'y el mensaje dice qué pasó');
 select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(19), null) $$), '22023', 'sin motivo, 22023');
 select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(19), 'Porque sí') $$), '22023', 'con un motivo que no es de la lista, 22023');
@@ -512,14 +512,14 @@ select is(pg_temp.anulado(19), true, 'el 19 ya lo había anulado b1 (sección 4)
 select pg_temp.actuar_como(pg_temp.u('a1'));
 select is((public.anular_cobro(pg_temp.uc(17), 'Cliente equivocado')) ->> 'ya_estaba', 'false', 'un ADMIN anula el cobro de cualquier equipo (b2)');
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro') $$), '42501',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro', 'Cobré de más a otra persona') $$), '42501',
           'una colportora no usa la RPC del coordinador (ni para su propio cobro): 42501');
 select pg_temp.actuar_como(pg_temp.u('b2'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro') $$), '42501', 'ni otra colportora');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro', 'Cobré de más a otra persona') $$), '42501', 'ni otra colportora');
 select pg_temp.actuar_como_servidor();
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro') $$), '42501', 'sin sesión, 42501');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro', 'Cobré de más a otra persona') $$), '42501', 'sin sesión, 42501');
 select set_config('role', 'anon', true);
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro') $$), '42501', 'un anónimo no ejecuta la función');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(23), 'Otro', 'Cobré de más a otra persona') $$), '42501', 'un anónimo no ejecuta la función');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.anulado(23), false, 'y el cobro 23 sigue vivo');
 
