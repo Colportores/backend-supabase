@@ -280,7 +280,7 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000111a1');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.stock_por_ciudad(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
+          array['ajustes','apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
                 'nombre','por_cobrar','por_entregar','producto_id','producto_nombre','tiene',
                 'ultimo_dato_at'],
           'stock_por_ciudad: la forma de la respuesta, solo cantidades (sin plata, clientes, talonarios ni emails)');
