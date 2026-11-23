@@ -66,9 +66,9 @@ insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_ce
   (pg_temp.u('c3'), 'Ciudad achica tres', 'Departamento de prueba', pg_temp.u('c0'), -34.8, -56.0),
   (pg_temp.u('c9'), 'Ciudad achica lejos', 'Departamento de prueba', pg_temp.u('c0'), -33.0, -55.0);
 insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin) values
-  (pg_temp.u('e1'), 'Verano achica', 'VERANO', current_date - 10, current_date + 30),
-  (pg_temp.u('e2'), 'Invierno achica', 'VERANO', current_date - 10, current_date + 30),
-  (pg_temp.u('e9'), 'Lejos achica', 'VERANO', current_date - 10, current_date + 30);
+  (pg_temp.u('e1'), 'Verano achica', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30),
+  (pg_temp.u('e2'), 'Invierno achica', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30),
+  (pg_temp.u('e9'), 'Lejos achica', 'VERANO', public.hoy_montevideo() - 10, public.hoy_montevideo() + 30);
 insert into public.campania_ciudad (id, campania_id, ciudad_id) values
   (pg_temp.u('f1'), pg_temp.u('e1'), pg_temp.u('c1')),
   (pg_temp.u('f2'), pg_temp.u('e1'), pg_temp.u('c2')),
@@ -147,7 +147,7 @@ select is(pg_temp.fuera(sync.pull(array['ubicacion'], (select d -> 'watermark' f
 -- 4. Termina Invierno: c3 deja de ser suya
 -- ---------------------------------------------------------------------------
 select pg_temp.como_servidor();
-update public.campania set fecha_fin = current_date - 1 where id = pg_temp.u('e2');
+update public.campania set fecha_fin = public.hoy_montevideo() - 1 where id = pg_temp.u('e2');
 
 select pg_temp.actuar_como(pg_temp.u('b1'));
 create temp table p4 as
