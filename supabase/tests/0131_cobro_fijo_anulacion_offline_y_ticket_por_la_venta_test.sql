@@ -318,12 +318,12 @@ select pg_temp.actuar_como(pg_temp.u('b5'));
 select is(pg_temp.anular_a(11, now()), 'ok', 'una venta que no es de ninguna campaña: no hay gracia que medir, vale la ventana de 72 h');
 -- El coordinador usa la hora del servidor.
 select pg_temp.actuar_como(pg_temp.u('d1'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro') $$), 'CB001',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(13), 'Otro', 'Cobré de más a otra persona') $$), 'CB001',
           'el coordinador anula con la hora del servidor: el cobro de hace 80 h no');
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(6), 'Otro') $$), 'ok', 'el de hace 5 h sí');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(6), 'Otro', 'Cobré de más a otra persona') $$), 'ok', 'el de hace 5 h sí');
 select pg_temp.actuar_como(pg_temp.u('d2'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(14), 'Otro') $$), 'ok', 'el coordinador de c3 (en gracia) anula');
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(15), 'Otro') $$), 'ok',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(14), 'Otro', 'Cobré de más a otra persona') $$), 'ok', 'el coordinador de c3 (en gracia) anula');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(15), 'Otro', 'Cobré de más a otra persona') $$), 'ok',
           'y el de c2, terminada hace 20 días, también: la gracia es de la colportora, no del coordinador');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.anulado(15), true, 'el cobro de c2 queda anulado');
@@ -331,9 +331,9 @@ select is(pg_temp.anulado(15), true, 'el cobro de c2 queda anulado');
 select pg_temp.cb(16, '72', now() - interval '2 hours');
 select pg_temp.cb(17, '71', now() + interval '1 hour');
 select pg_temp.actuar_como(pg_temp.u('a1'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(16), 'Otro') $$), 'ok', 'el ADMIN anula tras la gracia');
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(16), 'Otro', 'Cobré de más a otra persona') $$), 'ok', 'el ADMIN anula tras la gracia');
 select pg_temp.actuar_como(pg_temp.u('d1'));
-select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(17), 'Otro') $$), 'ok',
+select is(pg_temp.error_de($$ select public.anular_cobro(pg_temp.uc(17), 'Otro', 'Cobré de más a otra persona') $$), 'ok',
           'y el coordinador anula un cobro con fecha adelantada: CB008 no es suyo');
 select pg_temp.actuar_como_servidor();
 select is(pg_temp.anulado(16) and pg_temp.anulado(17), true, 'los dos quedan anulados');
