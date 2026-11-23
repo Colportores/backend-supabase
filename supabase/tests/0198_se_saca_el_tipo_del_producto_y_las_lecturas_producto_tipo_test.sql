@@ -21,8 +21,9 @@ select is((select count(*)::int from pg_constraint c where c.conrelid = 'public.
 -- Las tres lecturas: sin `producto_tipo` y con los permisos de antes (solo authenticated).
 select is((select proargnames from pg_proc where oid = 'public.stock_por_ciudad(uuid)'::regprocedure),
           array['p_campania_id','ciudad_id','ciudad_nombre','departamento','colportor_id','nombre','apellido','de_baja',
-                'ultimo_dato_at','producto_id','producto_nombre','tiene','por_entregar','entregados','devueltos','por_cobrar'],
-          'stock_por_ciudad: las columnas, sin producto_tipo');
+                'ultimo_dato_at','producto_id','producto_nombre','tiene','por_entregar','entregados','devueltos','por_cobrar',
+                'ajustes'],
+          'stock_por_ciudad: las columnas, sin producto_tipo (y con los ajustes de 0202)');
 select is((select proargnames from pg_proc where oid = 'public.pedido_lineas(uuid)'::regprocedure),
           array['p_pedido_id','producto_id','producto_nombre','cantidad','cantidad_autorizada','precio_unitario',
                 'subtotal','subtotal_autorizado','stock'],
