@@ -428,7 +428,9 @@ desde que se subió**:
   en curso) no tiene `desde`: para ese vale la fecha de subida como piso, también 7 días;
 - **si el bucket no tiene catálogo** (alguien borró `catalogo.json` a mano), nadie sabe desde cuándo lo que hay dejó de
   ser el vigente: esa corrida **no borra nada** y anota en `retirados`, con la fecha de hoy, todo lo que el catálogo
-  nuevo no nombra (con un aviso en el log). Los 7 días se cuentan desde ahí
+  nuevo no nombra (con un aviso en el log). Vale también para `publicar --solo estilo`, que es el primer paso de
+  «Publicar a mano»: si no, sube un catálogo sin paquetes y el `--solo ciudades` que sigue lo tomaría por un
+  catálogo previo y borraría el mapa que ya estaba. Los 7 días se cuentan desde ahí
   (`tiles/test/publicar.test.mjs`, «sin catálogo previo…»; backend-supabase#76). Qué se borra se decide siempre con el
   catálogo **que se va a publicar**, no con el previo: un archivo retirado que esta corrida vuelve a nombrar no se borra.
 

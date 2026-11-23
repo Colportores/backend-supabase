@@ -84,9 +84,17 @@ async function subirCatalogo(storage, catalogo) {
   });
 }
 
+/** Dónde viven los archivos de los paquetes del catálogo (los de zona están en `zonas/` y no son del catálogo). */
+const PREFIJOS_DE_PAQUETES = ['paquetes/ciudad', 'paquetes/departamento', 'paquetes/uruguay'];
+
 /**
  * `publicar --solo estilo`: el estilo cambió, así que el catálogo también (su `estilo.version` es lo que
  * le dice a la app que hay un estilo nuevo, igual que `version` en los paquetes). No toca los paquetes.
+ *
+ * Sin catálogo previo (alguien lo borró) este catálogo sale sin paquetes ni `retirados`, y la corrida siguiente
+ * (`--solo ciudades`, como en «Publicar a mano») lo tomaría por un catálogo previo y juzgaría los mapas que ya
+ * estaban por su fecha de subida: borraría en el acto el que un teléfono puede estar bajando (backend-supabase#76).
+ * Por eso acá también lo que hay en el bucket y el catálogo no nombra queda en `retirados` desde hoy.
  */
 export async function publicarCatalogoDeEstilo({ storage, estiloVersion, ahora = ahoraIso(), dryRun = false, log = () => {} }) {
   const previo = await storage.bajarJson(RUTA_CATALOGO);
@@ -97,9 +105,17 @@ export async function publicarCatalogoDeEstilo({ storage, estiloVersion, ahora =
     log(`[dry-run] catálogo con el estilo ${estiloVersion.slice(0, 12)}, no se sube`);
     return { catalogo };
   }
-  await subirCatalogo(storage, catalogo);
-  log(`catálogo publicado: estilo ${estiloVersion.slice(0, 12)}, ${catalogo.paquetes.length} paquetes`);
-  return { catalogo };
+  let aSubir = catalogo;
+  if (!previo) {
+    const publicados = (await Promise.all(PREFIJOS_DE_PAQUETES.map((prefijo) => storage.listar(prefijo)))).flat();
+    aSubir = retirarLoQueNadieReferencia(catalogo, publicados, { ahora });
+    if (aSubir.retirados.length > 0) {
+      log(`aviso: el bucket no tenía catálogo: los ${aSubir.retirados.length} archivos de mapas que hay quedan retirados desde hoy, con su gracia de ${DIAS_DE_GRACIA} días`);
+    }
+  }
+  await subirCatalogo(storage, aSubir);
+  log(`catálogo publicado: estilo ${estiloVersion.slice(0, 12)}, ${aSubir.paquetes.length} paquetes`);
+  return { catalogo: aSubir };
 }
 
 /**

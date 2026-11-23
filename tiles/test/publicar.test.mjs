@@ -392,6 +392,44 @@ test('sin catálogo previo (alguien lo borró) la corrida no borra nada: lo viej
     assert.equal(storage.objetos.has(viejo), false);
   }));
 
+test('sin catálogo previo, `--solo estilo` y después `--solo ciudades` (la guía de «Publicar a mano») no borran el mapa que ya estaba (#76)', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    storage.reloj = '2026-10-07T12:00:00Z';
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'a' }), tmp));
+    const viejo = v1.paquetes[0].partes[0].archivo;
+    storage.objetos.delete(RUTA_CATALOGO);
+
+    // Un mes después: primero el estilo (sube un catálogo sin paquetes) y enseguida las ciudades con un mapa nuevo.
+    const HOY = '2026-11-06T12:00:00Z';
+    storage.reloj = HOY;
+    const mensajes = [];
+    const { catalogo: soloEstilo } = await publicarCatalogoDeEstilo({ storage, estiloVersion: ESTILO_V, ahora: HOY, log: (m) => mensajes.push(m) });
+    assert.deepEqual(soloEstilo.paquetes, []);
+    assert.deepEqual(JSON.parse(storage.objetos.get(RUTA_CATALOGO)).retirados, [{ archivo: viejo, desde: HOY }]);
+    assert.ok(mensajes.some((m) => m.startsWith('aviso: el bucket no tenía catálogo')), 'y lo dice');
+
+    const { catalogo: v2, borrados } = await publicarCiudades(
+      opciones(storage, recorteFalso({ semilla: 'b' }), tmp, { ahora: HOY, build: '20261106', estiloVersion: undefined }),
+    );
+    assert.notEqual(v2.paquetes[0].partes[0].archivo, viejo);
+    assert.deepEqual(borrados, [], 'el mapa que ya estaba no se borra en el acto');
+    assert.ok(storage.objetos.has(viejo));
+    assert.deepEqual(v2.retirados, [{ archivo: viejo, desde: HOY }]);
+  }));
+
+test('`--solo estilo` con el catálogo presente no lista ni retira nada: solo cambia la versión del estilo', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    let listados = 0;
+    const listar = storage.listar;
+    storage.listar = async (p) => (listados++, listar(p));
+    const { catalogo } = await publicarCatalogoDeEstilo({ storage, estiloVersion: 'f'.repeat(64), ahora: '2026-10-08T12:00:00Z' });
+    assert.equal(listados, 0);
+    assert.deepEqual(catalogo.retirados, []);
+  }));
+
 test('sin catálogo previo y sin nada más en el bucket no hay aviso ni retirados', () =>
   conTmp(async (tmp) => {
     const storage = bucketFalso();
