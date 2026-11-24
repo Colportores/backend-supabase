@@ -149,8 +149,8 @@ insert into public.ubicacion (id, tipo, lat, lon, ciudad_id, deleted_at) values
 select is((select pg_get_function_result('public.mi_perfil()'::regprocedure)),
           'TABLE(usuario_id uuid, nombre text, apellido text)', 'mi_perfil(): la forma de la respuesta');
 select is((select pg_get_function_result('public.campanias_del_coordinador()'::regprocedure)),
-          'TABLE(id uuid, nombre text, tipo text, fecha_inicio date, fecha_fin date)',
-          'campanias_del_coordinador(): la forma de la respuesta');
+          'TABLE(id uuid, nombre text, tipo text, fecha_inicio date, fecha_fin date, limite_deuda bigint)',
+          'campanias_del_coordinador(): la forma de la respuesta (0204 suma el límite de deuda al final)');
 select is((select pg_get_function_result('public.ciudades_de_campania(uuid,integer,integer)'::regprocedure)),
           'TABLE(campania_ciudad_id uuid, ciudad_id uuid, nombre text, departamento text, lat_centro double precision, lon_centro double precision, zoom_inicial smallint, cantidad_zonas integer)',
           'ciudades_de_campania(): la forma de la respuesta');
