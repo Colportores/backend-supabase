@@ -14,6 +14,7 @@ Producción no lo recibe. Solo se carga en la base local o en el proyecto de dem
 | `chequeo-demo.sql` | Solo lectura: conteo por tabla y reglas de coherencia (`ok = true` cuando cierran). |
 | `retirar-demo-datos.sql` | Baja lógica de todo lo de la demo (vista previa por defecto). |
 | `sumar-coordinador-demo.sql` | Suma a `coordinador.demo` como coordinador de las campañas de la demo (solo agrega). |
+| `corregir-fechas-de-alta-demo.sql` | Una sola vez: fecha de alta de las inscripciones de una demo cargada antes del 11/11 (vista previa por defecto). |
 | `sumar-colportor-demo.sql` | Inscribe a `colportor.demo` en la campaña de la demo, con su ciudad, su zona, su stock y dos semanas de actividad (solo agrega). |
 | `demo-volumen.sql` | Segunda tanda, para las pruebas de los evaluadores: 150 ciudades, 54 colportores, seis semanas de actividad (ver abajo). |
 | `demo-listas.sql` | Tercera tanda: que toda lista desplazable del panel y de la app tenga más de 25 registros (ver «Listas largas»). |
@@ -37,6 +38,10 @@ scripts/db-seed-demo.sh [--remoto] --retirar --aplicar  # lo hace
 
 # Que coordinador.demo (la cuenta con la que se entra al panel) vea la demo
 scripts/db-seed-demo.sh [--remoto] --coordinador
+
+# Corregir la fecha de alta de las inscripciones (demo cargada antes del 11/11)
+scripts/db-seed-demo.sh [--remoto] --fechas            # vista previa
+scripts/db-seed-demo.sh [--remoto] --fechas --aplicar  # lo hace
 
 # Que colportor.demo (la cuenta con la que se entra a la app) tenga ciudad, campaña, zona y datos para probar
 scripts/db-seed-demo.sh [--remoto] --colportor
@@ -166,11 +171,15 @@ las campañas de la demo (una campaña admite varios, migración 0174). El coord
 `campania.coordinador_id` no cambia. Es idempotente, sin esa cuenta no hace nada, y el retiro también da de baja estas
 filas. La campaña de invierno ya terminó: el panel no la lista.
 
-**Limitación conocida (11/11):** las inscripciones de la demo quedan con la fecha de alta (`campania_colportor.created_at`)
-y el primer tramo del historial de zonas del momento de la carga, posteriores a toda la actividad (que termina el 03/11).
-Inicio (`tablero_de_inicio`) y Reportes (`horas_por_ciudad_y_colportor`, `ventas_por_ciudad_y_colportor`) cuentan solo lo
-que pasó con la inscripción vigente, así que con estos datos no muestran la historia: Equipo y Ciudades sí. La
-corrección (alta y tramo en la fecha de inicio de cada inscripción) no es aditiva y queda pendiente de autorización.
+**Fechas de alta de las inscripciones.** Inicio (`tablero_de_inicio`) y Reportes (`horas_por_ciudad_y_colportor`,
+`ventas_por_ciudad_y_colportor`) cuentan solo lo que pasó con la inscripción vigente y en la zona de ese día. Por eso el
+generador da de alta cada inscripción el primer día de su historia (00:00 de Montevideo) y abre su primer tramo de zona
+ese mismo día. Una demo cargada antes del 11/11 quedó con la hora de la carga: `--fechas` lo corrige (vista previa;
+`--fechas --aplicar` lo hace). Toca solo las 13 inscripciones de la demo y su primer tramo, desactiva el trigger de
+auditoría de `campania_colportor` solo dentro de su transacción (congela `created_at`) y es idempotente. En
+`ohdsavwpasfpapbyutrv` se aplicó el 11/11.
+
+Inicio muestra un día (hoy por defecto) y la historia termina el 03/11: para ver actividad hay que elegir un día anterior.
 
 ## Cómo está armado
 

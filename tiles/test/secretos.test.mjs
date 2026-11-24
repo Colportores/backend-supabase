@@ -3,7 +3,10 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { leerCiudades } from '../src/ambito.mjs';
 import { ocultar } from '../src/secretos.mjs';
+import { clienteStorage } from '../src/storage.mjs';
+import { clienteZonas } from '../src/zonas.mjs';
 
 // La clave de servicio no puede salir por la consola: ni en un mensaje, ni en un error HTTP (un servidor o
 // un proxy puede devolver los encabezados que recibió, con el Authorization).
@@ -73,4 +76,39 @@ test('verificar no necesita la clave y no la imprime, aunque esté en el entorno
   } finally {
     servidor.cerrar();
   }
+});
+
+// El corte del cuerpo de un error a 300 caracteres no puede dejar un pedazo de la clave: se la tapa ANTES de
+// cortar (backend-supabase#76). Con una clave de 46 caracteres que empieza en el 270 del cuerpo, un corte a 300 la
+// dejaba a medias (30 caracteres) y `ocultar` no la reconocía. El valor es de prueba y no tiene la forma de una clave
+// `sb_secret_…`: el control de secretos de GitHub la tomaría por una de verdad, y la prueba no depende de la forma.
+const CLAVE_SB = 'clave-de-prueba-Zk3Qp9vL0xT7mWc2RdY8nHa5JfBe41U';
+const CUERPO_CON_LA_CLAVE_A_MEDIAS = `${'x'.repeat(270)}${CLAVE_SB}${'y'.repeat(100)}`;
+const PEDAZO_SECRETO = CLAVE_SB.slice(16, 36);
+
+const respuestaDe = (estado) => async () => new Response(CUERPO_CON_LA_CLAVE_A_MEDIAS, { status: estado });
+
+function sinPedazosDeLaClave(mensaje) {
+  assert.ok(mensaje.includes('***'), `la clave estaba en el cuerpo y tenía que quedar tapada: ${mensaje.slice(-80)}`);
+  assert.ok(!mensaje.includes(CLAVE_SB), 'la clave entera salió');
+  assert.ok(!mensaje.includes(PEDAZO_SECRETO), `un pedazo de la clave salió: ${mensaje.slice(-80)}`);
+  assert.ok(!mensaje.includes('clave-de-prueba'), 'ni su comienzo');
+  return true;
+}
+
+test('el cuerpo de un error de Storage con la clave a medias del corte a 300 no la deja salir', async () => {
+  const storage = clienteStorage({ url: 'https://p.supabase.co', clave: CLAVE_SB, fetchFn: respuestaDe(403), esperaMs: 0 });
+  await assert.rejects(storage.bajarJson('catalogo.json'), (e) => sinPedazosDeLaClave(e.message));
+});
+
+test('el cuerpo de un error de public.ciudad con la clave a medias del corte a 300 no la deja salir', async () => {
+  await assert.rejects(
+    leerCiudades({ url: 'https://p.supabase.co', clave: CLAVE_SB, fetchImpl: respuestaDe(403) }),
+    (e) => /^Leer public\.ciudad falló: 403/.test(e.message) && sinPedazosDeLaClave(e.message),
+  );
+});
+
+test('el cuerpo de un error de public.zona con la clave a medias del corte a 300 no la deja salir', async () => {
+  const repo = clienteZonas({ url: 'https://p.supabase.co', clave: CLAVE_SB, fetchImpl: respuestaDe(403) });
+  await assert.rejects(repo.leer(), (e) => /^Leer public\.zona falló: 403/.test(e.message) && sinPedazosDeLaClave(e.message));
 });

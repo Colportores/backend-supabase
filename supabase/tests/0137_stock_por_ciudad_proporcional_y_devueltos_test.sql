@@ -45,9 +45,9 @@ insert into public.campania (id, nombre, tipo, fecha_inicio, fecha_fin, coordina
   (pg_temp.u('e1'), 'Cierre 137', 'VERANO', '2026-08-03', '2026-09-30', pg_temp.u('ad'));
 insert into public.campania_colportor (campania_id, usuario_id, created_at) values
   (pg_temp.u('e1'), pg_temp.u('b1'), '2026-08-01 10:00-03');
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('91'), 'P1 t137', 'LIBRO'), (pg_temp.u('92'), 'P2 t137', 'LIBRO'), (pg_temp.u('93'), 'P3 t137', 'LIBRO'),
-  (pg_temp.u('94'), 'P4 t137', 'LIBRO'), (pg_temp.u('95'), 'P5 t137', 'LIBRO'), (pg_temp.u('96'), 'P6 t137', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('91'), 'P1 t137', 'ESPIRITUALES'), (pg_temp.u('92'), 'P2 t137', 'ESPIRITUALES'), (pg_temp.u('93'), 'P3 t137', 'ESPIRITUALES'),
+  (pg_temp.u('94'), 'P4 t137', 'ESPIRITUALES'), (pg_temp.u('95'), 'P5 t137', 'ESPIRITUALES'), (pg_temp.u('96'), 'P6 t137', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values (pg_temp.u('d0'), 'Pack t137');
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais 137', 'ZU');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
@@ -125,8 +125,8 @@ select pg_temp.actuar_como(pg_temp.u('ad'));
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.stock_por_ciudad(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
-                'nombre','por_cobrar','por_entregar','producto_id','producto_nombre','producto_tipo','tiene',
+          array['ajustes','apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
+                'nombre','por_cobrar','por_entregar','producto_id','producto_nombre','tiene',
                 'ultimo_dato_at'],
           'stock_por_ciudad trae la columna nueva «devueltos» y nada de plata');
 select is((select data_type from information_schema.columns where table_name = 'devolucion' and column_name = 'motivo'), 'text',

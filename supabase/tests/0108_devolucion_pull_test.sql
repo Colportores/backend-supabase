@@ -110,9 +110,9 @@ insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
   from (values ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('ad','ADMIN')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro 1 t82', 'LIBRO'),
-  (pg_temp.u('12'), 'Libro 2 t82', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro 1 t82', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Libro 2 t82', 'ESPIRITUALES');
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('f0'), 'Pais dev82', 'ZS');
 insert into public.ciudad (id, nombre, departamento, pais_id, lat_centro, lon_centro)
 values (pg_temp.u('f1'), 'Ciudad dev82', 'Departamento de prueba', pg_temp.u('f0'), -34.90, -56.20);

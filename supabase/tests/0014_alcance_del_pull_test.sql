@@ -31,6 +31,13 @@ language sql as $$
     from jsonb_array_elements(coalesce(p_delta -> 'rows' -> p_entidad, '[]'::jsonb)) e;
 $$;
 
+-- Los ids de out_of_area.ubicacion, ordenados (0195: el área que se achica avisa las casas de la ciudad que se fue).
+create or replace function pg_temp.fuera(p_delta jsonb) returns text[]
+language sql as $$
+  select coalesce(array_agg(e order by e), array[]::text[])
+    from jsonb_array_elements_text(coalesce(p_delta -> 'out_of_area' -> 'ubicacion', '[]'::jsonb)) e;
+$$;
+
 -- La huella del área que el pull guardó en el watermark de ubicacion.
 create or replace function pg_temp.huella(p_delta jsonb) returns text
 language sql as $$
@@ -269,8 +276,10 @@ create temp table pull_b2_z2 as
 select sync.pull(array['ubicacion', 'house_status', 'espacio'], (select d -> 'watermark' from pull_b2_mueve), 1000) as d;
 select is((select d -> 'rows' from pull_b2_z2), '{}'::jsonb,
           'c1 ya estaba bajada: de c1 y Canelones a solo c1 no baja nada, ni vuelve a bajar c1');
-select ok((select not (d ? 'area_reset') and not (d ? 'out_of_area') from pull_b2_z2),
-          'ni area_reset ni out_of_area: la lista se achicó, no apareció ninguna ciudad');
+select ok((select not (d ? 'area_reset') from pull_b2_z2),
+          'sin area_reset: la lista se achicó, no apareció ninguna ciudad');
+select is((select pg_temp.fuera(d) from pull_b2_z2), array[pg_temp.u('0b')],
+          'out_of_area trae la casa de Canelones, para que la app la marque «fuera del área» (0195)');
 select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b2_z2),
           jsonb_build_array('01920000-0000-7000-8000-0000000014c1'::text),
           'el watermark guarda la lista nueva (solo c1)');
@@ -314,7 +323,11 @@ create temp table pull_b4_z3 as
 select sync.pull(array['ubicacion', 'house_status'], (select d -> 'watermark' from pull_b4), 1000) as d;
 select is((select d -> 'rows' from pull_b4_z3), '{}'::jsonb,
           'con zona en Canelones (c1 y Canelones → Canelones) no baja nada: Canelones ya estaba, y c1 queda en el teléfono como estaba');
-select ok((select not (d ? 'area_reset') and not (d ? 'out_of_area') from pull_b4_z3), 'sin area_reset');
+select ok((select not (d ? 'area_reset') from pull_b4_z3), 'sin area_reset');
+select is((select pg_temp.fuera(d) from pull_b4_z3),
+          array[pg_temp.u('01'), pg_temp.u('02'), pg_temp.u('04'), pg_temp.u('05'), pg_temp.u('06'), pg_temp.u('07'),
+                pg_temp.u('09'), pg_temp.u('0a'), pg_temp.u('0c')],
+          'out_of_area trae las casas de c1, también la dada de baja y las que registraron otros (0195)');
 select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b4_z3),
           jsonb_build_array('01920000-0000-7000-8000-0000000014c3'::text), 'y el watermark guarda la lista nueva');
 select is((select count(*) from public.ubicacion where ciudad_id = '01920000-0000-7000-8000-0000000014c1'), 0::bigint,
@@ -391,7 +404,9 @@ create temp table pull_b6_termina as
 select sync.pull(array['ubicacion', 'house_status', 'espacio'], (select d -> 'watermark' from pull_b6), 1000) as d;
 select is((select d -> 'rows' from pull_b6_termina), '{}'::jsonb,
           'termina una de sus dos campañas: no baja nada, ni vuelve a bajar lo que ya tiene');
-select ok((select not (d ? 'area_reset') and not (d ? 'out_of_area') from pull_b6_termina), 'ni area_reset ni out_of_area');
+select ok((select not (d ? 'area_reset') from pull_b6_termina), 'sin area_reset');
+select is((select pg_temp.fuera(d) from pull_b6_termina), array[pg_temp.u('0d')],
+          'out_of_area trae la casa de c4, la ciudad de la campaña que terminó (0195)');
 select is((select d -> 'watermark' -> 'ubicacion' -> 'ciudades' from pull_b6_termina),
           jsonb_build_array('01920000-0000-7000-8000-0000000014c1'::text, '01920000-0000-7000-8000-0000000014c3'),
           'y el watermark guarda la lista nueva');

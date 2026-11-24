@@ -120,7 +120,7 @@ enabled = true
 file_size_limit = "50MiB"
 
 # Buckets locales. El del proyecto hosteado NO sale de acá: lo crea la migración 0029 (`db push`
-# no manda este archivo). Tienen que decir lo mismo; docs/mapas-tiles.md § «Bucket».
+# no manda este archivo). Tienen que decir lo mismo; docs/mapas-tiles.md § «Qué hay en el bucket».
 # `mapas`: los mapas propios (PMTiles, estilo, glyphs, sprites y catalogo.json), públicos, sin login.
 [storage.buckets.mapas]
 public = true
@@ -167,7 +167,14 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# Cada dirección va completa y sin comodines (backend-supabase#299): el enlace de «Olvidé mi contraseña»
+# del panel llega a /acceso/nueva-contrasena. Las del panel de staging y producción van en el proyecto
+# hosteado (Auth > URL Configuration); la lista está en el README.
+additional_redirect_urls = [
+  "https://127.0.0.1:3000",
+  "http://localhost:3000/acceso/nueva-contrasena",
+  "http://127.0.0.1:3000/acceso/nueva-contrasena",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

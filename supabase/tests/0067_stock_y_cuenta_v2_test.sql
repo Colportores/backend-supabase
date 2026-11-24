@@ -100,9 +100,9 @@ insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, cre
 insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at, deleted_at) values
   (pg_temp.u('c4'), pg_temp.u('e1'), pg_temp.u('b4'), null, now() - interval '5 days', now());
 
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('11'), 'Libro p1 stock67', 'LIBRO', 1500),
-  (pg_temp.u('12'), 'Libro p2 stock67', 'LIBRO', 2500);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('11'), 'Libro p1 stock67', 'ESPIRITUALES', 1500),
+  (pg_temp.u('12'), 'Libro p2 stock67', 'ESPIRITUALES', 2500);
 
 -- Una fila de cada tabla por colportor (sufijo = dueño): b1, b2, b3, b4.
 insert into public.stock (id, usuario_id, producto_id, cantidad_disponible)

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { BUCKET, cacheControlDe, tipoDe } from '../src/bucket.mjs';
 import { clienteStorage, tapar } from '../src/storage.mjs';
@@ -67,19 +68,97 @@ test('no reintenta un 4xx', async () => {
   assert.equal(llamadas.length, 1);
 });
 
-test('lee el catálogo por el endpoint autenticado, con la clave (no por la URL pública, que pasa por la caché), y devuelve null si todavía no existe', async () => {
-  const { fn, llamadas } = fetchFalso(() => json({ version: 1 }));
+/** El listado del bucket (POST /object/list) con `catalogo.json` y ese eTag, o vacío si `etag` es null. */
+const listado = (etag, nombre = 'catalogo.json') =>
+  json(etag === null ? [] : [{ id: 'id-cat', name: nombre, updated_at: '2026-11-11T10:00:00Z', metadata: { eTag: `"${etag}"`, size: 10 } }]);
+const esLista = (l) => l.metodo === 'POST' && l.url.includes('/object/list/');
+/** Un JSON como lo devuelve el Storage, con su eTag entre comillas. */
+const conEtag = (cuerpo, etag) => new Response(JSON.stringify(cuerpo), { status: 200, headers: { 'content-type': 'application/json', etag: `"${etag}"` } });
+
+test('lee el catálogo por el endpoint autenticado, con la clave (no por la URL pública), y devuelve null si todavía no existe', async () => {
+  const { fn, llamadas } = fetchFalso((l) => (esLista(l) ? listado('v1') : conEtag({ version: 1 }, 'v1')));
   assert.deepEqual(await cliente(fn).bajarJson('catalogo.json'), { version: 1 });
-  assert.equal(llamadas[0].url, `${URL}/storage/v1/object/authenticated/mapas/catalogo.json`);
-  assert.equal(llamadas[0].headers.Authorization, 'Bearer CLAVE-DE-SERVICIO');
-  assert.equal(llamadas[0].headers['cache-control'], 'no-cache');
+  const lectura = llamadas.find((l) => l.metodo === 'GET');
+  assert.equal(lectura.url, `${URL}/storage/v1/object/authenticated/mapas/catalogo.json`);
+  assert.equal(lectura.headers.Authorization, 'Bearer CLAVE-DE-SERVICIO');
+  assert.equal(lectura.headers['cache-control'], 'no-cache');
 
   for (const status of [404, 400]) {
-    const ausente = fetchFalso(() => json({ error: 'Object not found' }, status));
+    const ausente = fetchFalso((l) => (esLista(l) ? listado(null) : json({ error: 'Object not found' }, status)));
     assert.equal(await cliente(ausente.fn).bajarJson('catalogo.json'), null);
   }
-  const roto = fetchFalso(() => json({ error: 'boom' }, 403));
+  const roto = fetchFalso((l) => (esLista(l) ? listado('v1') : json({ error: 'boom' }, 403)));
   await assert.rejects(cliente(roto.fn).bajarJson('catalogo.json'), /403/);
+});
+
+test('#271: compara lo leído con el eTag del listado del bucket (que no pasa por el CDN), buscando el archivo en su carpeta', async () => {
+  const { fn, llamadas } = fetchFalso((l) =>
+    esLista(l)
+      ? json([
+          { id: null, name: 'subcarpeta' },
+          { id: 'otro', name: 'colportores.json.bak', metadata: { eTag: '"otro"' } },
+          { id: 'est', name: 'colportores.json', metadata: { eTag: 'W/"v7"' } },
+        ])
+      : conEtag({ version: 7 }, 'v7'),
+  );
+  assert.deepEqual(await cliente(fn).bajarJson('estilo/colportores.json'), { version: 7 });
+  const lista = llamadas.find(esLista);
+  assert.equal(lista.url, `${URL}/storage/v1/object/list/mapas`);
+  assert.equal(lista.headers.Authorization, 'Bearer CLAVE-DE-SERVICIO');
+  assert.deepEqual(JSON.parse(lista.body).prefix, 'estilo');
+  assert.deepEqual(JSON.parse(lista.body).search, 'colportores.json');
+});
+
+test('#271: si el CDN devuelve una copia vieja del catálogo, espera a que venza y lee la vigente', async () => {
+  const esperas = [];
+  let lecturas = 0;
+  const { fn } = fetchFalso((l) => {
+    if (esLista(l)) return listado('nuevo');
+    lecturas += 1;
+    return lecturas < 3 ? conEtag({ paquetes: ['montevideo'] }, 'viejo') : conEtag({ paquetes: ['montevideo', 'maldonado'] }, 'nuevo');
+  });
+  const avisos = [];
+  const c = cliente(fn, { esperar: async (ms) => esperas.push(ms), avisar: (m) => avisos.push(m) });
+  assert.deepEqual(await c.bajarJson('catalogo.json'), { paquetes: ['montevideo', 'maldonado'] });
+  assert.equal(lecturas, 3);
+  assert.deepEqual(esperas, [15_000, 15_000]);
+  assert.equal(avisos.length, 2);
+  assert.match(avisos[0], /catalogo\.json: .*caché del CDN.*espero 15 s/);
+});
+
+test('#271: si la copia vieja no vence, falla (nunca devuelve el catálogo viejo), después de pasar el minuto de caché', async () => {
+  const esperas = [];
+  const { fn, llamadas } = fetchFalso((l) => (esLista(l) ? listado('nuevo') : conEtag({ paquetes: ['montevideo'] }, 'viejo')));
+  const c = cliente(fn, { esperar: async (ms) => esperas.push(ms) });
+  await assert.rejects(c.bajarJson('catalogo.json'), (e) => /copia vigente de catalogo\.json/.test(e.message) && /copia vieja/.test(e.message) && /nuevo/.test(e.message));
+  assert.equal(llamadas.filter((l) => l.metodo === 'GET').length, 6);
+  assert.ok(esperas.reduce((a, b) => a + b, 0) > 60_000, 'esperó más que el max-age=60 del catálogo');
+});
+
+test('#271: un «no está» guardado por el CDN tampoco vale si el listado dice que el catálogo ya está (y al revés)', async () => {
+  // El CDN guardó el 404 de antes de la primera publicación.
+  let lecturas = 0;
+  const reciente = fetchFalso((l) => {
+    if (esLista(l)) return listado('v1');
+    lecturas += 1;
+    return lecturas === 1 ? json({ error: 'Object not found' }, 400) : conEtag({ version: 1 }, 'v1');
+  });
+  assert.deepEqual(await cliente(reciente.fn, { esperar: async () => {} }).bajarJson('catalogo.json'), { version: 1 });
+  assert.equal(lecturas, 2);
+
+  // El CDN todavía da un catálogo que ya no está en el bucket: no se usa.
+  const borrado = fetchFalso((l) => (esLista(l) ? listado(null) : conEtag({ version: 1 }, 'v1')));
+  await assert.rejects(cliente(borrado.fn, { esperar: async () => {} }).bajarJson('catalogo.json'), /el bucket no lo tiene/);
+});
+
+test('#271: sin eTag en la respuesta compara el MD5 del cuerpo; sin eTag en el listado, falla', async () => {
+  const cuerpo = JSON.stringify({ version: 2 });
+  const md5 = createHash('md5').update(cuerpo).digest('hex');
+  const sinCabecera = fetchFalso((l) => (esLista(l) ? listado(md5) : new Response(cuerpo, { status: 200 })));
+  assert.deepEqual(await cliente(sinCabecera.fn).bajarJson('catalogo.json'), { version: 2 });
+
+  const sinEtag = fetchFalso((l) => (esLista(l) ? json([{ id: 'x', name: 'catalogo.json', metadata: {} }]) : conEtag({ version: 2 }, 'v2')));
+  await assert.rejects(cliente(sinEtag.fn).bajarJson('catalogo.json'), /no trae el eTag de catalogo\.json/);
 });
 
 test('sin clave (un simulacro) lee por la URL pública, sin credenciales', async () => {
@@ -90,6 +169,7 @@ test('sin clave (un simulacro) lee por la URL pública, sin credenciales', async
   assert.equal(llamadas[0].url, `${URL}/storage/v1/object/public/mapas/catalogo.json`);
   assert.equal(llamadas[0].headers.Authorization, undefined);
   assert.equal(llamadas[1].url, `${URL}/storage/v1/object/public/mapas/catalogo.json`);
+  assert.equal(llamadas.length, 2, 'sin clave no lista el bucket (no puede): un simulacro no escribe nada');
 });
 
 test('pregunta si un paquete ya está por el endpoint autenticado (HEAD), con la clave', async () => {

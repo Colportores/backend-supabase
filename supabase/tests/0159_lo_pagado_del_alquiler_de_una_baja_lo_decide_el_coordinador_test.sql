@@ -154,7 +154,7 @@ select is(has_table_privilege('authenticated', 'public.alquiler_decision', 'inse
           or has_table_privilege('authenticated', 'public.alquiler_decision', 'delete'), false,
           'authenticated no escribe las decisiones directo');
 select is(has_table_privilege('anon', 'public.alquiler_decision', 'select'), false, 'anon no las lee');
-select is((select count(*)::int from sync.entidad where tabla = 'public.alquiler_decision'::regclass), 0, 'no es entidad del push');
+select is((select count(*)::int from sync.entidad where tabla = 'public.alquiler_decision'::regclass and permite_push), 0, 'no es entidad del push (desde la 0201 sí del pull)');
 select is(pg_temp.error_de($$ insert into public.alquiler_decision (usuario_id, campania_id, decision, monto)
                               values (pg_temp.u('b2'), pg_temp.u('e1'), 'OTRA', 1) $$), '23514', 'una decisión desconocida: CHECK');
 select is(pg_temp.error_de($$ insert into public.alquiler_decision (usuario_id, campania_id, decision, monto)

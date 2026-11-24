@@ -105,10 +105,10 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
 
 -- Catálogo: un libro (11), una revista (12), otro libro (13). El «Pack Familiar» (d0) es fijo: 1 libro y 2 revistas.
 -- La «Colección de 2 libros» (d1) no lleva nada fijo y deja elegir 2 libros.
-insert into public.producto (id, nombre, tipo) values
-  (pg_temp.u('11'), 'Libro 1 t71', 'LIBRO'),
-  (pg_temp.u('12'), 'Revista 2 t71', 'REVISTA'),
-  (pg_temp.u('13'), 'Libro 3 t71', 'LIBRO');
+insert into public.producto (id, nombre, categoria) values
+  (pg_temp.u('11'), 'Libro 1 t71', 'ESPIRITUALES'),
+  (pg_temp.u('12'), 'Revista 2 t71', 'REVISTAS'),
+  (pg_temp.u('13'), 'Libro 3 t71', 'ESPIRITUALES');
 insert into public.coleccion (id, nombre) values (pg_temp.u('d0'), 'Pack Familiar t71');
 insert into public.coleccion (id, nombre, libros_a_elegir) values (pg_temp.u('d1'), 'Coleccion de 2 libros t71', 2);
 insert into public.producto_coleccion (id, producto_id, coleccion_id, cantidad) values

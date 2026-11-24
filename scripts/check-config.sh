@@ -28,3 +28,22 @@ if [ "$valor" -lt "$MINIMO" ]; then
 fi
 
 echo "OK: minimum_password_length = $valor (la app exige $MINIMO)"
+
+# Redirecciones permitidas de Auth (backend-supabase#299): direcciones completas, sin comodines. Un `*`
+# dejaría que el enlace del correo termine en cualquier sitio que coincida con el patrón.
+if redirecciones="$(awk '/^additional_redirect_urls[[:space:]]*=/{e=1} e{print} e&&/\]/{exit}' supabase/config.toml)" && [ -n "$redirecciones" ]; then
+  if printf '%s' "$redirecciones" | grep -q '\*'; then
+    echo "supabase/config.toml: additional_redirect_urls lleva un comodín (*). Cada dirección va completa y exacta." >&2
+    exit 1
+  fi
+  for dir in "http://localhost:3000/acceso/nueva-contrasena" "http://127.0.0.1:3000/acceso/nueva-contrasena"; do
+    if ! printf '%s' "$redirecciones" | grep -qF "\"$dir\""; then
+      echo "supabase/config.toml: falta $dir en additional_redirect_urls (el enlace de «Olvidé mi contraseña» del panel cae en site_url)." >&2
+      exit 1
+    fi
+  done
+  echo "OK: additional_redirect_urls sin comodines y con la dirección de «Nueva contraseña» del panel"
+else
+  echo "supabase/config.toml no define additional_redirect_urls." >&2
+  exit 1
+fi

@@ -130,6 +130,21 @@ function retiradosDe(previo, nuevo, ahora) {
 }
 
 /**
+ * Corrida SIN catálogo previo (alguien borró `catalogo.json`, o es la primera): nadie sabe desde cuándo lo que
+ * hay en el bucket dejó de ser vigente, y juzgarlo por su fecha de subida borraría en esta misma corrida el mapa
+ * que un teléfono puede estar bajando (backend-supabase#76). Lo que el catálogo no referencia entra en
+ * `retirados` con la fecha de hoy: la gracia de 7 días cuenta desde acá, como si hubiera salido hoy.
+ * `publicados`: [{ ruta, actualizado_en }].
+ */
+export function retirarLoQueNadieReferencia(catalogo, publicados, { ahora }) {
+  const vigentes = archivosDe(catalogo);
+  const ya = new Set((catalogo.retirados ?? []).map((r) => r.archivo));
+  const nuevos = publicados.filter((a) => !vigentes.has(a.ruta) && !ya.has(a.ruta)).map((a) => ({ archivo: a.ruta, desde: ahora }));
+  const retirados = [...(catalogo.retirados ?? []), ...nuevos].sort((a, b) => (a.archivo < b.archivo ? -1 : a.archivo > b.archivo ? 1 : 0));
+  return { ...catalogo, retirados };
+}
+
+/**
  * Saca de `retirados` lo que ya no hace falta recordar: los archivos que se acaban de borrar y los
  * que ya no están en el bucket (`publicados`: [{ ruta, actualizado_en }]).
  */

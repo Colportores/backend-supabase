@@ -192,10 +192,10 @@ update public.campania_colportor set tramos_afuera = array['[2026-09-01 00:00:00
 update public.campania_colportor set deleted_at = '2026-10-21 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b3');
 
-insert into public.producto (id, nombre, tipo, precio_base_compra) values
-  (pg_temp.u('91'), 'Libro Uno',   'LIBRO',   1500),
-  (pg_temp.u('92'), 'Libro Dos',   'LIBRO',   2500),
-  (pg_temp.u('93'), 'Revista Uno', 'REVISTA', 200);
+insert into public.producto (id, nombre, categoria, precio_base_compra) values
+  (pg_temp.u('91'), 'Libro Uno',   'ESPIRITUALES',   1500),
+  (pg_temp.u('92'), 'Libro Dos',   'ESPIRITUALES',   2500),
+  (pg_temp.u('93'), 'Revista Uno', 'REVISTAS', 200);
 
 -- Lo que tiene b1 de cada producto (el de la Revista está dado de baja: cuenta como cero).
 insert into public.stock (usuario_id, producto_id, cantidad_disponible, deleted_at) values
@@ -364,14 +364,16 @@ select is((select proargnames from pg_proc where oid = 'public.pedidos_de_campan
           array['p_campania_id','pedido_id','numero','colportor_id','nombre','apellido','ciudad_id','ciudad_nombre',
                 'departamento','de_baja','estado','origen','fecha_pedido','productos','unidades',
                 'unidades_autorizadas','monto_total','monto_autorizado','excede_limite','decidido_en',
-                'motivo_rechazo','deshacer_hasta'], 'pedidos_de_campania: parámetros y columnas');
+                'motivo_rechazo','deshacer_hasta','limite_deuda','supera_limite_por'],
+          'pedidos_de_campania: parámetros y columnas (0204 suma el límite al final)');
 select is((select proargnames from pg_proc where oid = 'public.pedido_lineas(uuid)'::regprocedure),
-          array['p_pedido_id','producto_id','producto_nombre','producto_tipo','cantidad','cantidad_autorizada',
+          array['p_pedido_id','producto_id','producto_nombre','cantidad','cantidad_autorizada',
                 'precio_unitario','subtotal','subtotal_autorizado','stock'], 'pedido_lineas: parámetros y columnas');
 select is((select proargnames from pg_proc where oid = 'public.pedido_contexto(uuid)'::regprocedure),
           array['p_pedido_id','numero','colportor_id','nombre','apellido','estado','monto_total','monto_autorizado',
                 'deuda_actual','deuda_con_pedido','por_cobrar','libros_por_entregar',
-                'ultimo_deposito_fecha','ultimo_deposito_monto'], 'pedido_contexto: parámetros y columnas');
+                'ultimo_deposito_fecha','ultimo_deposito_monto','limite_deuda','supera_limite_por'],
+          'pedido_contexto: parámetros y columnas (0204 suma el límite al final)');
 
 select is(has_function_privilege(r, f, 'execute')::text, case when r = 'authenticated' then 'true' else 'false' end,
           format('%s %s EXECUTE en %s', r, case when r = 'authenticated' then 'tiene' else 'no tiene' end, f))
@@ -483,7 +485,8 @@ select is(pg_temp.fila('c1') - 'pedido_id' - 'numero' - 'colportor_id' - 'fecha_
                              'departamento','Departamento de prueba uno','de_baja',false,
                              'estado','PENDIENTE_AUTORIZACION','origen','COLPORTOR','productos',3,'unidades',16,
                              'unidades_autorizadas',null,'monto_total',13000,'monto_autorizado',null,
-                             'excede_limite',false,'decidido_en',null,'motivo_rechazo',null,'deshacer_hasta',null),
+                             'excede_limite',false,'decidido_en',null,'motivo_rechazo',null,'deshacer_hasta',null,
+                             'limite_deuda',null,'supera_limite_por',null),
           'un pedido por autorizar: el colportor, su ciudad, 3 productos y 16 unidades, nada decidido');
 select is(pg_temp.fila('c1') ->> 'colportor_id', pg_temp.u('b1')::text, 'el colportor es b1');
 select is(pg_temp.fila('c1') ->> 'ciudad_id', pg_temp.u('c1')::text, 'y la ciudad, la de su zona actual');
@@ -512,9 +515,9 @@ select is(pg_temp.fila('cd') ->> 'unidades', '6', 'ni sus unidades: 6');
 -- 4. Las líneas
 -- ============================================================================
 select is((select jsonb_agg(l - 'producto_id' order by o) from jsonb_array_elements(pg_temp.lineas(pg_temp.u('a1'), 'c1')) with ordinality t(l, o)),
-          '[{"stock":-2,"cantidad":2,"subtotal":5000,"producto_tipo":"LIBRO","precio_unitario":2500,"producto_nombre":"Libro Dos","subtotal_autorizado":5000,"cantidad_autorizada":null},
-            {"stock":5,"cantidad":4,"subtotal":6000,"producto_tipo":"LIBRO","precio_unitario":1500,"producto_nombre":"Libro Uno","subtotal_autorizado":6000,"cantidad_autorizada":null},
-            {"stock":0,"cantidad":10,"subtotal":2000,"producto_tipo":"REVISTA","precio_unitario":200,"producto_nombre":"Revista Uno","subtotal_autorizado":2000,"cantidad_autorizada":null}]'::jsonb,
+          '[{"stock":-2,"cantidad":2,"subtotal":5000,"precio_unitario":2500,"producto_nombre":"Libro Dos","subtotal_autorizado":5000,"cantidad_autorizada":null},
+            {"stock":5,"cantidad":4,"subtotal":6000,"precio_unitario":1500,"producto_nombre":"Libro Uno","subtotal_autorizado":6000,"cantidad_autorizada":null},
+            {"stock":0,"cantidad":10,"subtotal":2000,"precio_unitario":200,"producto_nombre":"Revista Uno","subtotal_autorizado":2000,"cantidad_autorizada":null}]'::jsonb,
           'las líneas por nombre, con el costo, los subtotales y el stock del colportor (negativo tal cual; el renglón dado de baja, cero)');
 select is(jsonb_array_length(pg_temp.lineas(pg_temp.u('a1'), 'cd')), 2, 'las líneas dadas de baja no salen');
 select is((pg_temp.lineas(pg_temp.u('a1'), 'c2') -> 0 ->> 'cantidad_autorizada'), '1', 'lo autorizado de una línea sale tal cual');
@@ -529,7 +532,7 @@ select is((pg_temp.contexto(pg_temp.u('a1'), 'c1') -> 0) - 'colportor_id' - 'num
           jsonb_build_object('nombre','Ana','apellido','Alfa','estado','PENDIENTE_AUTORIZACION','monto_total',13000,
                              'monto_autorizado',null,'deuda_actual',20000,'deuda_con_pedido',33000,'por_cobrar',7000,
                              'libros_por_entregar',4,'ultimo_deposito_fecha','2026-10-17T12:00:00+00:00',
-                             'ultimo_deposito_monto',12000),
+                             'ultimo_deposito_monto',12000,'limite_deuda',null,'supera_limite_por',null),
           'el contexto de un pedido por autorizar: la deuda actual, con el pedido, por cobrar, por entregar y el último depósito vivo');
 select is(pg_temp.contexto(pg_temp.u('a1'), 'c1') -> 0 ->> 'colportor_id', pg_temp.u('b1')::text, 'del colportor del pedido');
 select is(pg_temp.contexto(pg_temp.u('a1'), 'c2') -> 0 ->> 'deuda_con_pedido', '20000',
@@ -540,7 +543,7 @@ select is((pg_temp.contexto(pg_temp.u('a1'), 'c4') -> 0) - 'numero',
           jsonb_build_array(jsonb_build_object('colportor_id', pg_temp.u('b2'), 'nombre', 'Beto', 'apellido', 'Bravo',
                 'estado', 'PENDIENTE_AUTORIZACION', 'monto_total', 1500, 'monto_autorizado', null, 'deuda_actual', 0,
                 'deuda_con_pedido', 1500, 'por_cobrar', 0, 'libros_por_entregar', 9, 'ultimo_deposito_fecha', null,
-                'ultimo_deposito_monto', null))->0,
+                'ultimo_deposito_monto', null, 'limite_deuda', null, 'supera_limite_por', null))->0,
           'sin cuenta ni depósitos: todo en cero y el depósito en null; lo por entregar es solo el suyo');
 
 -- ============================================================================

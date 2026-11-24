@@ -21,6 +21,7 @@ import {
   serializarEstilo,
   versionDeEstilo,
 } from '../src/publicar.mjs';
+import { clienteStorage } from '../src/storage.mjs';
 
 const AMBITO = '09990000-0000-7000-8003-000000000001';
 const ESTILO_V = 'e'.repeat(64);
@@ -339,16 +340,127 @@ test('con --dry-run el estilo no escribe el catálogo', () =>
 
 test('lo que nunca estuvo en un catálogo se borra pasados 7 días desde que se subió', () =>
   conTmp(async (tmp) => {
+    // Una publicación cortada a la mitad dejó un archivo subido y sin figurar en el catálogo (que sí existe).
     const huerfano = 'paquetes/ciudad/montevideo.000000000000.pmtiles';
     const reciente = 'paquetes/ciudad/montevideo.111111111111.pmtiles';
-    const storage = bucketFalso({
-      previo: { [huerfano]: Buffer.from('x'), [reciente]: Buffer.from('y') },
-      fechas: { [huerfano]: '2026-09-20T00:00:00Z', [reciente]: '2026-10-05T00:00:00Z' },
-    });
+    const fechas = {};
+    const storage = bucketFalso({ fechas });
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp, { ahora: '2026-09-19T12:00:00Z' }));
+    storage.objetos.set(huerfano, Buffer.from('x'));
+    storage.objetos.set(reciente, Buffer.from('y'));
+    fechas[huerfano] = '2026-09-20T00:00:00Z';
+    fechas[reciente] = '2026-10-05T00:00:00Z';
     const { borrados } = await publicarCiudades(opciones(storage, recorteFalso(), tmp));
     assert.deepEqual(borrados, [huerfano]);
     assert.equal(storage.objetos.has(huerfano), false);
     assert.equal(storage.objetos.has(reciente), true);
+  }));
+
+test('sin catálogo previo (alguien lo borró) la corrida no borra nada: lo viejo queda retirado desde hoy y se borra a los 7 días (#76)', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    storage.reloj = '2026-10-07T12:00:00Z';
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'a' }), tmp));
+    const viejo = v1.paquetes[0].partes[0].archivo;
+
+    // Un mes después alguien borra catalogo.json a mano y sale un build nuevo: el viejo tiene un mes de subido,
+    // pero nadie sabe desde cuándo dejó de ser el vigente y un teléfono puede estar bajándolo.
+    storage.objetos.delete(RUTA_CATALOGO);
+    const SALIO = '2026-11-06T12:00:00Z';
+    storage.reloj = SALIO;
+    const mensajes = [];
+    const { catalogo: v2, borrados } = await publicarCiudades(
+      opciones(storage, recorteFalso({ semilla: 'b' }), tmp, { ahora: SALIO, build: '20261106', log: (m) => mensajes.push(m) }),
+    );
+    assert.notEqual(v2.paquetes[0].partes[0].archivo, viejo);
+    assert.deepEqual(borrados, [], 'sin catálogo previo, esta corrida no borra nada');
+    assert.ok(storage.objetos.has(viejo), 'el viejo sigue ahí para el teléfono que lo está bajando');
+    assert.deepEqual(JSON.parse(storage.objetos.get(RUTA_CATALOGO)).retirados, [{ archivo: viejo, desde: SALIO }]);
+    assert.ok(mensajes.some((m) => m.startsWith('aviso: el bucket no tenía catálogo')), 'y lo dice');
+    assert.deepEqual(validar(v2), []);
+
+    // La próxima corrida (menos de 7 días) tampoco lo borra: antes de este arreglo lo juzgaba por su fecha de subida.
+    storage.reloj = '2026-11-08T12:00:00Z';
+    const r3 = await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'b' }), tmp, { ahora: '2026-11-08T12:00:00Z' }));
+    assert.deepEqual(r3.borrados, []);
+    assert.ok(storage.objetos.has(viejo));
+
+    // Pasados 7 días desde hoy-sin-catálogo, sí.
+    storage.reloj = '2026-11-14T12:00:00Z';
+    const r4 = await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'b' }), tmp, { ahora: '2026-11-14T12:00:00Z' }));
+    assert.deepEqual(r4.borrados, [viejo]);
+    assert.equal(storage.objetos.has(viejo), false);
+  }));
+
+test('sin catálogo previo, `--solo estilo` y después `--solo ciudades` (la guía de «Publicar a mano») no borran el mapa que ya estaba (#76)', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    storage.reloj = '2026-10-07T12:00:00Z';
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'a' }), tmp));
+    const viejo = v1.paquetes[0].partes[0].archivo;
+    storage.objetos.delete(RUTA_CATALOGO);
+
+    // Un mes después: primero el estilo (sube un catálogo sin paquetes) y enseguida las ciudades con un mapa nuevo.
+    const HOY = '2026-11-06T12:00:00Z';
+    storage.reloj = HOY;
+    const mensajes = [];
+    const { catalogo: soloEstilo } = await publicarCatalogoDeEstilo({ storage, estiloVersion: ESTILO_V, ahora: HOY, log: (m) => mensajes.push(m) });
+    assert.deepEqual(soloEstilo.paquetes, []);
+    assert.deepEqual(JSON.parse(storage.objetos.get(RUTA_CATALOGO)).retirados, [{ archivo: viejo, desde: HOY }]);
+    assert.ok(mensajes.some((m) => m.startsWith('aviso: el bucket no tenía catálogo')), 'y lo dice');
+
+    const { catalogo: v2, borrados } = await publicarCiudades(
+      opciones(storage, recorteFalso({ semilla: 'b' }), tmp, { ahora: HOY, build: '20261106', estiloVersion: undefined }),
+    );
+    assert.notEqual(v2.paquetes[0].partes[0].archivo, viejo);
+    assert.deepEqual(borrados, [], 'el mapa que ya estaba no se borra en el acto');
+    assert.ok(storage.objetos.has(viejo));
+    assert.deepEqual(v2.retirados, [{ archivo: viejo, desde: HOY }]);
+  }));
+
+test('`--solo estilo` con el catálogo presente no lista ni retira nada: solo cambia la versión del estilo', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    await publicarCiudades(opciones(storage, recorteFalso(), tmp));
+    let listados = 0;
+    const listar = storage.listar;
+    storage.listar = async (p) => (listados++, listar(p));
+    const { catalogo } = await publicarCatalogoDeEstilo({ storage, estiloVersion: 'f'.repeat(64), ahora: '2026-10-08T12:00:00Z' });
+    assert.equal(listados, 0);
+    assert.deepEqual(catalogo.retirados, []);
+  }));
+
+test('sin catálogo previo y sin nada más en el bucket no hay aviso ni retirados', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    const mensajes = [];
+    const { catalogo, borrados } = await publicarCiudades(opciones(storage, recorteFalso(), tmp, { log: (m) => mensajes.push(m) }));
+    assert.deepEqual(borrados, []);
+    assert.deepEqual(catalogo.retirados, []);
+    assert.ok(!mensajes.some((m) => m.includes('no tenía catálogo')));
+  }));
+
+test('un contenido retirado hace 13 días que esta corrida vuelve a hacer vigente no se borra: se decide con el catálogo fusionado, no con el previo (#76)', () =>
+  conTmp(async (tmp) => {
+    const storage = bucketFalso();
+    storage.reloj = '2026-10-07T12:00:00Z';
+    const { catalogo: v1 } = await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'a' }), tmp));
+    const a = v1.paquetes[0].partes[0].archivo;
+
+    // v2 reemplaza a v1: v1 queda retirado desde el 08/10.
+    storage.reloj = '2026-10-08T12:00:00Z';
+    await publicarCiudades(opciones(storage, recorteFalso({ semilla: 'b' }), tmp, { ahora: '2026-10-08T12:00:00Z' }));
+    assert.deepEqual(JSON.parse(storage.objetos.get(RUTA_CATALOGO)).retirados.map((r) => r.archivo), [a]);
+
+    // 13 días después se vuelve al mapa de v1 (mismo contenido, mismo archivo): ya pasó su gracia, pero es el vigente.
+    storage.reloj = '2026-10-21T12:00:00Z';
+    const { catalogo, borrados } = await publicarCiudades(
+      opciones(storage, recorteFalso({ semilla: 'a' }), tmp, { ahora: '2026-10-21T12:00:00Z' }),
+    );
+    assert.equal(catalogo.paquetes[0].partes[0].archivo, a);
+    assert.deepEqual(borrados, [], 'el vigente nunca se borra');
+    assert.ok(storage.objetos.has(a), 'el catálogo no puede apuntar a un archivo borrado');
+    assert.deepEqual(catalogo.retirados.map((r) => r.archivo).includes(a), false, 'y deja de figurar como retirado');
   }));
 
 test('una ciudad que no entra se parte en dos archivos y el catálogo lo dice', () =>
@@ -712,6 +824,11 @@ async function servidorVacio({ ciudades = () => [], catalogo } = {}) {
     if (req.url.startsWith('/rest/v1/')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(req.url.startsWith('/rest/v1/ciudad?') ? ciudades(new URL(req.url, 'http://x').searchParams) : []));
+    } else if (req.method === 'POST' && req.url.startsWith('/storage/v1/object/list/')) {
+      // El listado del bucket: el catálogo con el eTag (MD5) de lo que sirve el GET de abajo, o nada (#271).
+      const etag = catalogo && createHash('md5').update(JSON.stringify(catalogo)).digest('hex');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(catalogo ? [{ id: 'cat', name: 'catalogo.json', metadata: { eTag: `"${etag}"` } }] : []));
     } else if (catalogo && req.url.includes('catalogo.json')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(catalogo));
@@ -890,4 +1007,97 @@ test('dos ciudades que se intercambian los nombres tampoco chocan: los dos paque
       }),
     );
     assert.deepEqual(catalogo.paquetes.map((p) => [p.id, p.ambito_id]).sort(), [['ciudad-libertad', A], ['ciudad-san-jose', B]]);
+  }));
+
+/**
+ * El Storage de Supabase detrás de su CDN, para `clienteStorage` (#271): guarda los objetos con su eTag (MD5) y su
+ * Cache-Control, y el CDN contesta los GET y HEAD (también los autenticados) con la copia que guardó hasta que vence su
+ * `max-age`, aunque el pedido diga `no-cache`. El listado (POST) va a la base: siempre dice la verdad. El reloj lo
+ * mueve `esperar`, que es lo que el cliente usa para esperar.
+ */
+function storageConCdn() {
+  const objetos = new Map();
+  const cdn = new Map();
+  const estado = { reloj: 0, objetos };
+  const ruta = (url, raiz) => decodeURIComponent(url.slice(url.indexOf(raiz) + raiz.length));
+  const maxAge = (cacheControl) => Number(/max-age=(\d+)/.exec(cacheControl ?? '')?.[1] ?? 60) * 1000;
+  const respuestaDe = (copia, metodo) =>
+    copia.status === 200
+      ? new Response(metodo === 'HEAD' ? null : copia.bytes, { status: 200, headers: { etag: `"${copia.etag}"` } })
+      : new Response(metodo === 'HEAD' ? null : JSON.stringify({ error: 'not_found' }), { status: 400 });
+  const fetchFn = async (url, { method, headers = {}, body } = {}) => {
+    if (method === 'POST' && url.includes('/object/list/mapas')) {
+      const { prefix, search = '' } = JSON.parse(body);
+      const hijos = [...objetos.entries()]
+        .filter(([r]) => (prefix ? r.startsWith(`${prefix}/`) : true) && !r.slice(prefix ? prefix.length + 1 : 0).includes('/'))
+        .map(([r, o]) => ({ id: `id-${r}`, name: r.slice(prefix ? prefix.length + 1 : 0), updated_at: o.subido, metadata: { eTag: `"${o.etag}"` } }))
+        .filter((o) => o.name.startsWith(search));
+      return new Response(JSON.stringify(hijos), { status: 200 });
+    }
+    if (method === 'POST') {
+      const r = ruta(url, '/object/mapas/');
+      const bytes = Buffer.from(body);
+      objetos.set(r, { bytes, etag: createHash('md5').update(bytes).digest('hex'), maxAge: maxAge(headers['cache-control']), subido: new Date(estado.reloj).toISOString() });
+      return new Response('{}', { status: 200 });
+    }
+    if (method === 'DELETE') {
+      for (const r of JSON.parse(body).prefixes) objetos.delete(r);
+      return new Response('[]', { status: 200 });
+    }
+    // GET y HEAD por el endpoint autenticado: pasan por el CDN.
+    const r = ruta(url, '/object/authenticated/mapas/');
+    const clave = `${method} ${r}`;
+    const guardada = cdn.get(clave);
+    if (guardada && estado.reloj < guardada.hasta) return respuestaDe(guardada, method);
+    const o = objetos.get(r);
+    const copia = o ? { status: 200, bytes: o.bytes, etag: o.etag } : { status: 400 };
+    cdn.set(clave, { ...copia, hasta: estado.reloj + (o?.maxAge ?? 60_000) });
+    return respuestaDe(copia, method);
+  };
+  return { estado, fetchFn, esperar: async (ms) => (estado.reloj += ms) };
+}
+
+const MALDONADO = { slug: 'maldonado', nombre: 'Maldonado', ciudad_id: '09990000-0000-7000-8003-000000000002', bbox: [-55.0, -34.95, -54.9, -34.88] };
+const SALTO = { slug: 'salto', nombre: 'Salto', ciudad_id: '09990000-0000-7000-8003-000000000003', bbox: [-58.0, -31.42, -57.9, -31.35] };
+const catalogoDelBucket = (estado) => JSON.parse(estado.objetos.get(RUTA_CATALOGO).bytes.toString());
+
+test('#271: dos publicar --ciudad seguidos (menos de 60 s) dejan las dos ciudades en el catálogo, aunque el CDN tenga el viejo', () =>
+  conTmp(async (tmp) => {
+    const { estado, fetchFn, esperar } = storageConCdn();
+    const storage = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar });
+    const publicar = (ciudad, ahora) =>
+      publicarCiudades({ ...opciones(storage, recorteFalso(), tmp), ciudades: [ciudad], ahora, avisar: false });
+
+    await publicar(MONTEVIDEO, '2026-11-11T09:00:00Z');
+    estado.reloj += 3_600_000; // una hora después: el CDN ya no tiene nada vigente
+    await publicar(MALDONADO, '2026-11-11T10:00:00Z'); // lee el catálogo con Montevideo y el CDN lo guarda 60 s
+    const conMaldonado = catalogoDelBucket(estado).paquetes.map((p) => p.id);
+    assert.deepEqual(conMaldonado, ['ciudad-maldonado', 'ciudad-montevideo']);
+
+    const antes = estado.reloj;
+    estado.reloj += 5_000; // la segunda corrida, a los pocos segundos
+    const { catalogo } = await publicar(SALTO, '2026-11-11T10:00:05Z');
+
+    assert.deepEqual(catalogo.paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo', 'ciudad-salto']);
+    assert.deepEqual(catalogoDelBucket(estado).paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo', 'ciudad-salto']);
+    assert.deepEqual(catalogoDelBucket(estado).retirados, [], 'nada salió del catálogo');
+    assert.ok(estado.reloj - antes >= 60_000, 'esperó a que el CDN soltara el catálogo viejo');
+  }));
+
+test('#271: si el CDN no suelta el catálogo viejo, la segunda corrida falla antes de subir nada y el catálogo sigue con la primera ciudad', () =>
+  conTmp(async (tmp) => {
+    const { estado, fetchFn, esperar } = storageConCdn();
+    const storage = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar });
+    const publicar = (ciudad, ahora, cliente = storage) =>
+      publicarCiudades({ ...opciones(cliente, recorteFalso(), tmp), ciudades: [ciudad], ahora, avisar: false });
+    await publicar(MONTEVIDEO, '2026-11-11T09:00:00Z');
+    estado.reloj += 3_600_000;
+    await publicar(MALDONADO, '2026-11-11T10:00:00Z');
+    const guardados = [...estado.objetos.keys()];
+
+    // Un CDN que no vence en el tiempo que espera el cliente: una sola lectura, sin esperar.
+    const impaciente = clienteStorage({ url: 'https://proyecto.supabase.co', clave: 'CLAVE', fetchFn, esperaMs: 0, esperar, intentosVigente: 1 });
+    await assert.rejects(publicar(SALTO, '2026-11-11T10:00:05Z', impaciente), /copia vigente de catalogo\.json/);
+    assert.deepEqual([...estado.objetos.keys()], guardados, 'no subió el paquete de Salto ni un catálogo sin Maldonado');
+    assert.deepEqual(catalogoDelBucket(estado).paquetes.map((p) => p.id), ['ciudad-maldonado', 'ciudad-montevideo']);
   }));

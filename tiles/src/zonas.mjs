@@ -29,6 +29,7 @@ import { cacheControlDe, tipoDe } from './bucket.mjs';
 import { DIAS_DE_GRACIA } from './catalogo.mjs';
 import { MAX_BYTES, ZOOM_PISO, ZOOM_TOPE } from './politica.mjs';
 import { sha256DeArchivo } from './recorte.mjs';
+import { ocultar } from './secretos.mjs';
 import { tapar } from './storage.mjs';
 
 export const PREFIJO_ZONAS = 'zonas';
@@ -144,7 +145,8 @@ export function clienteZonas({ url, clave, fetchImpl = fetch }) {
     if (!respuesta.ok) {
       const texto = await respuesta.text().catch(() => '');
       // PostgREST repite la fila que no pudo escribir: trae `paquete_mapa.archivo`, la llave del mapa de la zona.
-      throw new Error(`${que} falló: ${respuesta.status} ${tapar(texto.slice(0, 300))}`);
+      // La clave se tapa ANTES de cortar a 300 (ver storage.mjs `exigir`).
+      throw new Error(`${que} falló: ${respuesta.status} ${tapar(ocultar(texto, clave).slice(0, 300))}`);
     }
     return respuesta.json();
   }

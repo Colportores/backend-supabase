@@ -118,7 +118,7 @@ async function comandoPublicar(opciones) {
 
   const supabaseUrl = entorno('SUPABASE_URL');
   const clave = dryRun ? process.env.SUPABASE_SERVICE_ROLE_KEY : entorno('SUPABASE_SERVICE_ROLE_KEY');
-  const storage = clienteStorage({ url: supabaseUrl, clave, bucket: BUCKET.id });
+  const storage = clienteStorage({ url: supabaseUrl, clave, bucket: BUCKET.id, avisar: log });
 
   // Lo que puede impedir publicar se resuelve ANTES de escribir nada en el bucket: qué ciudades se publican
   // (las de public.ciudad que tienen su rectángulo: no hay ninguna lista en el repo) y el id de cada una (su

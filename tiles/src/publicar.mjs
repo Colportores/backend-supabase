@@ -14,7 +14,17 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { BUCKET, cacheControlDe, tipoDe } from './bucket.mjs';
 import { avisosDeCiudades } from './ambito.mjs';
-import { DIAS_DE_GRACIA, armarPaquete, fusionar, obsoletos, podarRetirados, rutaArchivo, validar, versionDe } from './catalogo.mjs';
+import {
+  DIAS_DE_GRACIA,
+  armarPaquete,
+  fusionar,
+  obsoletos,
+  podarRetirados,
+  retirarLoQueNadieReferencia,
+  rutaArchivo,
+  validar,
+  versionDe,
+} from './catalogo.mjs';
 import { planificar } from './politica.mjs';
 import { sha256DeArchivo } from './recorte.mjs';
 
@@ -74,9 +84,17 @@ async function subirCatalogo(storage, catalogo) {
   });
 }
 
+/** Dónde viven los archivos de los paquetes del catálogo (los de zona están en `zonas/` y no son del catálogo). */
+const PREFIJOS_DE_PAQUETES = ['paquetes/ciudad', 'paquetes/departamento', 'paquetes/uruguay'];
+
 /**
  * `publicar --solo estilo`: el estilo cambió, así que el catálogo también (su `estilo.version` es lo que
  * le dice a la app que hay un estilo nuevo, igual que `version` en los paquetes). No toca los paquetes.
+ *
+ * Sin catálogo previo (alguien lo borró) este catálogo sale sin paquetes ni `retirados`, y la corrida siguiente
+ * (`--solo ciudades`, como en «Publicar a mano») lo tomaría por un catálogo previo y juzgaría los mapas que ya
+ * estaban por su fecha de subida: borraría en el acto el que un teléfono puede estar bajando (backend-supabase#76).
+ * Por eso acá también lo que hay en el bucket y el catálogo no nombra queda en `retirados` desde hoy.
  */
 export async function publicarCatalogoDeEstilo({ storage, estiloVersion, ahora = ahoraIso(), dryRun = false, log = () => {} }) {
   const previo = await storage.bajarJson(RUTA_CATALOGO);
@@ -87,9 +105,17 @@ export async function publicarCatalogoDeEstilo({ storage, estiloVersion, ahora =
     log(`[dry-run] catálogo con el estilo ${estiloVersion.slice(0, 12)}, no se sube`);
     return { catalogo };
   }
-  await subirCatalogo(storage, catalogo);
-  log(`catálogo publicado: estilo ${estiloVersion.slice(0, 12)}, ${catalogo.paquetes.length} paquetes`);
-  return { catalogo };
+  let aSubir = catalogo;
+  if (!previo) {
+    const publicados = (await Promise.all(PREFIJOS_DE_PAQUETES.map((prefijo) => storage.listar(prefijo)))).flat();
+    aSubir = retirarLoQueNadieReferencia(catalogo, publicados, { ahora });
+    if (aSubir.retirados.length > 0) {
+      log(`aviso: el bucket no tenía catálogo: los ${aSubir.retirados.length} archivos de mapas que hay quedan retirados desde hoy, con su gracia de ${DIAS_DE_GRACIA} días`);
+    }
+  }
+  await subirCatalogo(storage, aSubir);
+  log(`catálogo publicado: estilo ${estiloVersion.slice(0, 12)}, ${aSubir.paquetes.length} paquetes`);
+  return { catalogo: aSubir };
 }
 
 /**
@@ -167,6 +193,24 @@ async function publicarUnPaquete({ storage, previo, nivel, clave, ambitoId, nomb
     }
   }
   return armarPaquete({ nivel, clave, ambitoId, nombre, bbox, zoomMax, partes: publicables, build, ahora });
+}
+
+/**
+ * Qué se borra en esta corrida y el catálogo que se sube. Se decide con el catálogo FUSIONADO (el que se va a
+ * publicar), no con el previo: un contenido retirado que esta corrida vuelve a hacer vigente no se borra.
+ * Sin catálogo previo no se borra nada: lo que hay en el bucket sin figurar en el catálogo pasa a `retirados`
+ * desde hoy (ver `retirarLoQueNadieReferencia`).
+ */
+function decidirBorrado({ previo, fusionado, publicados, ahora, log }) {
+  if (!previo) {
+    const catalogo = podarRetirados(retirarLoQueNadieReferencia(fusionado, publicados, { ahora }), { borrados: [], publicados });
+    if (catalogo.retirados.length > 0) {
+      log(`aviso: el bucket no tenía catálogo: esta corrida no borra nada y los ${catalogo.retirados.length} archivos que el catálogo no referencia quedan retirados desde hoy, con su gracia de ${DIAS_DE_GRACIA} días`);
+    }
+    return { borrar: [], catalogo };
+  }
+  const borrar = obsoletos(publicados, fusionado, { ahora });
+  return { borrar, catalogo: podarRetirados(fusionado, { borrados: borrar, publicados }) };
 }
 
 /**
@@ -300,8 +344,7 @@ export async function publicarCiudades({
   // fecha de retiro y la próxima corrida los junta por su fecha de subida (ya vieja).
   // Solo `paquetes/ciudad`: los paquetes de zona no están en el catálogo, viven en `zonas/` y los limpia zonas.mjs.
   const publicados = await storage.listar('paquetes/ciudad');
-  const borrar = obsoletos(publicados, fusionado, { ahora });
-  const catalogo = podarRetirados(fusionado, { borrados: borrar, publicados });
+  const { borrar, catalogo } = decidirBorrado({ previo, fusionado, publicados, ahora, log });
   const errores = validar(catalogo);
   if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
 
@@ -387,8 +430,7 @@ export async function publicarAmplios({
   }
 
   const publicados = await storage.listar(`paquetes/${nivel}`);
-  const borrar = obsoletos(publicados, fusionado, { ahora });
-  const catalogo = podarRetirados(fusionado, { borrados: borrar, publicados });
+  const { borrar, catalogo } = decidirBorrado({ previo, fusionado, publicados, ahora, log });
   const errores = validar(catalogo, { maxBytes });
   if (errores.length > 0) throw new Error(`El catálogo no es válido:\n  ${errores.join('\n  ')}`);
 

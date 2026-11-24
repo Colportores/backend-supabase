@@ -129,20 +129,20 @@ insert into public.campania_colportor (campania_id, usuario_id, zona_id) values
   (pg_temp.u('e1'), pg_temp.u('b1'), null);
 
 -- Catálogo. 17 y la colección d4 están dados de baja. Con categoría y código del editor distintos.
-insert into public.producto (id, nombre, tipo, es_bonificable, deleted_at) values
-  (pg_temp.u('11'), 'A sin excepcion t170',          'LIBRO', false, null),
-  (pg_temp.u('12'), 'B excepcion igual t170',        'LIBRO', false, null),
-  (pg_temp.u('13'), 'C excepcion de hoy t170',       'LIBRO', false, null),
-  (pg_temp.u('14'), 'D excepcion vencida t170',      'LIBRO', false, null),
-  (pg_temp.u('15'), 'E excepcion de baja t170',      'LIBRO', false, null),
-  (pg_temp.u('16'), 'F con tramo futuro t170',       'LIBRO', false, null),
-  (pg_temp.u('17'), 'Z producto de baja t170',       'LIBRO', false, now()),
-  (pg_temp.u('18'), 'G para quitar t170',            'LIBRO', false, null),
-  (pg_temp.u('19'), 'H para quitar el mismo dia t170', 'LIBRO', false, null),
-  (pg_temp.u('1a'), 'I sin excepcion para quitar t170', 'LIBRO', false, null),
-  (pg_temp.u('1b'), 'J limites del precio t170',   'LIBRO', false, null),
-  (pg_temp.u('1c'), 'K vigente con fin sin futuro t170', 'LIBRO', false, null),
-  (pg_temp.u('1d'), 'L vigente con fin y hueco t170', 'LIBRO', false, null);
+insert into public.producto (id, nombre, categoria, es_bonificable, deleted_at) values
+  (pg_temp.u('11'), 'A sin excepcion t170',          'ESPIRITUALES', false, null),
+  (pg_temp.u('12'), 'B excepcion igual t170',        'ESPIRITUALES', false, null),
+  (pg_temp.u('13'), 'C excepcion de hoy t170',       'ESPIRITUALES', false, null),
+  (pg_temp.u('14'), 'D excepcion vencida t170',      'ESPIRITUALES', false, null),
+  (pg_temp.u('15'), 'E excepcion de baja t170',      'ESPIRITUALES', false, null),
+  (pg_temp.u('16'), 'F con tramo futuro t170',       'ESPIRITUALES', false, null),
+  (pg_temp.u('17'), 'Z producto de baja t170',       'ESPIRITUALES', false, now()),
+  (pg_temp.u('18'), 'G para quitar t170',            'ESPIRITUALES', false, null),
+  (pg_temp.u('19'), 'H para quitar el mismo dia t170', 'ESPIRITUALES', false, null),
+  (pg_temp.u('1a'), 'I sin excepcion para quitar t170', 'ESPIRITUALES', false, null),
+  (pg_temp.u('1b'), 'J limites del precio t170',   'ESPIRITUALES', false, null),
+  (pg_temp.u('1c'), 'K vigente con fin sin futuro t170', 'ESPIRITUALES', false, null),
+  (pg_temp.u('1d'), 'L vigente con fin y hueco t170', 'ESPIRITUALES', false, null);
 insert into public.coleccion (id, nombre, deleted_at) values
   (pg_temp.u('d1'), 'Col con excepcion t170', null),
   (pg_temp.u('d2'), 'Col sin excepcion t170', null),

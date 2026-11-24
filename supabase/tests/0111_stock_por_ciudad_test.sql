@@ -138,16 +138,16 @@ update public.campania_ciudad set deleted_at = now() where id = pg_temp.u('73');
 update public.campania_colportor set deleted_at = '2026-09-15 12:00:00+00'
  where campania_id = pg_temp.u('e1') and usuario_id = pg_temp.u('b5');
 
-insert into public.producto (id, nombre, tipo, deleted_at) values
-  (pg_temp.u('91'), 'Libro Uno',         'LIBRO',     null),
-  (pg_temp.u('92'), 'Libro Dos',         'LIBRO',     null),
-  (pg_temp.u('93'), 'Revista Uno',       'REVISTA',   null),
+insert into public.producto (id, nombre, categoria, deleted_at) values
+  (pg_temp.u('91'), 'Libro Uno',         'ESPIRITUALES',     null),
+  (pg_temp.u('92'), 'Libro Dos',         'BONIFICABLES',     null),
+  (pg_temp.u('93'), 'Revista Uno',       'REVISTAS',   null),
   (pg_temp.u('94'), 'Material Uno',      'MATERIAL',  null),
-  (pg_temp.u('95'), 'Misionero Uno',     'MISIONERO', null),
-  (pg_temp.u('96'), 'Libro Nunca',       'LIBRO',     null),
-  (pg_temp.u('97'), 'Libro Cero',        'LIBRO',     null),
-  (pg_temp.u('98'), 'Libro De Baja',     'LIBRO',     now()),
-  (pg_temp.u('99'), 'Libro Baja Vacio',  'LIBRO',     now());
+  (pg_temp.u('95'), 'Misionero Uno',     'MISIONEROS', null),
+  (pg_temp.u('96'), 'Libro Nunca',       'ESPIRITUALES',     null),
+  (pg_temp.u('97'), 'Libro Cero',        'ESPIRITUALES',     null),
+  (pg_temp.u('98'), 'Libro De Baja',     'ESPIRITUALES',     now()),
+  (pg_temp.u('99'), 'Libro Baja Vacio',  'ESPIRITUALES',     now());
 
 -- Lo que tiene cada uno (el renglón de b1 con 92 está dado de baja; b6 no está en Cierre).
 insert into public.stock (usuario_id, producto_id, cantidad_disponible, deleted_at) values
@@ -280,8 +280,8 @@ select pg_temp.actuar_como('01920000-0000-7000-8000-0000000111a1');
 select is((select array(select k from jsonb_object_keys(
                   (select to_jsonb(r) from public.stock_por_ciudad(pg_temp.u('e1')) r limit 1)) k
                  order by k collate "C")),
-          array['apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
-                'nombre','por_cobrar','por_entregar','producto_id','producto_nombre','producto_tipo','tiene',
+          array['ajustes','apellido','ciudad_id','ciudad_nombre','colportor_id','de_baja','departamento','devueltos','entregados',
+                'nombre','por_cobrar','por_entregar','producto_id','producto_nombre','tiene',
                 'ultimo_dato_at'],
           'stock_por_ciudad: la forma de la respuesta, solo cantidades (sin plata, clientes, talonarios ni emails)');
 select is((select array(select k from jsonb_object_keys(
@@ -435,7 +435,7 @@ select is((select array_agg(s.x order by s.n)
           array[pg_temp.u('b3') || '/Libro Cero', pg_temp.u('b3') || '/Libro De Baja', pg_temp.u('b3') || '/Libro Dos',
                 pg_temp.u('b3') || '/Libro Uno', pg_temp.u('b3') || '/Revista Uno', pg_temp.u('b3') || '/Material Uno',
                 pg_temp.u('b3') || '/Misionero Uno', pg_temp.u('b1') || '/Libro Cero'],
-          'el orden: por ciudad (dos antes que uno), colportor y productos por tipo (libros, revistas, material, misioneros) y nombre');
+          'el orden: por ciudad (dos antes que uno), colportor y productos por categoría (libros, Bonificables y Espirituales juntos, revistas, material, misioneros) y nombre');
 
 -- ---------------------------------------------------------------------------
 -- 5. Lo que tiene, lo por entregar, lo entregado y lo por cobrar (tiene|por_entregar|entregados|por_cobrar)
