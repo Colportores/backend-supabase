@@ -8,6 +8,10 @@ No es una migración ni el seed de ejemplo (`supabase/seed.sql`, que usa `script
 Producción no lo recibe. Solo se carga en la base local o en el proyecto de demo de abajo (referencia fija en el script);
 `scripts/db-seed.sh` sigue rechazando cualquier base remota.
 
+**Esquema vigente.** Los archivos de acá siguen el esquema de la última migración del repo. Desde la 0198, `producto` no
+tiene la columna `tipo`: ninguna carga la escribe, y el tipo sale de la categoría (`tipo_de_categoria`; el pull del
+teléfono sigue recibiendo la clave `tipo`, derivada). Contra una base anterior a la 0198 la carga falla.
+
 | Archivo | Para qué |
 |---|---|
 | `demo-datos.sql` | La carga. Un solo `DO`: o carga todo o no carga nada. |

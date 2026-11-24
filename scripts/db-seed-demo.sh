@@ -19,6 +19,9 @@
 #   scripts/db-seed-demo.sh --remoto <modo> lo mismo contra el proyecto de DEMO ohdsavwpasfpapbyutrv, con el CLI de
 #                                           Supabase ya logueado (o SUPABASE_ACCESS_TOKEN en el entorno)
 #
+# Los .sql de supabase/seed-demo/ siguen el esquema vigente: desde la 0198 `producto` no tiene la columna `tipo` (sale de
+# la categoría), así que contra una base anterior a la 0198 la carga falla.
+#
 # Reglas que este script hace cumplir:
 #   · Nunca `db reset`, nunca borra ni trunca: la carga solo inserta (idempotente) y el retiro da de baja lógica.
 #   · Remoto: la única base que acepta es ohdsavwpasfpapbyutrv (guarda por project-ref; no hay forma de pasarle otra).
@@ -46,7 +49,7 @@ for a in "$@"; do
     --listas) modo="listas" ;;
     --chequeo-listas) modo="chequeo-listas" ;;
     --aplicar) aplicar=1 ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $a (ver --help)" >&2; exit 2 ;;
   esac
 done
