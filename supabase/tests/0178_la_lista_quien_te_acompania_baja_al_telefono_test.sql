@@ -148,8 +148,8 @@ select is(pg_temp.veo(), array['c1'], 'si c2 deja de tener el rol COORDINADOR, A
 select pg_temp.como_servidor();
 insert into public.campania_coordinador (campania_id, usuario_id) values (pg_temp.u('e1'), pg_temp.u('c3'));
 select pg_temp.actuar_como(pg_temp.u('b1'));
-select is(pg_temp.bajaron(sync.pull(array['campania_coordinador'], (select d -> 'watermark' from p1), 1000)), array['c3'],
-          'un coordinador nuevo en la campaña de Ana baja por el delta');
+select is(pg_temp.bajaron(sync.pull(array['campania_coordinador'], (select d -> 'watermark' from p1), 1000)), array['c1','c3'],
+          'un coordinador nuevo en la campaña de Ana baja en el pull siguiente (desde la 0209 la entidad baja completa: c1 y c3, c2 ya no cuenta)');
 
 -- Ana se da de baja de e1: ya no ve a ninguno.
 select pg_temp.como_servidor();
