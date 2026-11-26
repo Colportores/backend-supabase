@@ -73,13 +73,13 @@ $$;
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, confirmed_at, created_at, updated_at)
 select pg_temp.u(s), '00000000-0000-0000-0000-000000000000',
        'authenticated', 'authenticated', 'salto-' || s || '@example.com', 'x', now(), now(), now()
-  from unnest(array['a1','b1','b2','b3']) s;
+  from unnest(array['a1','b1','b2','b3','b4','b5']) s;
 update public.usuario u set nombre = x.n, apellido = x.a
-  from (values ('b1','Bea','Benitez'), ('b2','Bruno','Bonilla'), ('b3','Beto','Bravo')) x(s, n, a)
+  from (values ('b1','Bea','Benitez'), ('b2','Bruno','Bonilla'), ('b3','Beto','Bravo'), ('b4','Berta','Baez'), ('b5','Boris','Bentos')) x(s, n, a)
  where u.id = pg_temp.u(x.s);
 insert into public.usuario_rol (usuario_id, rol_id)
 select pg_temp.u(x.s), r.id
-  from (values ('a1','COORDINADOR'), ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR')) x(s, codigo)
+  from (values ('a1','COORDINADOR'), ('b1','COLPORTOR'), ('b2','COLPORTOR'), ('b3','COLPORTOR'), ('b4','COLPORTOR'), ('b5','COLPORTOR')) x(s, codigo)
   join public.rol r on r.codigo = x.codigo;
 
 insert into public.pais (id, nombre, iso_code) values (pg_temp.u('c0'), 'Pais salto', 'ZS');
@@ -110,6 +110,20 @@ insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, cre
   (pg_temp.u('96'), pg_temp.u('e2'), pg_temp.u('b3'), pg_temp.u('d2'), '2026-09-15 09:30-03');
 update public.campania_colportor set deleted_at = pg_temp.a(date '2026-09-15', '09:00')
  where id in (pg_temp.u('91'), pg_temp.u('93'));
+-- b4 vuelve a una campaña donde ya había estado (reinscripción): estuvo en Salto del 01/08 al 10/08, pasó a Montevideo, la dan
+-- de baja de Montevideo el 15/09 a las 09:00 y a las 09:30 la reactivan en Salto (el hueco [10/08, 15/09 09:30) lo escribe el servidor, 0100).
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at, tramos_afuera) values
+  (pg_temp.u('97'), pg_temp.u('e2'), pg_temp.u('b4'), pg_temp.u('d2'), '2026-08-01 12:00-03',
+   array[tstzrange(pg_temp.a(date '2026-08-10', '00:00'), pg_temp.a(date '2026-09-15', '09:30'), '[)')]),
+  (pg_temp.u('98'), pg_temp.u('e1'), pg_temp.u('b4'), pg_temp.u('d1'), '2026-08-11 12:00-03', '{}');
+update public.campania_colportor set deleted_at = pg_temp.a(date '2026-09-15', '09:00') where id = pg_temp.u('98');
+-- b5: la baja de Montevideo el 15/09 a las 09:00 y el alta en Salto a las 09:30; el 22/09 vuelve a Montevideo (baja de Salto a las
+-- 09:55 y reactivación de Montevideo a las 10:00: la baja del 15/09 queda como hueco [15/09 09:00, 22/09 10:00)).
+insert into public.campania_colportor (id, campania_id, usuario_id, zona_id, created_at, tramos_afuera) values
+  (pg_temp.u('99'), pg_temp.u('e1'), pg_temp.u('b5'), pg_temp.u('d1'), '2026-08-01 12:00-03',
+   array[tstzrange(pg_temp.a(date '2026-09-15', '09:00'), pg_temp.a(date '2026-09-22', '10:00'), '[)')]),
+  (pg_temp.u('9a'), pg_temp.u('e2'), pg_temp.u('b5'), pg_temp.u('d2'), '2026-09-15 09:30-03', '{}');
+update public.campania_colportor set deleted_at = pg_temp.a(date '2026-09-22', '09:55') where id = pg_temp.u('9a');
 update public.campania_colportor set deleted_at = pg_temp.a(date '2026-09-15', '10:00')
  where id = pg_temp.u('95');
 -- El historial de zonas (0022) abre el tramo con la hora real de la inserción: en este fixture es la del alta.
@@ -138,7 +152,10 @@ select pg_temp.u(x.s), x.i::timestamptz, x.f::timestamptz
     ('b2', '2026-09-15 09:10-03', '2026-09-15 10:10-03'),
     ('b2', '2026-09-16 08:00-03', '2026-09-16 09:00-03'),
     ('b2', '2026-09-16 10:00-03', '2026-09-16 11:00-03'),
-    ('b3', '2026-09-15 09:40-03', '2026-09-15 10:40-03')
+    ('b3', '2026-09-15 09:40-03', '2026-09-15 10:40-03'),
+    ('b4', '2026-09-15 09:10-03', '2026-09-15 10:10-03'),
+    ('b4', '2026-09-15 11:00-03', '2026-09-15 12:00-03'),
+    ('b5', '2026-09-15 09:10-03', '2026-09-15 10:10-03')
   ) x(s, i, f);
 
 -- Ventas de bb (centavos): 07:00 (100: Montevideo), 09:15 (200: Salto), 12:00 (400: Salto).
@@ -152,16 +169,27 @@ select pg_temp.u('f3'), x.f::timestamptz, 'ENTREVISTA', pg_temp.u(x.s)
   from (values ('b1', '2026-09-15 08:20-03'), ('b1', '2026-09-15 09:20-03')) x(s, f);
 
 -- --- 0. La hora desde la que cuenta cada inscripción ----------------------------------
-select is(public.alta_efectiva_de_la_inscripcion(pg_temp.u('92')), pg_temp.a(date '2026-09-15', '09:00'),
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('92')) v), pg_temp.a(date '2026-09-15', '09:00'),
           'bb en Salto: cuenta desde la hora de su baja de Montevideo (09:00), no desde las 09:30');
-select is(public.alta_efectiva_de_la_inscripcion(pg_temp.u('91')), '2026-08-01 12:00-03'::timestamptz,
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('91')) v), '2026-08-01 12:00-03'::timestamptz,
           'bb en Montevideo (de donde la dieron de baja): sigue contando desde su alta');
-select is(public.alta_efectiva_de_la_inscripcion(pg_temp.u('94')), '2026-09-16 09:30-03'::timestamptz,
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('94')) v), '2026-09-16 09:30-03'::timestamptz,
           'una baja de otro día no mueve el alta: b2 en Salto cuenta desde las 09:30 del 16/09');
-select is(public.alta_efectiva_de_la_inscripcion(pg_temp.u('96')), '2026-09-15 09:30-03'::timestamptz,
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('96')) v), '2026-09-15 09:30-03'::timestamptz,
           'una baja posterior al alta (10:00 contra 09:30) no la mueve: las dos inscripciones estaban vivas');
-select is(public.alta_efectiva_de_la_inscripcion(pg_temp.u('ff')), null,
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('ff')) v), null,
           'una inscripción que no existe da null');
+
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('97')) v), '2026-08-01 12:00-03'::timestamptz,
+          'una reinscripción: el alta sigue siendo la original');
+select is((select v.afuera from public.ventana_de_la_inscripcion(pg_temp.u('97')) v),
+          array[tstzrange(pg_temp.a(date '2026-08-10', '00:00'), pg_temp.a(date '2026-09-15', '09:00'), '[)')],
+          'pero su último hueco se acorta hasta la baja de Montevideo (09:00) en lugar de la vuelta (09:30)');
+select is((select v.afuera from public.ventana_de_la_inscripcion(pg_temp.u('99')) v),
+          array[tstzrange(pg_temp.a(date '2026-09-15', '09:00'), pg_temp.a(date '2026-09-22', '09:55'), '[)')],
+          'Montevideo reactivada el 22/09 a las 10:00: su hueco se acorta hasta la baja de Salto de las 09:55 (la ida y la vuelta son el mismo salto, cada una a su lado)');
+select is((select v.alta from public.ventana_de_la_inscripcion(pg_temp.u('9a')) v), pg_temp.a(date '2026-09-15', '09:00'),
+          'y Salto sigue contando desde la salida de Montevideo aunque esa baja ya sea un hueco (la reactivación no lo borra para atrás)');
 
 select pg_temp.actuar_como(pg_temp.u('a1'));
 
@@ -182,6 +210,13 @@ select is(pg_temp.horas('e2', 'b2'), '1.00|1', 'horas, b2 en Salto: solo la de d
 -- Las dos inscripciones vivas a la vez: cada una con lo suyo, como antes (Montevideo hasta las 10:00, Salto desde las 09:30).
 select is(pg_temp.horas('e1', 'b3'), '1.00|1', 'horas, b3 en Montevideo: la jornada de las 09:40 empezó antes de su baja (10:00)');
 select is(pg_temp.horas('e2', 'b3'), '1.00|1', 'horas, b3 en Salto: la jornada de las 09:40 es posterior a su alta (09:30): como antes de la 0205, una baja posterior al alta no la mueve');
+
+-- Reinscripción (b4): la jornada de las 09:10 cuenta en Salto (no queda en el hueco de la vuelta) y no en Montevideo.
+select is(pg_temp.horas('e1', 'b4'), 'sin fila', 'horas, b4 en Montevideo: ninguna (las dos empezaron después de su baja de las 09:00)');
+select is(pg_temp.horas('e2', 'b4'), '2.00|2', 'horas, b4 en Salto (reinscripción): la de las 09:10 y la de las 11:00');
+-- Origen reactivado más tarde (b5): lo que ya contaba en Salto sigue contando.
+select is(pg_temp.horas('e1', 'b5'), 'sin fila', 'horas, b5 en Montevideo reactivada: la de las 09:10 es de su hueco, no cuenta');
+select is(pg_temp.horas('e2', 'b5'), '1.00|1', 'horas, b5 en Salto: la de las 09:10 sigue contando después de que Montevideo se reactivó');
 
 -- --- 2. Ventas y presentaciones ----------------------------------------------------
 select is(pg_temp.ventas('e1', 'b1'), '1|100|1', 'ventas, bb en Montevideo: la de las 07:00 y la presentación de las 08:20');

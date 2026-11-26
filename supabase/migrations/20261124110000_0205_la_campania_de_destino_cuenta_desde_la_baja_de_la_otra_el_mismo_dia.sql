@@ -10,26 +10,32 @@
 -- ninguna campaña: Montevideo cuenta lo que empezó antes de las 09:00 y Salto lo que empezó desde las 09:30. Sigue guardada,
 -- pero ningún reporte la mostraba y los viáticos de HU-REP-001 salían de menos.
 --
--- Cristian eligió que Salto cuente desde la baja: **si ese mismo día el colportor tuvo una baja en otra campaña, sus horas en
--- la campaña nueva cuentan desde la hora de esa baja**. Nada queda afuera y nada cuenta dos veces: Montevideo sigue con lo que
--- empezó antes de la baja (`inscripcion_cubre_el_instante`: antes de `deleted_at`) y Salto con lo que empezó desde la baja.
--- Es la opción (c) del 23/10 (https://github.com/Colportores/backend-supabase/pull/115#issuecomment-6366979808), llevada a
--- la ventana por instante de la 0197.
+-- Cristian eligió que Salto cuente desde la baja: **si ese mismo día el colportor salió de otra campaña, sus horas en la
+-- campaña nueva cuentan desde la hora de esa salida**. Nada queda afuera y nada cuenta dos veces: Montevideo sigue con lo que
+-- empezó antes de la baja (`inscripcion_cubre_el_instante`: antes de `deleted_at`, o fuera del hueco si la reactivaron) y
+-- Salto con lo que empezó desde la salida. Es la opción (c) del 23/10
+-- (https://github.com/Colportores/backend-supabase/pull/115#issuecomment-6366979808), llevada a la ventana por instante de la 0197.
 --
 -- ## Qué hace
 --
---   1. `alta_efectiva_de_la_inscripcion(inscripcion_id)`: desde cuándo cuenta una inscripción. Es la hora de su alta
---      (`created_at`), salvo que **ese mismo día de Montevideo** el colportor tenga otra inscripción dada de baja **a esa hora o
---      antes**: entonces es la hora de esa baja (la más reciente, si hubo varias). Una baja posterior al alta no la mueve:
---      las dos inscripciones estaban vivas a la vez y cada jornada ya cae en una sola (Origen, antes de su baja; Destino,
---      desde su alta). Una baja de otro día tampoco: es el caso de siempre, cuenta desde el alta.
+--   1. `ventana_de_la_inscripcion(inscripcion_id)`: la ventana que cuenta de una inscripción (alta, huecos), con el salto
+--      aplicado. La **entrada** es el instante en que el colportor entró a la campaña por última vez: el alta
+--      (`created_at`) o, si la inscripción se reactivó, el fin de su último hueco (`tramos_afuera`, 0100). La **salida** de otra
+--      campaña es la baja de otra inscripción del mismo colportor (`deleted_at`) o el comienzo de un hueco de esa otra
+--      (una baja que después se reactivó queda como hueco, no como `deleted_at`): la más reciente que es del mismo día de
+--      Montevideo que la entrada y de esa hora o antes. Con una salida así:
+--        · inscripción nueva: cuenta desde la salida en lugar de desde el alta;
+--        · inscripción reactivada: el último hueco se acorta hasta la salida (si la salida cae dentro de ese hueco).
+--      Una salida posterior a la entrada no la mueve (las dos inscripciones estaban vivas y cada jornada ya cae en una sola), ni
+--      una salida de otro día (es el caso de siempre).
+--      Devuelve además `salto_desde` (la salida, si movió algo) y `entrada`, que se usan para la ciudad de lo hecho en medio.
 --   2. `horas_por_ciudad_y_colportor`, `ventas_por_ciudad_y_colportor` y `tablero_de_inicio` (cuerpos de la 0197) miden la
---      ventana con esa hora en lugar de la del alta. Las ventas y las presentaciones siguen la misma regla que las jornadas.
---      El tablero sigue mostrando `inscripto_at` = la hora real del alta.
---   3. La ciudad de lo hecho entre la baja y el alta: el historial de zonas (0022) abre el primer tramo en el alta, así que sin
---      más esas horas saldrían en «Sin zona asignada». Se miden con la zona que el colportor tuvo en el alta (el instante se
---      lleva al del alta solo para buscar el tramo): es la zona que le dieron en la reasignación. Lo que pasó desde el alta no
---      cambia.
+--      ventana con esa función en lugar de `created_at` y `tramos_afuera`. Las ventas y las presentaciones siguen la misma regla
+--      que las jornadas. El tablero sigue mostrando `inscripto_at` = la hora real del alta.
+--   3. La ciudad de lo hecho entre la salida y la entrada: el historial de zonas (0022) abre el tramo de la vuelta en la entrada,
+--      así que sin más esas horas saldrían en «Sin zona asignada». Se miden con la zona que el colportor tuvo en la entrada
+--      (`instante_para_buscar_la_zona`: el instante se lleva al de la entrada solo para buscar el tramo, y solo dentro de la
+--      ventana del salto). Lo que pasó desde la entrada no cambia.
 --
 -- ## Lo que NO cambia
 --
@@ -48,41 +54,97 @@
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Desde cuándo cuenta una inscripción
+-- 1. La ventana de una inscripción, con el salto
 -- ----------------------------------------------------------------------------
 
 -- Sin permiso a propósito: la llaman solo las funciones de abajo (DEFINER), que piden el permiso antes. DEFINER para leer
 -- las otras inscripciones del colportor sin mirar la RLS.
-create function public.alta_efectiva_de_la_inscripcion(p_inscripcion_id uuid)
-returns timestamptz
+create function public.ventana_de_la_inscripcion(p_inscripcion_id uuid)
+returns table (alta timestamptz, afuera tstzrange[], salto_desde timestamptz, entrada timestamptz)
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select coalesce(
-           (select max(o.deleted_at)
-              from public.campania_colportor o
-             where o.usuario_id = i.usuario_id
-               and o.id <> i.id
-               and o.deleted_at is not null
-               and o.deleted_at <= i.created_at
-               and public.hoy_montevideo(o.deleted_at) = public.hoy_montevideo(i.created_at)),
-           i.created_at)
-    from public.campania_colportor i
-   where i.id = p_inscripcion_id;
+  with i as (
+    select c.id, c.usuario_id, c.created_at, c.tramos_afuera
+      from public.campania_colportor c
+     where c.id = p_inscripcion_id
+  ),
+  ultimo as (
+    -- El último hueco (la última vuelta), si la inscripción se reactivó alguna vez.
+    select t
+      from i, unnest(i.tramos_afuera) t
+     order by upper(t) desc
+     limit 1
+  ),
+  entrada as (
+    select greatest(i.created_at, coalesce((select upper(u.t) from ultimo u), i.created_at)) as a
+      from i
+  ),
+  salida as (
+    -- La salida más reciente de otra campaña: una baja (deleted_at) o el comienzo de un hueco de otra inscripción del mismo
+    -- colportor, del mismo día de Montevideo que la entrada y de esa hora o antes.
+    select max(s.instante) as b
+      from i
+      join entrada e on true
+      join public.campania_colportor o on o.usuario_id = i.usuario_id and o.id <> i.id
+      cross join lateral (
+        select o.deleted_at as instante
+        union all
+        select lower(t) from unnest(o.tramos_afuera) t
+      ) s
+     where s.instante is not null
+       and s.instante <= e.a
+       and public.hoy_montevideo(s.instante) = public.hoy_montevideo(e.a)
+  )
+  select
+    -- alta: la salida, si la inscripción es nueva (sin huecos) y salió de otra antes de entrar
+    case when (select u.t from ultimo u) is null and sa.b is not null and sa.b < en.a then sa.b else i.created_at end,
+    -- afuera: el último hueco se acorta hasta la salida
+    case when (select u.t from ultimo u) is not null and sa.b is not null
+              and sa.b > lower((select u.t from ultimo u)) and sa.b < en.a
+         then coalesce((select array_agg(x) from unnest(i.tramos_afuera) x where x <> (select u.t from ultimo u)), '{}'::tstzrange[])
+              || tstzrange(lower((select u.t from ultimo u)), sa.b, '[)')
+         else i.tramos_afuera end,
+    -- salto_desde: la salida, si movió algo
+    case when sa.b is not null and sa.b < en.a
+              and ((select u.t from ultimo u) is null or sa.b > lower((select u.t from ultimo u)))
+         then sa.b end,
+    en.a
+  from i, entrada en, salida sa;
 $$;
 
-comment on function public.alta_efectiva_de_la_inscripcion(uuid) is
-  'Interna (0205, backend-supabase#313): desde cuándo cuentan las horas, las ventas y el tablero de una inscripción. Su alta '
-  '(created_at), o la hora de la baja más reciente de otra inscripción del mismo colportor que ocurrió ese mismo día de Montevideo '
-  'a esa hora o antes (el salto de una campaña a otra: Origen cuenta hasta esa baja, Destino desde ella, sin dejar nada afuera ni '
-  'contar dos veces). Una inscripción que no existe da null.';
+comment on function public.ventana_de_la_inscripcion(uuid) is
+  'Interna (0205, backend-supabase#313): la ventana que cuenta de una inscripción para las horas, las ventas y el tablero: su '
+  'alta y sus huecos, con el salto de una campaña a otra aplicado. Si el mismo día de Montevideo de su entrada (el alta, o el fin '
+  'del último hueco si se reactivó) el colportor salió de otra campaña (baja o comienzo de un hueco de otra inscripción), a esa '
+  'hora o antes, la inscripción cuenta desde esa salida: el alta se mueve a ella, o el último hueco se acorta hasta ella. '
+  'Devuelve alta, afuera (huecos), salto_desde (la salida, si movió algo) y entrada. Una inscripción que no existe no devuelve nada.';
 
-revoke all on function public.alta_efectiva_de_la_inscripcion(uuid) from public, anon, authenticated, service_role;
+revoke all on function public.ventana_de_la_inscripcion(uuid) from public, anon, authenticated, service_role;
+
+-- El instante con el que se busca la zona en el historial: lo hecho entre la salida de otra campaña y la entrada se mide con la
+-- zona de la entrada (el historial abre el tramo en ella); todo lo demás, con su propio instante.
+create function public.instante_para_buscar_la_zona(p_instante timestamptz, p_salto_desde timestamptz, p_entrada timestamptz)
+returns timestamptz
+language sql
+immutable
+set search_path = ''
+as $$
+  select case when p_salto_desde is not null and p_instante >= p_salto_desde and p_instante < p_entrada
+              then p_entrada else p_instante end
+$$;
+
+comment on function public.instante_para_buscar_la_zona(timestamptz, timestamptz, timestamptz) is
+  'Interna (0205, backend-supabase#313): el instante con el que se busca la zona en el historial: el de la entrada si el instante '
+  'cae entre la salida de otra campaña (salto_desde) y la entrada; si no, el mismo instante.';
+
+revoke all on function public.instante_para_buscar_la_zona(timestamptz, timestamptz, timestamptz)
+  from public, anon, authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- 2. Las tres lecturas, con esa hora (cuerpos de la 0197)
+-- 2. Las tres lecturas, con esa ventana (cuerpos de la 0197)
 -- ----------------------------------------------------------------------------
 
 create or replace function public.horas_por_ciudad_y_colportor(p_campania_id uuid, p_desde date, p_hasta date,
@@ -156,11 +218,13 @@ begin
       -- por jornada (más abajo).
       select i.id as inscripcion_id,
              i.usuario_id,
-             public.alta_efectiva_de_la_inscripcion(i.id) as alta,
-             i.created_at as alta_real,
+             e.alta as alta,
+             e.salto_desde,
+             e.entrada as alta_real,
              i.deleted_at as baja,
-             i.tramos_afuera as afuera
+             e.afuera as afuera
         from public.campania_colportor i
+       cross join lateral public.ventana_de_la_inscripcion(i.id) e
        where i.campania_id = p_campania_id
          and (p_colportor_ids is null or i.usuario_id = any (p_colportor_ids))
     ),
@@ -175,7 +239,7 @@ begin
         from inscripcion ins
         join public.jornada j on j.colportor_id = ins.usuario_id
        cross join lateral (
-         -- La ciudad de la zona que tenía en el instante j.inicio (0022: desde <= instante < hasta; lo hecho entre la baja de otra campaña y el alta cuenta con la zona del alta, 0205,
+         -- La ciudad de la zona que tenía en el instante j.inicio (0022: desde <= instante < hasta; lo hecho entre la salida de otra campaña y el alta cuenta con la zona del alta, 0205,
          -- hasta null = vigente). Sin tramo, o con un tramo cuya zona ya no tiene ciudad: sin ciudad.
          select coalesce(
                   (select ci.ciudad_id
@@ -184,8 +248,8 @@ begin
                      join public.campania_ciudad ci on ci.id = z.campania_ciudad_id
                     where h.campania_colportor_id = ins.inscripcion_id
                       and h.deleted_at is null
-                      and h.desde <= greatest(j.inicio, ins.alta_real)
-                      and (h.hasta is null or greatest(j.inicio, ins.alta_real) < h.hasta)
+                      and h.desde <= public.instante_para_buscar_la_zona(j.inicio, ins.salto_desde, ins.alta_real)
+                      and (h.hasta is null or public.instante_para_buscar_la_zona(j.inicio, ins.salto_desde, ins.alta_real) < h.hasta)
                     order by h.desde desc
                     limit 1),
                   c_sin_ciudad) as ciudad_k
@@ -393,11 +457,13 @@ begin
       -- aquí: sale del historial de zonas, venta por venta (más abajo).
       select i.id as inscripcion_id,
              i.usuario_id,
-             public.alta_efectiva_de_la_inscripcion(i.id) as alta,
-             i.created_at as alta_real,
+             e.alta as alta,
+             e.salto_desde,
+             e.entrada as alta_real,
              i.deleted_at as baja,
-             i.tramos_afuera as afuera
+             e.afuera as afuera
         from public.campania_colportor i
+       cross join lateral public.ventana_de_la_inscripcion(i.id) e
        where i.campania_id = p_campania_id
          and (p_colportor_ids is null or i.usuario_id = any (p_colportor_ids))
     ),
@@ -425,7 +491,7 @@ begin
             and vi.tipo_resultado = any (c_presentacion)
        ) x
        cross join lateral (
-         -- La ciudad de la zona que tenía en el instante x.cuando (0022: desde <= instante < hasta; lo hecho entre la baja de otra campaña y el alta cuenta con la zona del alta, 0205,
+         -- La ciudad de la zona que tenía en el instante x.cuando (0022: desde <= instante < hasta; lo hecho entre la salida de otra campaña y el alta cuenta con la zona del alta, 0205,
          -- hasta null = vigente). Sin tramo, o con un tramo cuya zona ya no tiene ciudad: sin ciudad.
          select coalesce(
                   (select ci.ciudad_id
@@ -434,8 +500,8 @@ begin
                      join public.campania_ciudad ci on ci.id = z.campania_ciudad_id
                     where h.campania_colportor_id = ins.inscripcion_id
                       and h.deleted_at is null
-                      and h.desde <= greatest(x.cuando, ins.alta_real)
-                      and (h.hasta is null or greatest(x.cuando, ins.alta_real) < h.hasta)
+                      and h.desde <= public.instante_para_buscar_la_zona(x.cuando, ins.salto_desde, ins.alta_real)
+                      and (h.hasta is null or public.instante_para_buscar_la_zona(x.cuando, ins.salto_desde, ins.alta_real) < h.hasta)
                     order by h.desde desc
                     limit 1),
                   c_sin_ciudad) as ciudad_k
@@ -628,11 +694,11 @@ begin
     -- zona o se dio de baja a las 12:00 sigue donde trabajó esa mañana. Sin tramo ese día (nunca
     -- tuvo zona, o ya se la habían quitado) o con la ciudad de campaña dada de baja: ciudad_id null
     -- = sin zona asignada. La actividad que cuenta (jornadas, ventas y presentaciones) es la que
-    -- `inscripcion_cubre_el_instante()` (0100) deja dentro: desde el alta (o desde la baja de otra campaña del mismo día, 0205), antes de la baja y fuera
+    -- `inscripcion_cubre_el_instante()` (0100) deja dentro: desde el alta (o desde la salida de otra campaña del mismo día, 0205), antes de la baja y fuera
     -- de los huecos (`afuera`). Un día entero dentro de un hueco no es de esa inscripción: no figura.
     select i.usuario_id, i.deleted_at as baja, i.created_at as inscripto_at,
-           public.alta_efectiva_de_la_inscripcion(i.id) as cuenta_desde,
-           i.tramos_afuera as afuera,
+           e.alta as cuenta_desde,
+           e.afuera as afuera,
            (select ci.ciudad_id
               from public.campania_colportor_zona_historial h
               join public.zona z on z.id = h.zona_id
@@ -646,6 +712,7 @@ begin
              order by h.desde desc
              limit 1) as ciudad_id
       from public.campania_colportor i
+     cross join lateral public.ventana_de_la_inscripcion(i.id) e
      where i.campania_id = p_campania_id
        and i.created_at < v_hasta
        and (i.deleted_at is null or i.deleted_at > v_desde)
