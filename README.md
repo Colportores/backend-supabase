@@ -120,8 +120,10 @@ El enlace del correo de «Olvidé mi contraseña» del panel de coordinadores ([
 | Ambiente | Dirección permitida | Dónde se configura |
 |---|---|---|
 | Local (`supabase/config.toml`) | `http://localhost:3000/acceso/nueva-contrasena` y `http://127.0.0.1:3000/acceso/nueva-contrasena` | versionado: el archivo |
-| Demo / staging (`ohdsavwpasfpapbyutrv`) | `https://<panel de staging>/acceso/nueva-contrasena` | a mano: Auth → URL Configuration → Redirect URLs (o `supabase config push`) |
+| Demo / staging (`ohdsavwpasfpapbyutrv`) | `https://front-coordinadores-web.vercel.app/acceso/nueva-contrasena` (panel de staging en Vercel, [decisión de Cristian del 24/11](https://github.com/Colportores/backend-supabase/pull/300#issuecomment-7141809739), «URL staging») | a mano: Auth → URL Configuration → Redirect URLs (no `supabase config push`: empujaría todo `config.toml`, con la `site_url` y la lista de las locales) |
 | Producción (cuando exista) | `https://<panel de producción>/acceso/nueva-contrasena` | igual que staging |
+
+El dominio de staging es el del proyecto de Vercel del panel (el que figura como sitio del repo `front-coordinadores-web`); las direcciones de vista previa de cada rama (`front-coordinadores-web-git-<rama>-colportores.vercel.app`) **no** se agregan: son efímeras y un enlace de recuperación no tiene por qué terminar en una rama de prueba. Si Vercel le cambia el dominio al proyecto, se actualiza esta fila.
 
 El valor del proyecto hosteado no sale de `config.toml` (el CI no hace `config push`): una dirección nueva se suma a mano en cada proyecto y se anota acá. Si el panel cambia de dirección (otro dominio, un `basePath`), se suma la nueva y se saca la vieja.
 
