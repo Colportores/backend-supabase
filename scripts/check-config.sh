@@ -47,3 +47,25 @@ else
   echo "supabase/config.toml no define additional_redirect_urls." >&2
   exit 1
 fi
+
+# Correo de «Olvidé mi contraseña» (backend-supabase#313): el enlace lleva su propio código de un solo uso (`token_hash`), no el
+# `ConfirmationURL` con PKCE, que solo abre en el navegador donde se pidió. Tiene que estar la plantilla en config.toml, el archivo
+# tiene que existir y su enlace usar `.TokenHash` (con `type=recovery`) y no `.ConfirmationURL`.
+plantilla="$(awk '/^\[auth\.email\.template\.recovery\]/{e=1;next} /^\[/{e=0} e && /^content_path[[:space:]]*=/{print; exit}' supabase/config.toml | sed -n 's/^content_path[[:space:]]*=[[:space:]]*"\(.*\)".*$/\1/p')"
+if [ -z "$plantilla" ]; then
+  echo "supabase/config.toml no define [auth.email.template.recovery] con su content_path (el correo de «Olvidé mi contraseña» con enlace de un solo uso)." >&2
+  exit 1
+fi
+if [ ! -f "$plantilla" ]; then
+  echo "supabase/config.toml: la plantilla de recuperación $plantilla no existe." >&2
+  exit 1
+fi
+if ! grep -q '{{ *\.TokenHash *}}' "$plantilla" || ! grep -q 'type=recovery' "$plantilla"; then
+  echo "$plantilla: el enlace tiene que llevar {{ .TokenHash }} y type=recovery (el código de un solo uso que se abre en cualquier navegador)." >&2
+  exit 1
+fi
+if grep -q '\.ConfirmationURL' "$plantilla"; then
+  echo "$plantilla: no usar {{ .ConfirmationURL }} (PKCE: solo abre en el navegador donde se pidió el correo)." >&2
+  exit 1
+fi
+echo "OK: el correo de recuperación usa el enlace de un solo uso ($plantilla)"

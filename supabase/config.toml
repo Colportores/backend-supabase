@@ -262,6 +262,15 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# El correo de «Olvidé mi contraseña» (backend-supabase#313, «Enlace otro n» de Cristian, 24/11): lleva un enlace con su propio
+# código de un solo uso (`token_hash`), que se canjea con verifyOtp({ token_hash, type: 'recovery' }) y se puede abrir en cualquier
+# navegador (el enlace por defecto, con PKCE, solo anda en el navegador donde se pidió). Vence como hoy (`otp_expiry`, 1 hora).
+# `.RedirectTo` es la dirección que mandó el cliente, ya validada contra `additional_redirect_urls` (sin ella, la `site_url`).
+# En el proyecto hosteado NO se aplica con el merge: README, «Enlace de «Olvidé mi contraseña» en cualquier navegador».
+[auth.email.template.recovery]
+subject = "Elegí una contraseña nueva"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"

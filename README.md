@@ -125,6 +125,24 @@ El enlace del correo de «Olvidé mi contraseña» del panel de coordinadores ([
 
 El valor del proyecto hosteado no sale de `config.toml` (el CI no hace `config push`): una dirección nueva se suma a mano en cada proyecto y se anota acá. Si el panel cambia de dirección (otro dominio, un `basePath`), se suma la nueva y se saca la vieja.
 
+## Enlace de «Olvidé mi contraseña» en cualquier navegador (backend-supabase#313)
+
+Decisión de Cristian (24/11, «Enlace otro n», [front-coordinadores-web#111](https://github.com/Colportores/front-coordinadores-web/issues/111#issuecomment-7086638643)): el enlace del correo de recuperación se abre en cualquier navegador, no solo en el que se pidió. El enlace por defecto de Supabase (PKCE, `{{ .ConfirmationURL }}`) guarda un verificador en el navegador que pidió el correo y falla en otro. La plantilla propia (`supabase/templates/recovery.html`, `[auth.email.template.recovery]` de `config.toml`) lleva su propio código de un solo uso:
+
+```
+{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery
+```
+
+- **Vence como hoy** (`otp_expiry`, 1 hora) y se usa una sola vez.
+- **`{{ .RedirectTo }}`** es la dirección que manda el cliente en `resetPasswordForEmail(..., { redirectTo })`, que Supabase ya valida contra `additional_redirect_urls` (sección de arriba); sin ella cae en la `site_url`. Las direcciones de «Nueva contraseña» no llevan query (si la llevaran, el enlace saldría mal formado).
+- **El cliente la canjea con** `verifyOtp({ token_hash, type: 'recovery' })` en `/acceso/nueva-contrasena`, en lugar de `exchangeCodeForSession(code)`. Mientras el panel (front-coordinadores-web) y la app (front-colportores-mobile) no lo hagan, **un correo con esta plantilla no se puede canjear**: el cambio de cliente va antes que el despliegue de la plantilla.
+- `scripts/check-config.sh` (corre en CI) falla si `config.toml` no define la plantilla, si el archivo no existe o si su enlace no usa `.TokenHash` y `type=recovery` (o vuelve a `.ConfirmationURL`).
+
+| Ambiente | Dónde se configura |
+|---|---|
+| Local (`supabase/config.toml`) | versionado: `config.toml` y `supabase/templates/recovery.html` |
+| Demo / staging (`ohdsavwpasfpapbyutrv`) y producción | a mano, **cuando los dos clientes ya canjeen `token_hash`**: Auth → Emails → Templates → Reset Password (asunto «Elegí una contraseña nueva» y el cuerpo de `recovery.html`), o `supabase config push` (ojo: empuja todo `config.toml`; no se usa sin revisar `site_url` y las redirecciones del proyecto) |
+
 ## Infraestructura de sincronización
 
 Lo que ADR-008 pone de este lado: RPC de ingesta batch, cache de `client_op_id` (TTL 24 h) y delta pull. Vive en el schema `sync`, que **no se expone en la Data API** (`config.toml` lista `public` y `graphql_public`): se llega por los RPC.
