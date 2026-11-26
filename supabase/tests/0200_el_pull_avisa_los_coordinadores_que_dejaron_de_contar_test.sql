@@ -152,8 +152,8 @@ select is(public.cuenta_tiene_rol(pg_temp.u('c4'), 'COORDINADOR'), false, 'a c4 
 -- ---------------------------------------------------------------------------
 select pg_temp.actuar_como(pg_temp.u('b1'));
 create temp table p2 as select sync.pull(array['campania_coordinador'], (select d -> 'watermark' from p1), 1000) as d;
-select is(pg_temp.bajaron(d), array['c6*'],
-          'el delta trae como fila solo la baja de c6 (se quitó de la campaña y sigue siendo coordinador)') from p2;
+select is(pg_temp.bajaron(d), array['c1','c6*'],
+          'el pull siguiente trae las filas que Ana ve: c1 y la baja de c6 (se quitó de la campaña y sigue siendo coordinador); desde la 0209 la entidad baja completa') from p2;
 select ok(pg_temp.avisados(d) @> array['f2'], 'suspendido: la fila de c2 va en out_of_area') from p2;
 select ok(pg_temp.avisados(d) @> array['f3'], 'cuenta dada de baja: la de c3 también') from p2;
 select ok(pg_temp.avisados(d) @> array['f4'], 'rol vencido por valido_hasta (sin cambio de fila): la de c4 también') from p2;
@@ -164,7 +164,7 @@ select is(pg_temp.avisados(d), array['f2','f3','f4','f5','f7','fa'],
 
 -- Idempotente: el pull siguiente, sin cambios, repite el aviso; y desde cero, también.
 create temp table p3 as select sync.pull(array['campania_coordinador'], (select d -> 'watermark' from p2), 1000) as d;
-select is(pg_temp.bajaron(d), array[]::text[], 'otro delta sin cambios no baja filas') from p3;
+select is(pg_temp.bajaron(d), array['c1','c6*'], 'otro pull sin cambios repite las mismas filas (0209: baja completa en cada pull)') from p3;
 select is(pg_temp.avisados(d), array['f2','f3','f4','f5','f7','fa'], 'y repite el mismo aviso (idempotente)') from p3;
 select is(pg_temp.avisados(sync.pull(array['campania_coordinador'], '{}'::jsonb, 1000)),
           array['f2','f3','f4','f5','f7','fa'],
