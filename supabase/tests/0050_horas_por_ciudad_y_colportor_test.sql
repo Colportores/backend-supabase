@@ -407,15 +407,15 @@ select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'semana', '2026-09-14',
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bb'),
           'sin fila', 'bb en Destino: las 4 h del 10/09 son de Origen, no se cuentan dos veces');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-14', 'bb'),
-          '5.00|2|2|0|false|0.00|0', 'bb en Destino: desde el instante de su inscripción (15/09 09:30: la de las 09:00 no) y el 16/09');
+          '6.00|3|2|0|false|0.00|0', 'bb en Destino: desde la hora de la baja de Origen (15/09 09:00, el mismo día de su inscripción de las 09:30; 0205) y el 16/09');
 select is((select sum(horas) from (
              select horas from public.horas_por_ciudad_y_colportor(pg_temp.u('e7'), '2026-09-07', '2026-09-20', 'semana', null, array[pg_temp.u('bb')])
              union all
              select horas from public.horas_por_ciudad_y_colportor(pg_temp.u('e8'), '2026-09-07', '2026-09-20', 'semana', null, array[pg_temp.u('bb')])
            ) t),
-          9.00, 'la reasignación no duplica: Origen + Destino suman 9 h de las 10 que trabajó bb; la hora de las 09:00 (desde la baja de Origen, antes del alta en Destino a las 09:30) no es de ninguna');
+          10.00, 'la reasignación no duplica ni pierde: Origen + Destino suman las 10 h que trabajó bb; la de las 09:00 (desde la baja de Origen, antes del alta en Destino a las 09:30) cuenta en Destino (0205, «Salto cuenta desde la baja»)');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'dia', '2026-09-15', 'bb'),
-          '2.00|1|1|0|false|0.00|0', 'por día: el 15/09 cuenta en Destino desde la hora de la inscripción (09:30); la que empezó justo en la baja de Origen no');
+          '3.00|2|1|0|false|0.00|0', 'por día: el 15/09 cuenta en Destino desde la hora de la baja de Origen (09:00): la que empezó justo en la baja también (0205)');
 select is(pg_temp.fila('e8', '2026-09-07', '2026-09-20', 'dia', '2026-09-15', 'bb'),
           'sin fila', 'por día: el 15/09, jornada posterior a la baja, no cuenta en Origen');
 select is(pg_temp.fila('e7', '2026-09-07', '2026-09-20', 'semana', '2026-09-07', 'bc'),
