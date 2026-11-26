@@ -13,15 +13,15 @@ select is((select sync_version from public.ubicacion where id = '01920000-0000-7
 select ok((select u.xmin_w <> s.xmin_w from public.ubicacion u join public.prueba_0051_ubicacion s using (id)
             where id = '01920000-0000-7000-8000-0000000051e2'),
           'y su xmin_w avanza: el delta la lleva a los teléfonos que ya la tenían');
-select is((select to_jsonb(u) - 'sync_version' - 'xmin_w' - 'updated_at'
+select is((select to_jsonb(u) - 'sync_version' - 'xmin_w' - 'updated_at' - 'nombre'
              from public.ubicacion u where id = '01920000-0000-7000-8000-0000000051e2'),
           (select to_jsonb(s) - 'sync_version' - 'xmin_w' - 'updated_at'
              from public.prueba_0051_ubicacion s where id = '01920000-0000-7000-8000-0000000051e2'),
           'sin cambiar ninguna columna más (la baja incluida)');
 
--- Todo lo demás, idéntico.
+-- Todo lo demás, idéntico (salvo `nombre`, la columna opcional que suma la 0206).
 select is((select count(*)::int from public.ubicacion u join public.prueba_0051_ubicacion s using (id)
-            where u.id <> '01920000-0000-7000-8000-0000000051e2' and to_jsonb(u) is distinct from to_jsonb(s)), 0,
+            where u.id <> '01920000-0000-7000-8000-0000000051e2' and to_jsonb(u) - 'nombre' is distinct from to_jsonb(s)), 0,
           'las otras 3 (A, la sin unión y la baja común) quedaron idénticas, versión y xmin_w incluidos');
 select is((select count(*)::int from public.ubicacion_union u join public.prueba_0051_union s using (id)
             where to_jsonb(u) is distinct from to_jsonb(s)), 0, 'el registro de la unión, idéntico');
